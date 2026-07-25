@@ -1,0 +1,19 @@
+{
+  "name": "@fevex/example-openai-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fevex/openai": "workspace:*",
+    "fevex": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.13",
+    "typescript": "^5.7.0"
+  }
+}

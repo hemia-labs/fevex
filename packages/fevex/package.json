@@ -1,0 +1,66 @@
+{
+  "name": "fevex",
+  "version": "0.0.1",
+  "description": "Agent Engineering Framework for code-first, provider-neutral AI agents.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": ["dist"],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hemia-labs/fevex.git",
+    "directory": "packages/fevex"
+  },
+  "bugs": {
+    "url": "https://github.com/hemia-labs/fevex/issues"
+  },
+  "homepage": "https://github.com/hemia-labs/fevex#readme",
+  "keywords": ["ai", "agents", "agent-framework", "agent-engineering", "typescript", "fevex"],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./agents": {
+      "types": "./dist/agents/index.d.mts",
+      "import": "./dist/agents/index.mjs"
+    },
+    "./models": {
+      "types": "./dist/models/index.d.mts",
+      "import": "./dist/models/index.mjs"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.mts",
+      "import": "./dist/tools/index.mjs"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.mts",
+      "import": "./dist/runtime/index.mjs"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.mts",
+      "import": "./dist/testing/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts src/agents/index.ts src/models/index.ts src/tools/index.ts src/runtime/index.ts src/testing/index.ts --format esm --dts",
+    "prepack": "bun run build",
+    "test": "bun test src/index.test.ts src/testing/index.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

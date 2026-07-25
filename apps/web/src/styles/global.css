@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource/ibm-plex-mono/400.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Inter Variable", Inter, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-obsidian: var(--brand-obsidian);
+  --color-warm-ivory: var(--brand-warm-ivory);
+  --color-ruby: var(--brand-ruby-red);
+  --color-graphite: var(--brand-graphite);
+  --color-silver-mist: var(--brand-silver-mist);
+  --spacing-4: var(--space-4);
+  --spacing-8: var(--space-8);
+  --spacing-16: var(--space-16);
+  --spacing-24: var(--space-24);
+  --spacing-32: var(--space-32);
+  --spacing-48: var(--space-48);
+  --spacing-64: var(--space-64);
+  --spacing-96: var(--space-96);
+  --spacing-128: var(--space-128);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --text-display: 64px;
+  --text-display--line-height: 110%;
+  --text-h1: 48px;
+  --text-h1--line-height: 115%;
+  --text-h2: 36px;
+  --text-h2--line-height: 120%;
+  --text-h3: 28px;
+  --text-h3--line-height: 130%;
+  --text-h4: 22px;
+  --text-h4--line-height: 130%;
+  --text-body: 16px;
+  --text-body--line-height: 150%;
+  --text-caption: 13px;
+  --text-caption--line-height: 140%;
+  --text-code: 14px;
+  --text-code--line-height: 160%;
+}
+
+:root {
+  --brand-obsidian: #101114;
+  --brand-warm-ivory: #f3f0e8;
+  --brand-ruby-red: #b92432;
+  --brand-graphite: #34373d;
+  --brand-silver-mist: #b8bbc1;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --space-128: 128px;
+  --background: var(--brand-warm-ivory);
+  --foreground: var(--brand-obsidian);
+  --card: color-mix(in oklab, var(--brand-warm-ivory) 88%, white);
+  --card-foreground: var(--brand-obsidian);
+  --popover: var(--brand-warm-ivory);
+  --popover-foreground: var(--brand-obsidian);
+  --primary: var(--brand-ruby-red);
+  --primary-foreground: var(--brand-warm-ivory);
+  --secondary: var(--brand-graphite);
+  --secondary-foreground: var(--brand-warm-ivory);
+  --muted: color-mix(in oklab, var(--brand-silver-mist) 38%, var(--brand-warm-ivory));
+  --muted-foreground: var(--brand-graphite);
+  --accent: var(--brand-ruby-red);
+  --accent-foreground: var(--brand-warm-ivory);
+  --destructive: var(--brand-ruby-red);
+  --destructive-foreground: var(--brand-warm-ivory);
+  --border: color-mix(in oklab, var(--brand-silver-mist) 72%, var(--brand-warm-ivory));
+  --input: var(--brand-silver-mist);
+  --ring: var(--brand-ruby-red);
+  --chart-1: var(--brand-ruby-red);
+  --chart-2: var(--brand-graphite);
+  --chart-3: var(--brand-silver-mist);
+  --chart-4: var(--brand-obsidian);
+  --chart-5: var(--brand-warm-ivory);
+  --radius: 0.5rem;
+  --sidebar: var(--brand-warm-ivory);
+  --sidebar-foreground: var(--brand-obsidian);
+  --sidebar-primary: var(--brand-ruby-red);
+  --sidebar-primary-foreground: var(--brand-warm-ivory);
+  --sidebar-accent: var(--brand-silver-mist);
+  --sidebar-accent-foreground: var(--brand-obsidian);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--brand-ruby-red);
+}
+
+.dark {
+  --background: var(--brand-obsidian);
+  --foreground: var(--brand-warm-ivory);
+  --card: color-mix(in oklab, var(--brand-obsidian) 88%, var(--brand-graphite));
+  --card-foreground: var(--brand-warm-ivory);
+  --popover: color-mix(in oklab, var(--brand-obsidian) 88%, var(--brand-graphite));
+  --popover-foreground: var(--brand-warm-ivory);
+  --primary: var(--brand-ruby-red);
+  --primary-foreground: var(--brand-warm-ivory);
+  --secondary: var(--brand-graphite);
+  --secondary-foreground: var(--brand-warm-ivory);
+  --muted: color-mix(in oklab, var(--brand-obsidian) 82%, var(--brand-graphite));
+  --muted-foreground: var(--brand-silver-mist);
+  --accent: var(--brand-ruby-red);
+  --accent-foreground: var(--brand-warm-ivory);
+  --destructive: var(--brand-ruby-red);
+  --destructive-foreground: var(--brand-warm-ivory);
+  --border: color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
+  --input: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
+  --ring: var(--brand-ruby-red);
+  --sidebar: var(--brand-obsidian);
+  --sidebar-foreground: var(--brand-warm-ivory);
+  --sidebar-primary: var(--brand-ruby-red);
+  --sidebar-primary-foreground: var(--brand-warm-ivory);
+  --sidebar-accent: var(--brand-graphite);
+  --sidebar-accent-foreground: var(--brand-warm-ivory);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--brand-ruby-red);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

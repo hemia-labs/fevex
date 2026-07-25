@@ -1,0 +1,22 @@
+{
+  "name": "fevex-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.2",
+  "workspaces": [
+    "apps/*",
+    "examples/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun --filter @fevex/web dev",
+    "build": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run build); fi; done",
+    "test": "set -e; for d in packages/*; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run test); fi; done; bun run --cwd examples/basic-agent start",
+    "typecheck": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run typecheck); fi; done"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "tsdown": "^0.22.13",
+    "typescript": "^5.7.0"
+  }
+}

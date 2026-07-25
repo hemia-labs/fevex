@@ -236,35 +236,10 @@ The MVP intentionally supports:
 - optional Standard Schema validation;
 - `AbortSignal` cancellation.
 
-It does not yet include streaming, retries, persistence, approvals or a CLI.
-`AgentDefinition.limits` is reserved and has no runtime effect yet.
-
-## Documentation
-
-- [Core MVP roadmap](docs/fevex_core_mvp_roadmap.md)
-- [Integrations roadmap](docs/fevex_integrations_roadmap.md)
-- [Release guide](docs/fevex_release_guide.md)
-- [Foundational brief](docs/fevex_brief_fundacional.md)
-- [Runnable basic agent](examples/basic-agent/src/index.ts)
-
-## Development
-
-```bash
-bun install
-bun run test
-bun run typecheck
-bun run build
-```
-
-Run only the standalone example:
-
-```bash
-bun run --cwd examples/basic-agent start
-```
-
-Bug reports and focused proposals are welcome in
-[GitHub Issues](https://github.com/hemia-labs/fevex/issues).
+It does not yet include streaming, retries, persistence, approvals, a CLI or
+official provider adapters. `AgentDefinition.limits` is reserved and has no
+runtime effect yet.
 
 ## License
 
-[Apache License 2.0](LICENSE)
+Apache-2.0
