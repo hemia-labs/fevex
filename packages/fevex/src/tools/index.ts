@@ -14,8 +14,21 @@ export type { ToolCall, ToolSpec } from '../core';
 export interface ToolExecutionContext {
   runId: RunId;
   toolCallId: string;
+  attempt: number;
+  idempotencyKey: string;
+  getCredential(name: string): Promise<string>;
   context?: ExecutionContext;
   signal?: AbortSignal;
+}
+
+export type ToolRisk = 'read' | 'write' | 'sensitive' | 'destructive';
+export type ToolApproval = 'never' | 'required';
+export type ToolIdempotency = 'none' | 'keyed';
+
+export interface ToolRetryPolicy {
+  maxAttempts: number;
+  backoffMs: number;
+  maxBackoffMs?: number;
 }
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
@@ -23,6 +36,11 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   description?: string;
   inputSchema?: StandardSchemaV1<unknown, TInput>;
   outputSchema?: StandardSchemaV1<unknown, TOutput>;
+  risk?: ToolRisk;
+  approval?: ToolApproval;
+  idempotency?: ToolIdempotency;
+  retry?: ToolRetryPolicy;
+  credentials?: string[];
   execute(input: TInput, context: ToolExecutionContext): TOutput | Promise<TOutput>;
 }
 

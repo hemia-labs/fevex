@@ -11,14 +11,19 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "fevex": ["packages/fevex/src/index.ts"],
-      "fevex/agents": ["packages/fevex/src/agents/index.ts"],
+      "@fevex/core": ["packages/fevex/src/index.ts"],
+      "@fevex/core/agents": ["packages/fevex/src/agents/index.ts"],
       "@fevex/deepseek": ["packages/deepseek/src/index.ts"],
-      "fevex/models": ["packages/fevex/src/models/index.ts"],
+      "@fevex/core/models": ["packages/fevex/src/models/index.ts"],
+      "@fevex/core/observability": ["packages/fevex/src/observability/index.ts"],
+      "@fevex/core/evals": ["packages/fevex/src/evals/index.ts"],
       "@fevex/openai": ["packages/openai/src/index.ts"],
-      "fevex/runtime": ["packages/fevex/src/runtime/index.ts"],
-      "fevex/testing": ["packages/fevex/src/testing/index.ts"],
-      "fevex/tools": ["packages/fevex/src/tools/index.ts"]
+      "@fevex/opentelemetry": ["packages/opentelemetry/src/index.ts"],
+      "@fevex/postgres": ["packages/postgres/src/index.ts"],
+      "@fevex/sqlite": ["packages/sqlite/src/index.ts"],
+      "@fevex/core/runtime": ["packages/fevex/src/runtime/index.ts"],
+      "@fevex/core/testing": ["packages/fevex/src/testing/index.ts"],
+      "@fevex/core/tools": ["packages/fevex/src/tools/index.ts"]
     }
   }
 }

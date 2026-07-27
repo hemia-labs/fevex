@@ -1,9 +1,9 @@
 export const color = {
-  obsidian: "#101114",
-  warmIvory: "#F3F0E8",
+  obsidian: "#020202",
+  warmIvory: "#F4F4F5",
   rubyRed: "#B92432",
-  graphite: "#34373D",
-  silverMist: "#B8BBC1",
+  graphite: "#1D2024",
+  silverMist: "#9CA3AF",
 } as const;
 
 export const space = {

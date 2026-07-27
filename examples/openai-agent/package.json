@@ -8,8 +8,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fevex/core": "0.1.0-alpha.0",
     "@fevex/openai": "workspace:*",
-    "fevex": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

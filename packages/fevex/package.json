@@ -1,6 +1,6 @@
 {
-  "name": "fevex",
-  "version": "0.0.1",
+  "name": "@fevex/core",
+  "version": "0.1.0-alpha.1",
   "description": "Agent Engineering Framework for code-first, provider-neutral AI agents.",
   "type": "module",
   "license": "Apache-2.0",
@@ -43,15 +43,27 @@
       "types": "./dist/runtime/index.d.mts",
       "import": "./dist/runtime/index.mjs"
     },
+    "./policies": {
+      "types": "./dist/policies/index.d.mts",
+      "import": "./dist/policies/index.mjs"
+    },
+    "./observability": {
+      "types": "./dist/observability/index.d.mts",
+      "import": "./dist/observability/index.mjs"
+    },
+    "./evals": {
+      "types": "./dist/evals/index.d.mts",
+      "import": "./dist/evals/index.mjs"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.mts",
       "import": "./dist/testing/index.mjs"
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/agents/index.ts src/models/index.ts src/tools/index.ts src/runtime/index.ts src/testing/index.ts --format esm --dts",
+    "build": "tsdown src/index.ts src/agents/index.ts src/models/index.ts src/tools/index.ts src/runtime/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
     "prepack": "bun run build",
-    "test": "bun test src/index.test.ts src/testing/index.test.ts",
+    "test": "bun test src/index.test.ts src/internal/json.test.ts src/internal/model-stream.test.ts src/observability/index.test.ts src/evals/index.test.ts src/testing/index.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "publishConfig": {

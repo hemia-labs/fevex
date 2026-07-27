@@ -1,6 +1,6 @@
 {
   "name": "@fevex/openai",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "OpenAI ModelGateway adapter for Fevex.",
   "type": "module",
   "license": "Apache-2.0",
@@ -38,7 +38,7 @@
     "access": "public"
   },
   "dependencies": {
-    "fevex": "0.0.0"
+    "@fevex/core": "0.1.0-alpha.1"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

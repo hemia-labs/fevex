@@ -1,0 +1,203 @@
+import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  createFevex,
+  defineAgent,
+  defineTool,
+  RunPausedError,
+  type ModelGateway,
+} from '@fevex/core';
+import { testRunStore } from '@fevex/core/testing';
+import { createSQLiteRunStore, type SQLiteRunStore } from './index';
+
+const toolCall = {
+  id: 'sqlite-call',
+  name: 'write',
+  input: { value: 1 },
+};
+
+function model(): ModelGateway {
+  return {
+    stateCodec: {
+      serialize: (state) => structuredClone(state) as { turn: number },
+      restore: (state) => structuredClone(state),
+    },
+    async *stream(input) {
+      const result = input.messages.some(({ role }) => role === 'tool')
+        ? { output: 'done' }
+        : { toolCalls: [toolCall], providerState: { turn: 1 } };
+      if (result.output) yield { type: 'output.delta' as const, delta: result.output };
+      yield { type: 'completed' as const, result };
+    },
+  };
+}
+
+function app(store: SQLiteRunStore, execute: Parameters<typeof defineTool>[0]['execute']) {
+  return createFevex({
+    models: { default: model() },
+    agents: [
+      defineAgent({
+        name: 'worker',
+        instructions: 'Work.',
+        tools: ['write'],
+      }),
+    ],
+    tools: [
+      defineTool({
+        name: 'write',
+        approval: 'required',
+        idempotency: 'keyed',
+        execute,
+      }),
+    ],
+    runStore: store,
+  });
+}
+
+async function pause(store: SQLiteRunStore): Promise<RunPausedError> {
+  let paused!: RunPausedError;
+  await app(store, () => ({ ok: true }))
+    .runAgent('worker', {
+      input: 'start',
+    })
+    .catch((error) => {
+      paused = error;
+    });
+  expect(paused).toBeInstanceOf(RunPausedError);
+  return paused;
+}
+
+async function waitForCompletion(store: SQLiteRunStore, runId: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while ((await store.getRun(runId))?.status !== 'completed') {
+    if (Date.now() >= deadline) throw new Error('SQLite resumed run did not complete');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+describe('SQLiteRunStore', () => {
+  test('passes the durable store contract in memory', async () => {
+    const store = createSQLiteRunStore({ filename: ':memory:' });
+    try {
+      await testRunStore(store);
+    } finally {
+      await store.close();
+      await store.close();
+    }
+  });
+
+  test('resumes from another process view and grants one concurrent lease', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'fevex-sqlite-'));
+    const filename = join(directory, 'runs.db');
+    const firstStore = createSQLiteRunStore({ filename });
+    let executions = 0;
+    const keys: string[] = [];
+    try {
+      const paused = await pause(firstStore);
+      const checkpoint = (await firstStore.getCheckpoint(paused.runId))!;
+      const expectedKey = checkpoint.pendingTools[checkpoint.pendingIndex]!.idempotencyKey;
+      expect(
+        await firstStore.getSession((await firstStore.getRun(paused.runId))!.sessionId),
+      ).toBeDefined();
+      await firstStore.close();
+
+      const storeA = createSQLiteRunStore({ filename });
+      const storeB = createSQLiteRunStore({ filename });
+      try {
+        expect((await storeA.getCheckpoint(paused.runId))?.pendingTools[0]?.idempotencyKey).toBe(
+          expectedKey,
+        );
+        const execute = (_input: unknown, context: { idempotencyKey: string }) => {
+          executions += 1;
+          keys.push(context.idempotencyKey);
+          return { ok: true };
+        };
+        const runtimeA = app(storeA, execute);
+        const runtimeB = app(storeB, execute);
+        const approval = paused.pause.type === 'approval' ? paused.pause.approval : undefined;
+        const resolution = {
+          type: 'approval' as const,
+          approvalId: approval!.id,
+          decision: 'approve' as const,
+          actor: { id: 'sqlite-test' },
+        };
+        const claims = await Promise.allSettled([
+          runtimeA.resumeRun(paused.runId, resolution),
+          runtimeB.resumeRun(paused.runId, resolution),
+        ]);
+        expect(claims.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+        await waitForCompletion(storeA, paused.runId);
+
+        expect(executions).toBe(1);
+        expect(keys).toEqual([expectedKey]);
+        expect(await storeA.getToolExecution(paused.runId, toolCall.id)).toMatchObject({
+          status: 'completed',
+          idempotencyKey: expectedKey,
+        });
+        const events = await storeA.listEvents(paused.runId);
+        expect(events.map(({ sequence }) => sequence)).toEqual(events.map((_, index) => index + 1));
+      } finally {
+        await Promise.all([storeA.close(), storeB.close()]);
+      }
+    } finally {
+      await firstStore.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('reuses a completed tool ledger entry after reopening the database', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'fevex-sqlite-'));
+    const filename = join(directory, 'runs.db');
+    const firstStore = createSQLiteRunStore({ filename });
+    let executions = 0;
+    try {
+      const paused = await pause(firstStore);
+      const run = (await firstStore.getRun(paused.runId))!;
+      const checkpoint = (await firstStore.getCheckpoint(paused.runId))!;
+      const pending = checkpoint.pendingTools[checkpoint.pendingIndex]!;
+      expect(
+        await firstStore.commitExecution({
+          expectedRevision: run.revision,
+          run,
+          toolExecution: {
+            runId: run.id,
+            toolCallId: pending.call.id,
+            toolName: pending.call.name,
+            input: pending.input,
+            status: 'completed',
+            attempt: 1,
+            idempotencyKey: pending.idempotencyKey,
+            output: 'already-done',
+            updatedAt: new Date().toISOString(),
+          },
+        }),
+      ).toBe(true);
+      await firstStore.close();
+
+      const secondStore = createSQLiteRunStore({ filename });
+      try {
+        const runtime = app(secondStore, () => {
+          executions += 1;
+          return 'executed';
+        });
+        const approval = paused.pause.type === 'approval' ? paused.pause.approval : undefined;
+        await runtime.resumeRun(run.id, {
+          type: 'approval',
+          approvalId: approval!.id,
+          decision: 'approve',
+          actor: { id: 'sqlite-test' },
+        });
+        await waitForCompletion(secondStore, run.id);
+        expect(executions).toBe(0);
+        expect((await secondStore.getRun(run.id))?.output).toBe('done');
+      } finally {
+        await secondStore.close();
+      }
+    } finally {
+      await firstStore.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

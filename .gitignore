@@ -1,5 +1,9 @@
 node_modules
 dist
 .astro
+.next
+*.tsbuildinfo
+.env*
+!.env.example
 .DS_Store
 docs/

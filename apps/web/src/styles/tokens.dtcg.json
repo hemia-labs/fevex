@@ -1,11 +1,11 @@
 {
   "$schema": "https://design-tokens.github.io/community-group/format/",
   "color": {
-    "obsidian": { "$type": "color", "$value": "#101114" },
-    "warm-ivory": { "$type": "color", "$value": "#F3F0E8" },
+    "obsidian": { "$type": "color", "$value": "#020202" },
+    "warm-ivory": { "$type": "color", "$value": "#F4F4F5" },
     "ruby-red": { "$type": "color", "$value": "#B92432" },
-    "graphite": { "$type": "color", "$value": "#34373D" },
-    "silver-mist": { "$type": "color", "$value": "#B8BBC1" }
+    "graphite": { "$type": "color", "$value": "#1D2024" },
+    "silver-mist": { "$type": "color", "$value": "#9CA3AF" }
   },
   "space": {
     "4": { "$type": "dimension", "$value": "4px" },

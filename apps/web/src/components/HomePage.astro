@@ -14,39 +14,38 @@ const copy = {
     primaryNav: "Primary",
     home: "FEVEX home",
     docs: "Docs",
-    framework: "Framework",
-    ecosystem: "Ecosystem",
-    blog: "Blog",
+    examples: "Examples",
+    adapters: "Adapters",
+    integrations: "Integrations",
+    roadmap: "Roadmap",
     cta: "Get Started",
-    h1: "Agents built",
-    h1For: "for",
-    h1Accent: "production.",
-    intro: "FEVEX is the open framework for building, orchestrating and operating reliable AI agents.",
-    readDocs: "Read Docs",
+    h1: "Agent Engineering Framework for TypeScript.",
+    intro: "Build code-first, provider-neutral AI agents with typed tools, portable schemas, observable runs and small runtime contracts.",
+    viewGithub: "View on GitHub",
     quickstartEyebrow: "Quick Start",
     quickstartTitle: "Start small. Stay portable.",
-    quickstartNote: "Add provider plugins only when the project actually needs them.",
+    quickstartNote: "Start with one typed agent. Add tools only when the workflow needs them.",
     codeFirstTitle: "Code first",
-    codeFirstText: "Define agents, tools and workflows as typed TypeScript.",
+    codeFirstText: "Define agents and tools as typed TypeScript.",
     codeFirstNote: "Keep behavior explicit, reviewable and versionable.",
     providerTitle: "Provider agnostic",
-    providerText: "Start with fevex and add @fevex/* providers only when needed.",
+    providerText: "Start with fevex and add @fevex/openai or @fevex/deepseek only when needed.",
     providerNote: "Core contracts stay separate from models and infrastructure.",
-    productionTitle: "Production path",
-    productionText: "Run locally first, then add durability when production needs it.",
-    productionNote: "Persistence, observability and infrastructure stay opt-in.",
+    productionTitle: "Runtime contracts",
+    productionText: "Validate tool input, tool output and final output at runtime.",
+    productionNote: "Events make runs observable without owning a platform.",
     problemTitle: "The demo is not the hard part.",
     problemText: "Most agent prototypes break when prompts, tools, memory, workflows and logs become production responsibilities.",
-    problemItems: ["Versionless prompts", "Unsafe tool calls", "Manual evals", "Incomplete logs"],
+    problemItems: ["Versionless prompts", "Unsafe tool calls", "Untested model calls", "Incomplete logs"],
     capabilitiesTitle: "One framework for the agent system.",
     capabilitiesText: "FEVEX keeps the core pieces explicit, typed and portable.",
-    capabilities: ["Agents", "Models", "Tools", "Memory", "Workflows", "Policies", "Observability", "Evals"],
-    controlsTitle: "Production controls from day one.",
-    controlsText: "Timeouts, retries, permissions, traces, events, costs and evaluation hooks belong in the system, not in scattered glue code.",
-    controlsItems: ["Guardrails and policies", "Auditable tool execution", "Traces, events and metrics", "Determinism where it matters"],
+    capabilities: ["Agents", "Models", "Tools", "Runtime", "Events", "Schemas", "Adapters"],
+    controlsTitle: "Validation at runtime boundaries.",
+    controlsText: "Fevex validates what enters tools, what tools return, and what the agent returns to your app.",
+    controlsItems: ["Standard Schema validation", "Portable JSON Schema", "Tool events", "Run events"],
     portableTitle: "Provider agnostic. Runtime portable.",
-    portableText: "Start local, connect the model provider you need, and keep the option to run on your own infrastructure or managed services.",
-    portableItems: ["OpenAI", "Anthropic", "Google", "AWS Bedrock", "Azure OpenAI", "Local models"],
+    portableText: "Start local, connect the model provider you need, and keep provider adapters outside the core.",
+    portableItems: ["@fevex/openai", "@fevex/deepseek", "custom ModelGateway"],
     footerTagline: "Open-source agent engineering for teams that need production behavior without platform lock-in.",
     footerProduct: "Product",
     footerResources: "Resources",
@@ -58,7 +57,6 @@ const copy = {
     footerChangelog: "Changelog",
     footerGuides: "Guides",
     footerApi: "API Reference",
-    footerBlog: "Blog",
     footerGithub: "GitHub",
     footerDiscussions: "Discussions",
     footerIssues: "Issues",
@@ -73,39 +71,38 @@ const copy = {
     primaryNav: "Principal",
     home: "Inicio de FEVEX",
     docs: "Docs",
-    framework: "Framework",
-    ecosystem: "Ecosistema",
-    blog: "Blog",
+    examples: "Ejemplos",
+    adapters: "Adapters",
+    integrations: "Integraciones",
+    roadmap: "Roadmap",
     cta: "Comenzar",
-    h1: "Agentes listos",
-    h1For: "para",
-    h1Accent: "producción.",
-    intro: "FEVEX es el framework abierto para construir, orquestar y operar agentes de IA confiables.",
-    readDocs: "Leer docs",
+    h1: "Agent Engineering Framework para TypeScript.",
+    intro: "Construye agentes code-first y neutrales al proveedor con tools tipadas, schemas portables, runs observables y contratos runtime pequeños.",
+    viewGithub: "Ver en GitHub",
     quickstartEyebrow: "Quick Start",
     quickstartTitle: "Empieza pequeño. Sigue portable.",
-    quickstartNote: "Agrega plugins de proveedores solo cuando el proyecto los necesite.",
+    quickstartNote: "Empieza con un agente tipado. Agrega tools solo cuando el flujo las necesite.",
     codeFirstTitle: "Código primero",
-    codeFirstText: "Define agentes, tools y workflows como TypeScript tipado.",
+    codeFirstText: "Define agentes y tools como TypeScript tipado.",
     codeFirstNote: "Mantén el comportamiento explícito, revisable y versionable.",
     providerTitle: "Agnóstico de proveedor",
-    providerText: "Empieza con fevex y agrega proveedores @fevex/* solo cuando hagan falta.",
+    providerText: "Empieza con fevex y agrega @fevex/openai o @fevex/deepseek solo cuando hagan falta.",
     providerNote: "Los contratos core viven separados de modelos e infraestructura.",
-    productionTitle: "Camino a producción",
-    productionText: "Corre local primero, luego agrega durabilidad cuando producción lo pida.",
-    productionNote: "Persistencia, observabilidad e infraestructura quedan opt-in.",
+    productionTitle: "Contratos runtime",
+    productionText: "Valida input de tools, output de tools y output final en runtime.",
+    productionNote: "Los eventos hacen observables los runs sin convertirlo en plataforma.",
     problemTitle: "La demo no es la parte difícil.",
     problemText: "La mayoría de prototipos de agentes se rompen cuando prompts, herramientas, memoria, workflows y logs se vuelven responsabilidades de producción.",
-    problemItems: ["Prompts sin versión", "Tools sin permisos", "Evals manuales", "Logs incompletos"],
+    problemItems: ["Prompts sin versión", "Tools sin permisos", "Llamadas sin test", "Logs incompletos"],
     capabilitiesTitle: "Un framework para el sistema agentic.",
     capabilitiesText: "FEVEX mantiene las piezas core explícitas, tipadas y portables.",
-    capabilities: ["Agents", "Models", "Tools", "Memory", "Workflows", "Policies", "Observability", "Evals"],
-    controlsTitle: "Controles de producción desde día uno.",
-    controlsText: "Timeouts, retries, permisos, trazas, eventos, costos y hooks de evaluación pertenecen al sistema, no a glue code disperso.",
-    controlsItems: ["Guardrails y políticas", "Ejecución auditable de tools", "Traces, eventos y métricas", "Determinismo donde importa"],
+    capabilities: ["Agents", "Models", "Tools", "Runtime", "Events", "Schemas", "Adapters"],
+    controlsTitle: "Validación en fronteras runtime.",
+    controlsText: "Fevex valida lo que entra a las tools, lo que devuelven y lo que el agente devuelve a tu app.",
+    controlsItems: ["Standard Schema validation", "JSON Schema portable", "Eventos de tools", "Eventos de run"],
     portableTitle: "Agnóstico de proveedor. Runtime portable.",
-    portableText: "Empieza local, conecta el proveedor de modelos que necesites y conserva la opción de correr en infraestructura propia o administrada.",
-    portableItems: ["OpenAI", "Anthropic", "Google", "AWS Bedrock", "Azure OpenAI", "Modelos locales"],
+    portableText: "Empieza local, conecta el proveedor de modelos que necesites y deja los adapters fuera del core.",
+    portableItems: ["@fevex/openai", "@fevex/deepseek", "custom ModelGateway"],
     footerTagline: "Ingeniería de agentes open source para equipos que necesitan comportamiento de producción sin lock-in de plataforma.",
     footerProduct: "Producto",
     footerResources: "Recursos",
@@ -117,7 +114,6 @@ const copy = {
     footerChangelog: "Changelog",
     footerGuides: "Guías",
     footerApi: "Referencia API",
-    footerBlog: "Blog",
     footerGithub: "GitHub",
     footerDiscussions: "Discusiones",
     footerIssues: "Issues",
@@ -133,8 +129,8 @@ const footerGroups = [
     title: copy.footerProduct,
     links: [
       [copy.footerInstall, "#quickstart"],
-      [copy.footerDocs, "#quickstart"],
-      [copy.footerExamples, "#quickstart"],
+      [copy.footerDocs, "#docs"],
+      [copy.footerExamples, "#examples"],
       [copy.footerChangelog, "#quickstart"],
     ],
   },
@@ -142,22 +138,21 @@ const footerGroups = [
     title: copy.footerResources,
     links: [
       [copy.footerGuides, "#quickstart"],
-      [copy.footerApi, "#quickstart"],
-      [copy.footerBlog, "#quickstart"],
+      [copy.footerApi, "#docs"],
     ],
   },
   {
     title: copy.footerCommunity,
     links: [
-      [copy.footerGithub, "https://github.com/fevex"],
-      [copy.footerDiscussions, "https://github.com/fevex"],
-      [copy.footerIssues, "https://github.com/fevex"],
+      [copy.footerGithub, "https://github.com/hemia-labs/fevex"],
+      [copy.footerDiscussions, "https://github.com/hemia-labs/fevex"],
+      [copy.footerIssues, "https://github.com/hemia-labs/fevex"],
     ],
   },
   {
     title: copy.footerLegal,
     links: [
-      [copy.footerLicense, "https://github.com/fevex"],
+      [copy.footerLicense, "https://github.com/hemia-labs/fevex"],
       [copy.footerPrivacy, "mailto:hello@fevex.dev"],
       [copy.footerContact, "mailto:hello@fevex.dev"],
     ],
@@ -190,11 +185,12 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
         <img src="/brand/fevex-wordmark.svg" alt="FEVEX" />
       </a>
       <div class="nav-links">
-        <a href="#quickstart">{copy.docs}</a>
-        <a href="#capabilities">{copy.framework}</a>
-        <a href="#portable">{copy.ecosystem}</a>
-        <a href="#quickstart">{copy.blog}</a>
-        <a href="https://github.com/fevex">GitHub</a>
+        <a href="#docs">{copy.docs}</a>
+        <a href="#examples">{copy.examples}</a>
+        <a href="#adapters">{copy.adapters}</a>
+        <a href="#integrations">{copy.integrations}</a>
+        <a href="#roadmap">{copy.roadmap}</a>
+        <a href="https://github.com/hemia-labs/fevex">GitHub</a>
         <a href="/">EN</a>
         <a href="/es/">ES</a>
         <a class:list={[primaryButton, "nav-primary-button"]} href="#quickstart">{copy.cta}</a>
@@ -246,13 +242,13 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
 
         <div class="hero-content">
           <div class="copy">
-            <h1>{copy.h1}<br />{copy.h1For} <span>{copy.h1Accent}</span></h1>
+            <h1>{copy.h1}</h1>
             <p class="intro">
               {copy.intro}
             </p>
             <div class="actions">
               <a href="#quickstart" class={heroPrimaryButton}>{copy.cta}</a>
-              <a href="#quickstart" class:list={[heroSecondaryButton, "secondary-button"]}>{copy.readDocs}</a>
+              <a href="https://github.com/hemia-labs/fevex" class:list={[heroSecondaryButton, "secondary-button"]}>{copy.viewGithub}</a>
             </div>
           </div>
         </div>
@@ -269,23 +265,32 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
             <div class="install">
               <Terminal size={24} strokeWidth={1.8} aria-hidden="true" />
               <code>npm install fevex</code>
-              <Copy size={22} strokeWidth={1.8} aria-hidden="true" />
+              <button class="install-copy" type="button" data-command="npm install fevex" aria-label="Copy npm install fevex">
+                <Copy size={18} strokeWidth={1.8} aria-hidden="true" />
+              </button>
             </div>
             <p class="section-lede">{copy.quickstartNote}</p>
           </div>
           <div class="code-window" aria-label="agent.ts">
             <div class="code-title">
-              <span>&gt;_</span>
-              <strong>agent.ts</strong>
               <i></i><i></i><i></i>
+              <strong>agent.ts</strong>
             </div>
-            <pre><code><span>import</span> &#123; Agent &#125; <span>from</span> "fevex";
-<span>import</span> &#123; openai &#125; <span>from</span> "@fevex/openai";
+            <pre><code><span>import</span> &#123; createFevex, defineAgent &#125; <span>from</span> "fevex";
+<span>import</span> &#123; createOpenAI &#125; <span>from</span> "@fevex/openai";
 
-<span>const</span> agent = <span>new</span> Agent(&#123;
-  name: <em>"researcher"</em>,
-  model: openai(<em>"gpt-5-mini"</em>),
-  tools: []
+<span>const</span> app = createFevex(&#123;
+  models: &#123;
+    default: createOpenAI(&#123; apiKey: process.env.OPENAI_API_KEY! &#125;)(<em>"gpt-5.6"</em>),
+  &#125;,
+  agents: [defineAgent(&#123;
+    name: <em>"support"</em>,
+    instructions: <em>"Answer clearly and briefly."</em>,
+  &#125;)],
+&#125;);
+
+<span>const</span> result = <span>await</span> app.runAgent(<em>"support"</em>, &#123;
+  input: <em>"How do I reset my API key?"</em>,
 &#125;);</code></pre>
           </div>
         </div>
@@ -558,7 +563,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     max-width: 760px;
     font-size: var(--text-h1);
     line-height: var(--text-h1--line-height);
-    font-weight: 600;
+    font-weight: 500;
     letter-spacing: 0;
   }
 
@@ -570,13 +575,13 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     max-width: 920px;
     font-size: var(--text-display);
     line-height: var(--text-display--line-height);
-    font-weight: 600;
+    font-weight: 500;
   }
 
   .intro {
     max-width: 500px;
     margin: var(--space-24) 0 0;
-    color: color-mix(in oklab, var(--brand-warm-ivory) 72%, transparent);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 64%, transparent);
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
   }
@@ -691,7 +696,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   .section-lede {
     max-width: 760px;
     margin: 0 0 var(--space-32);
-    color: color-mix(in oklab, var(--brand-warm-ivory) 68%, transparent);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 62%, transparent);
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
   }
@@ -703,61 +708,104 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   .install code {
     color: var(--brand-warm-ivory);
     font-family: var(--font-mono);
-    font-size: var(--text-body);
+    font-size: var(--text-code);
     font-weight: 400;
+  }
+
+  .install-copy {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 22%, transparent);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    cursor: pointer;
+    transition: border-color 160ms ease, color 160ms ease, transform 160ms ease;
+  }
+
+  .install-copy:hover,
+  .install-copy.is-copied {
+    border-color: var(--brand-ruby-red);
+    color: var(--brand-warm-ivory);
+  }
+
+  .install-copy.is-copied {
+    transform: translateY(-1px);
+  }
+
+  .install-copy.is-copied svg {
+    opacity: 0;
+  }
+
+  .install-copy.is-copied::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 12px;
+    height: 7px;
+    border-left: 2px solid var(--brand-ruby-red);
+    border-bottom: 2px solid var(--brand-ruby-red);
+    transform: translate(-50%, -60%) rotate(-45deg);
+  }
+
+  .install-copy svg {
+    color: var(--brand-ruby-red);
   }
 
   .code-window {
     overflow: hidden;
     width: 100%;
-    max-width: 520px;
+    max-width: 536px;
     justify-self: end;
-    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 18%, transparent);
+    border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 22%, transparent);
     border-radius: calc(var(--radius) * 1.6);
-    background: var(--brand-obsidian);
-    opacity: 0.88;
+    background: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
   }
 
   .code-title {
     display: grid;
-    grid-template-columns: auto 1fr auto auto auto;
+    grid-template-columns: auto auto auto 1fr;
     align-items: center;
-    gap: var(--space-16);
-    min-height: 56px;
-    padding: 0 var(--space-24);
-    border-bottom: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
-    color: var(--brand-warm-ivory);
-  }
-
-  .code-title span {
-    color: var(--brand-ruby-red);
-    font-family: var(--font-mono);
-    font-size: 20px;
+    gap: 8px;
+    min-height: 40px;
+    padding: 0 var(--space-16);
+    border-bottom: 1px solid color-mix(in oklab, var(--brand-silver-mist) 18%, transparent);
+    color: var(--brand-silver-mist);
   }
 
   .code-title strong {
-    font-size: var(--text-body);
-    font-weight: 500;
+    margin-left: 8px;
+    color: color-mix(in oklab, var(--brand-silver-mist) 84%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+    font-weight: 400;
   }
 
   .code-title i {
-    width: 12px;
+    width: 9px;
     aspect-ratio: 1;
-    border: 2px solid color-mix(in oklab, var(--brand-warm-ivory) 28%, transparent);
+    border: 0;
+    background: color-mix(in oklab, var(--brand-silver-mist) 34%, transparent);
     border-radius: 50%;
   }
 
   .code-title i:first-of-type {
-    border-color: var(--brand-ruby-red);
+    background: var(--brand-ruby-red);
   }
 
   .code-window pre {
     margin: 0;
-    padding: 20px var(--space-24);
-    color: var(--brand-warm-ivory);
+    padding: var(--space-16);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
     font-family: var(--font-mono);
-    font-size: 15px;
-    line-height: 1.65;
+    font-size: var(--text-code);
+    line-height: 1.7;
   }
 
   .code-window span {
@@ -765,7 +813,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .code-window em {
-    color: #c9ef67;
+    color: var(--brand-silver-mist);
     font-style: normal;
   }
 
@@ -781,19 +829,19 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     display: grid;
     grid-template-rows: auto auto auto 1fr;
     align-content: start;
-    gap: var(--space-24);
-    min-height: 300px;
-    padding: var(--space-32);
-    border-radius: calc(var(--radius) * 1.4);
-    background: var(--brand-obsidian);
+    gap: var(--space-16);
+    min-height: 220px;
+    padding: var(--space-24);
+    border-radius: calc(var(--radius) * 1.6);
+    background: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
     color: var(--brand-warm-ivory);
-    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
+    border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 18%, transparent);
   }
 
   .card-heading {
     display: grid;
-    grid-template-columns: 64px 1fr;
-    gap: var(--space-32);
+    grid-template-columns: 40px 1fr;
+    gap: var(--space-16);
     align-items: center;
   }
 
@@ -826,10 +874,8 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     position: relative;
     display: grid;
     place-items: center;
-    width: 64px;
+    width: 40px;
     aspect-ratio: 1;
-    border: 1px solid var(--brand-ruby-red);
-    border-radius: var(--radius);
     color: var(--brand-ruby-red);
   }
 
@@ -839,7 +885,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
 
   .card-rule {
     display: block;
-    width: 64px;
+    width: 40px;
     height: 1px;
     background: var(--brand-ruby-red);
   }
@@ -860,7 +906,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .quickstart-mark img {
-    width: 38px;
+    width: 28px;
     height: auto;
   }
 
@@ -869,7 +915,6 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
     gap: clamp(var(--space-32), 6vw, var(--space-96));
     align-items: start;
-    border-top: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 8%, transparent);
   }
 
   .pill-grid,
@@ -921,7 +966,6 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     grid-template-columns: minmax(260px, 1.1fr) minmax(0, 2fr);
     gap: clamp(var(--space-48), 8vw, var(--space-96));
     padding: clamp(var(--space-64), 9vw, var(--space-128)) clamp(var(--space-24), 6vw, var(--space-96)) var(--space-48);
-    border-top: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
     background:
       linear-gradient(180deg, color-mix(in oklab, var(--brand-graphite) 18%, var(--brand-obsidian)), var(--brand-obsidian) 46%),
       var(--brand-obsidian);
@@ -1132,3 +1176,37 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
 </style>
+
+<script>
+  const copyCommand = async (command: string) => {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(command);
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = command;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  };
+
+  document.querySelectorAll<HTMLButtonElement>(".install-copy").forEach((button) => {
+    const command = button.dataset.command;
+    if (!command) return;
+
+    button.addEventListener("click", async () => {
+      await copyCommand(command);
+      button.classList.add("is-copied");
+      button.setAttribute("aria-label", "Copied npm install fevex");
+
+      window.setTimeout(() => {
+        button.classList.remove("is-copied");
+        button.setAttribute("aria-label", "Copy npm install fevex");
+      }, 1600);
+    });
+  });
+</script>

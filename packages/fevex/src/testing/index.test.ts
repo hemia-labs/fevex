@@ -1,10 +1,42 @@
 import { describe, expect, test } from 'bun:test';
-import type { ModelGenerateInput } from '../models';
-import { fakeModel, testModelGateway } from './index';
+import type { ModelGateway, ModelInput, ModelResult, ModelStreamEvent } from '../models';
+import { InMemoryRunStore } from '../runtime';
+import { fakeModel, testModelGateway, testRunStore } from './index';
 
-const input = (content: string, signal?: AbortSignal): ModelGenerateInput => ({
+const input = (content: string, signal?: AbortSignal): ModelInput => ({
   messages: [{ role: 'user', content }],
   signal,
+});
+
+function* toModelEvents(result: ModelResult): Generator<ModelStreamEvent> {
+  if (result.output !== undefined) {
+    const delta = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+    if (delta) yield { type: 'output.delta', delta };
+  }
+  yield { type: 'completed', result };
+}
+
+function streamFrom(
+  generate: (input: ModelInput) => ModelResult | Promise<ModelResult>,
+): ModelGateway['stream'] {
+  return async function* (input) {
+    yield* toModelEvents(await generate(input));
+  };
+}
+
+async function collectModel(model: ModelGateway, modelInput: ModelInput): Promise<ModelResult> {
+  let result: ModelResult | undefined;
+  for await (const event of model.stream(modelInput)) {
+    if (event.type === 'completed') result = event.result;
+  }
+  if (!result) throw new Error('Model stream did not complete');
+  return result;
+}
+
+describe('RunStore contract', () => {
+  test('passes for InMemoryRunStore', async () => {
+    await expect(testRunStore(new InMemoryRunStore())).resolves.toBeUndefined();
+  });
 });
 
 describe('fakeModel', () => {
@@ -15,8 +47,8 @@ describe('fakeModel', () => {
     const firstInput = input('one');
     const secondInput = input('two');
 
-    await expect(model.generate(firstInput)).resolves.toBe(first);
-    await expect(model.generate(secondInput)).resolves.toBe(second);
+    await expect(collectModel(model, firstInput)).resolves.toBe(first);
+    await expect(collectModel(model, secondInput)).resolves.toBe(second);
     expect(model.calls).toEqual([firstInput, secondInput]);
   });
 
@@ -25,15 +57,15 @@ describe('fakeModel', () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(model.generate(input('aborted', controller.signal))).rejects.toThrow();
+    await expect(collectModel(model, input('aborted', controller.signal))).rejects.toThrow();
     expect(model.calls).toHaveLength(0);
-    await expect(model.generate(input('next'))).resolves.toEqual({ output: 'ok' });
+    await expect(collectModel(model, input('next'))).resolves.toEqual({ output: 'ok' });
   });
 
   test('fails when responses are exhausted', async () => {
     const model = fakeModel();
 
-    await expect(model.generate(input('one'))).rejects.toThrow(
+    await expect(collectModel(model, input('one'))).rejects.toThrow(
       'fakeModel has no response for call 1',
     );
     expect(model.calls).toHaveLength(1);
@@ -41,7 +73,7 @@ describe('fakeModel', () => {
 
   test('passes the shared ModelGateway contract', async () => {
     const model = fakeModel(
-      { output: 'ok', usage: { totalTokens: 1 } },
+      { output: { answer: 'ok' }, usage: { totalTokens: 1 } },
       { toolCalls: [{ id: 'call-1', name: 'lookup', input: { query: 'value' } }] },
     );
 
@@ -52,29 +84,35 @@ describe('fakeModel', () => {
     const providerError = new Error('provider failed');
     let calls = 0;
 
-    await expect(testModelGateway({
-      async generate(input) {
-        input.signal?.throwIfAborted();
-        calls += 1;
-        if (calls === 1) return { output: 'ok' };
-        if (calls === 2) {
-          return { toolCalls: [{ id: 'call-1', name: 'lookup', input: { query: 'value' } }] };
-        }
-        throw providerError;
-      },
-    }, { error: providerError })).resolves.toBeUndefined();
+    await expect(
+      testModelGateway(
+        {
+          stream: streamFrom(async (input) => {
+            input.signal?.throwIfAborted();
+            calls += 1;
+            if (calls === 1) return { output: { answer: 'ok' } };
+            if (calls === 2) {
+              return { toolCalls: [{ id: 'call-1', name: 'lookup', input: { query: 'value' } }] };
+            }
+            throw providerError;
+          }),
+        },
+        { error: providerError },
+      ),
+    ).resolves.toBeUndefined();
   });
 
   test('ModelGateway contract detects invalid gateways', async () => {
-    await expect(testModelGateway({
-      async generate() {
-        return {};
-      },
-    })).rejects.toThrow('ModelGateway must return output for a final answer');
+    await expect(
+      testModelGateway({
+        stream: streamFrom(async () => {
+          return {};
+        }),
+      }),
+    ).rejects.toThrow('ModelGateway must stream an output delta before completed');
 
-    await expect(testModelGateway(fakeModel(
-      { output: 'ok' },
-      { output: 'not a tool call' },
-    ))).rejects.toThrow('ModelGateway must return one tool call');
+    await expect(
+      testModelGateway(fakeModel({ output: { answer: 'ok' } }, { output: 'not a tool call' })),
+    ).rejects.toThrow('ModelGateway must return one tool call');
   });
 });

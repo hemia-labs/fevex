@@ -4,6 +4,8 @@ export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type RunId = string;
 
 export const SCHEMA_NOT_TRANSPORTABLE = 'SCHEMA_NOT_TRANSPORTABLE';
+export const PROVIDER_SCHEMA_UNSUPPORTED = 'PROVIDER_SCHEMA_UNSUPPORTED';
+export const PROVIDER_REASONING_UNSUPPORTED = 'PROVIDER_REASONING_UNSUPPORTED';
 
 export interface ExecutionContext {
   namespace?: string;
@@ -36,15 +38,64 @@ export interface ToolCall {
 
 export type AgentEventType =
   | 'run.started'
+  | 'run.paused'
+  | 'run.resumed'
+  | 'model.started'
+  | 'model.output.delta'
   | 'model.completed'
+  | 'tool.started'
   | 'tool.completed'
   | 'tool.failed'
+  | 'tool.retrying'
+  | 'tool.execution_unknown'
+  | 'approval.requested'
+  | 'approval.resolved'
   | 'run.completed'
-  | 'run.failed';
+  | 'run.failed'
+  | 'run.cancelled';
 
-export interface AgentEvent<TPayload extends JsonValue = JsonObject> {
-  type: AgentEventType;
+export interface AgentEventPayloads {
+  'run.started': undefined;
+  'run.paused': { reason: 'approval' | 'tool_execution_unknown'; toolCallId: string };
+  'run.resumed': undefined;
+  'model.started': { step: number };
+  'model.output.delta': { step: number; delta: string };
+  'model.completed': { step: number; usage?: JsonObject };
+  'tool.started': { step: number; toolCallId: string; toolName: string; attempt?: number };
+  'tool.completed': { step: number; toolCallId: string; toolName: string; attempt?: number };
+  'tool.failed': { step: number; toolCallId: string; toolName: string; error: string };
+  'tool.retrying': {
+    step: number;
+    toolCallId: string;
+    toolName: string;
+    attempt: number;
+    delayMs: number;
+    error: string;
+  };
+  'tool.execution_unknown': { step: number; toolCallId: string; toolName: string };
+  'approval.requested': { approvalId: string; toolCallId: string; toolName: string };
+  'approval.resolved': {
+    approvalId: string;
+    toolCallId: string;
+    decision: 'approve' | 'reject';
+    actorId: string;
+  };
+  'run.completed': { output: JsonValue; usage?: JsonObject };
+  'run.failed': { error: string };
+  'run.cancelled': { reason: 'aborted' | 'timeout' | 'approval_rejected' };
+}
+
+interface AgentEventBase {
+  id: string;
+  sequence: number;
   runId: RunId;
   timestamp: string;
-  payload?: TPayload;
 }
+
+export type AgentEvent<TType extends AgentEventType = AgentEventType> = {
+  [TCurrent in TType]: AgentEventBase & {
+    type: TCurrent;
+  } & (AgentEventPayloads[TCurrent] extends undefined
+      ? { payload?: never }
+      : { payload: AgentEventPayloads[TCurrent] });
+}[TType];

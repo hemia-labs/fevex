@@ -60,11 +60,11 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
-  --text-display: 64px;
+  --text-display: 60px;
   --text-display--line-height: 110%;
-  --text-h1: 48px;
+  --text-h1: 44px;
   --text-h1--line-height: 115%;
-  --text-h2: 36px;
+  --text-h2: 34px;
   --text-h2--line-height: 120%;
   --text-h3: 28px;
   --text-h3--line-height: 130%;
@@ -74,16 +74,16 @@
   --text-body--line-height: 150%;
   --text-caption: 13px;
   --text-caption--line-height: 140%;
-  --text-code: 14px;
+  --text-code: 13px;
   --text-code--line-height: 160%;
 }
 
 :root {
-  --brand-obsidian: #101114;
-  --brand-warm-ivory: #f3f0e8;
+  --brand-obsidian: #020202;
+  --brand-warm-ivory: #f4f4f5;
   --brand-ruby-red: #b92432;
-  --brand-graphite: #34373d;
-  --brand-silver-mist: #b8bbc1;
+  --brand-graphite: #1d2024;
+  --brand-silver-mist: #9ca3af;
   --space-4: 4px;
   --space-8: 8px;
   --space-16: 16px;
@@ -117,7 +117,7 @@
   --chart-3: var(--brand-silver-mist);
   --chart-4: var(--brand-obsidian);
   --chart-5: var(--brand-warm-ivory);
-  --radius: 0.5rem;
+  --radius: 0.375rem;
   --sidebar: var(--brand-warm-ivory);
   --sidebar-foreground: var(--brand-obsidian);
   --sidebar-primary: var(--brand-ruby-red);

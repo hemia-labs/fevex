@@ -1,5 +1,5 @@
 import { createOpenAI } from '@fevex/openai';
-import { createFevex, defineAgent, defineTool } from 'fevex';
+import { createFevex, defineAgent, defineTool } from '@fevex/core';
 import { z } from 'zod';
 
 const apiKey = process.env.OPENAI_API_KEY;
@@ -18,7 +18,7 @@ const accountOutput = z.object({
 });
 
 const getAccount = defineTool({
-  name: 'accounts.get',
+  name: 'accounts_get',
   description: 'Get an account by ID.',
   inputSchema: accountInput,
   outputSchema: accountOutput,
@@ -38,14 +38,14 @@ const app = createFevex({
   agents: [defineAgent({
     name: 'support',
     instructions: 'Answer account questions clearly.',
-    tools: ['accounts.get'],
-    outputSchema: z.string(),
+    tools: ['accounts_get'],
+    outputSchema: z.object({ answer: z.string() }),
   })],
   tools: [getAccount],
 });
 
-const result = await app.runAgent<string, string>('support', {
+const result = await app.runAgent<string, { answer: string }>('support', {
   input: 'What is the status of account 42?',
 });
 
-console.log(result.output);
+console.log(result.output.answer);

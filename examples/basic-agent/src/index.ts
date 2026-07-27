@@ -1,5 +1,5 @@
-import { createFevex, defineAgent, defineTool } from 'fevex';
-import { fakeModel } from 'fevex/testing';
+import { createFevex, defineAgent, defineTool } from '@fevex/core';
+import { fakeModel } from '@fevex/core/testing';
 import { z } from 'zod';
 
 const accountInput = z.object({
@@ -12,7 +12,7 @@ const accountOutput = z.object({
 });
 
 const getAccount = defineTool({
-  name: 'accounts.get',
+  name: 'accounts_get',
   description: 'Get an account by ID.',
   inputSchema: accountInput,
   outputSchema: accountOutput,
@@ -25,11 +25,11 @@ const model = fakeModel(
   {
     toolCalls: [{
       id: 'call-1',
-      name: 'accounts.get',
+      name: 'accounts_get',
       input: { accountId: 42 },
     }],
   },
-  { output: 'Account 42 is active.' },
+  { output: { answer: 'Account 42 is active.' } },
 );
 
 const app = createFevex({
@@ -37,18 +37,18 @@ const app = createFevex({
   agents: [defineAgent({
     name: 'support',
     instructions: 'Answer account questions clearly.',
-    tools: ['accounts.get'],
-    outputSchema: z.string(),
+    tools: ['accounts_get'],
+    outputSchema: z.object({ answer: z.string() }),
   })],
   tools: [getAccount],
 });
 
-const result = await app.runAgent<string, string>('support', {
+const result = await app.runAgent<string, { answer: string }>('support', {
   input: 'What is the status of account 42?',
 });
 
-if (result.output !== 'Account 42 is active.' || model.calls.length !== 2) {
+if (result.output.answer !== 'Account 42 is active.' || model.calls.length !== 2) {
   throw new Error('Basic agent example failed');
 }
 
-console.log(result.output);
+console.log(result.output.answer);
