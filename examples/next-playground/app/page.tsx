@@ -2,16 +2,20 @@
 
 import {
   ArrowUp,
+  Bug,
   ChevronRight,
   Check,
   Circle,
   Sparkles,
+  Square,
   Trash2,
   User,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { AgentEvent, RunRecord } from '@fevex/core';
+import { createFevexHttpClient } from '@fevex/core/http';
 
 type Message = {
   role: 'assistant' | 'user';
@@ -19,58 +23,56 @@ type Message = {
   tools?: ToolActivity[];
   startedAt?: number;
   completedAt?: number;
+  runId?: string;
+  sessionId?: string;
+  usage?: Record<string, number>;
+  events?: AgentEvent[];
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
 };
 
 type ToolActivity = {
+  id: string;
   name: string;
-  status: 'running' | 'done' | 'failed';
+  status: 'running' | 'done' | 'failed' | 'cancelled';
   startedAt: number;
   completedAt?: number;
 };
 
-type AgentSummary = {
+type RunnableSummary = {
+  kind: 'agent' | 'workflow';
   name: string;
   label: string;
   description: string;
 };
 
-type AgentEvent =
-  { type: string; payload?: unknown; timestamp?: string };
-
-type StreamMessage =
-  | { type: 'event'; event: AgentEvent }
-  | { type: 'error'; error: string };
-
 const initialMessages: Message[] = [
   {
     role: 'assistant',
-    content: 'Loading agents from the Nest API.',
+    content: 'Loading agents and workflows from the Nest API.',
   },
 ];
 
 const apiUrl = (process.env.NEXT_PUBLIC_NEST_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
-const toolLabels: Record<string, string> = {
-  accounts_get: 'datos de cuenta',
-  tickets_recent: 'tickets recientes',
-  metrics_get: 'métricas del servicio',
-  incidents_open: 'incidentes abiertos',
-  escalations_create: 'escalación operativa',
-};
+const client = createFevexHttpClient({ baseUrl: apiUrl });
 
 export default function Home() {
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [runnables, setRunnables] = useState<RunnableSummary[]>([]);
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState('');
-  const [selectedAgentName, setSelectedAgentName] = useState('');
-  const [isLoadingAgents, setIsLoadingAgents] = useState(true);
+  const [selectedRunnableId, setSelectedRunnableId] = useState('');
+  const [isLoadingRunnables, setIsLoadingRunnables] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
+  const [debug, setDebug] = useState(false);
+  const [sessionId, setSessionId] = useState<string>();
+  const [activeRunId, setActiveRunId] = useState<string>();
   const [now, setNow] = useState(Date.now());
+  const runControllerRef = useRef<AbortController>(null);
   const conversationRef = useRef<HTMLElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
-  const selectedAgent = agents.find((agent) => agent.name === selectedAgentName);
-  const AgentIcon = selectedAgent?.name === 'assistant' ? Sparkles : Circle;
-  const status = isLoadingAgents ? 'Connecting' : agents.length ? 'Connected' : 'Disconnected';
+  const selectedRunnable = runnables.find((item) => runnableId(item) === selectedRunnableId);
+  const AgentIcon = selectedRunnable?.kind === 'workflow' ? Sparkles : Circle;
+  const status = isLoadingRunnables ? 'Connecting' : runnables.length ? 'Connected' : 'Disconnected';
 
   useEffect(() => {
     if (!stickToBottomRef.current) return;
@@ -89,35 +91,47 @@ export default function Home() {
   useEffect(() => {
     const controller = new AbortController();
 
-    async function loadAgents() {
+    async function loadRunnables() {
       try {
-        const response = await fetch(`${apiUrl}/agents`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`GET /agents returned ${response.status}`);
+        const [agentsResponse, workflowsResponse] = await Promise.all([
+          fetch(`${apiUrl}/agents`, { signal: controller.signal }),
+          fetch(`${apiUrl}/workflows`, { signal: controller.signal }),
+        ]);
+        if (!agentsResponse.ok) throw new Error(`GET /agents returned ${agentsResponse.status}`);
+        if (!workflowsResponse.ok) {
+          throw new Error(`GET /workflows returned ${workflowsResponse.status}`);
+        }
 
-        const nextAgents = await response.json() as AgentSummary[];
+        const nextAgents = await agentsResponse.json() as Omit<RunnableSummary, 'kind'>[];
+        const nextWorkflows = await workflowsResponse.json() as Omit<RunnableSummary, 'kind'>[];
         if (!Array.isArray(nextAgents)) throw new Error('GET /agents returned invalid JSON');
+        if (!Array.isArray(nextWorkflows)) throw new Error('GET /workflows returned invalid JSON');
 
-        setAgents(nextAgents);
-        setSelectedAgentName(nextAgents[0]?.name ?? '');
+        const nextRunnables: RunnableSummary[] = [
+          ...nextAgents.map((agent) => ({ ...agent, kind: 'agent' as const })),
+          ...nextWorkflows.map((workflow) => ({ ...workflow, kind: 'workflow' as const })),
+        ];
+        setRunnables(nextRunnables);
+        setSelectedRunnableId(nextRunnables[0] ? runnableId(nextRunnables[0]) : '');
         setMessages([{
           role: 'assistant',
-          content: nextAgents.length ? 'Ready.' : 'No agents are available.',
+          content: nextRunnables.length ? 'Ready.' : 'No agents or workflows are available.',
         }]);
       } catch (error) {
         if (controller.signal.aborted) return;
 
-        setAgents([]);
-        setSelectedAgentName('');
+        setRunnables([]);
+        setSelectedRunnableId('');
         setMessages([{
           role: 'assistant',
           content: toErrorMessage(error),
         }]);
       } finally {
-        if (!controller.signal.aborted) setIsLoadingAgents(false);
+        if (!controller.signal.aborted) setIsLoadingRunnables(false);
       }
     }
 
-    void loadAgents();
+    void loadRunnables();
     return () => controller.abort();
   }, []);
 
@@ -125,56 +139,131 @@ export default function Home() {
     event.preventDefault();
 
     const content = input.trim();
-    if (!content || !selectedAgent || isRunning) return;
+    if (!content || !selectedRunnable || isRunning) return;
 
     setMessages((current) => [
       ...current,
       { role: 'user', content },
-      { role: 'assistant', content: '', tools: [], startedAt: Date.now() },
+      {
+        role: 'assistant',
+        content: '',
+        tools: [],
+        events: [],
+        startedAt: Date.now(),
+        status: 'running',
+      },
     ]);
     setInput('');
     setIsRunning(true);
+    const controller = new AbortController();
+    runControllerRef.current = controller;
+    let terminal = false;
 
     try {
-      const response = await fetch(`${apiUrl}/agents/${encodeURIComponent(selectedAgent.name)}/stream`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ input: content }),
-      });
-      if (!response.ok) throw new Error(`POST /agents/${selectedAgent.name}/stream returned ${response.status}`);
-      if (!response.body) throw new Error('Agent stream returned no body');
+      const request = {
+        input: content,
+        ...(sessionId ? { sessionId } : {}),
+      };
+      const run =
+        selectedRunnable.kind === 'workflow'
+          ? await client.startWorkflow(selectedRunnable.name, request)
+          : await client.startRun(selectedRunnable.name, request);
+      setSessionId(run.sessionId);
+      setActiveRunId(run.id);
+      setAssistantRun(run);
 
-      for await (const message of readEventStream(response.body)) {
-        if (message.type === 'error') {
-          appendAssistantDelta(message.error);
-          continue;
+      for await (const agentEvent of client.observeRun(run.id, { signal: controller.signal })) {
+        recordAssistantEvent(agentEvent);
+
+        if (agentEvent.type === 'model.output.delta') {
+          appendAssistantDelta(readPayloadText(agentEvent.payload, 'delta'));
         }
-        if (message.event.type === 'model.output.delta') {
-          appendAssistantDelta(readPayloadText(message.event.payload, 'delta'));
+        if (agentEvent.type === 'tool.started') {
+          setAssistantTool(
+            readPayloadText(agentEvent.payload, 'toolCallId'),
+            readPayloadText(agentEvent.payload, 'toolName'),
+            'running',
+            eventTime(agentEvent),
+          );
         }
-        if (message.event.type === 'tool.started') {
-          setAssistantTool(readPayloadText(message.event.payload, 'toolName'), 'running', eventTime(message.event));
+        if (agentEvent.type === 'tool.completed') {
+          setAssistantTool(
+            readPayloadText(agentEvent.payload, 'toolCallId'),
+            readPayloadText(agentEvent.payload, 'toolName'),
+            'done',
+            eventTime(agentEvent),
+          );
         }
-        if (message.event.type === 'tool.completed') {
-          setAssistantTool(readPayloadText(message.event.payload, 'toolName'), 'done', eventTime(message.event));
+        if (agentEvent.type === 'tool.failed') {
+          setAssistantTool(
+            readPayloadText(agentEvent.payload, 'toolCallId'),
+            readPayloadText(agentEvent.payload, 'toolName'),
+            'failed',
+            eventTime(agentEvent),
+          );
         }
-        if (message.event.type === 'tool.failed') {
-          setAssistantTool(readPayloadText(message.event.payload, 'toolName'), 'failed', eventTime(message.event));
+        if (agentEvent.type === 'workflow.step.started') {
+          setAssistantTool(
+            readPayloadText(agentEvent.payload, 'stepId'),
+            workflowStepName(agentEvent.payload),
+            'running',
+            eventTime(agentEvent),
+          );
         }
-        if (message.event.type === 'run.failed') {
-          completeAssistant(eventTime(message.event));
-          appendAssistantDelta(readPayloadText(message.event.payload, 'error'));
+        if (agentEvent.type === 'workflow.step.completed') {
+          setAssistantTool(
+            readPayloadText(agentEvent.payload, 'stepId'),
+            workflowStepName(agentEvent.payload),
+            'done',
+            eventTime(agentEvent),
+          );
         }
-        if (message.event.type === 'run.completed') {
-          setAssistantAnswer(readCompletedAnswer(message.event.payload));
-          completeAssistant(eventTime(message.event));
+        if (agentEvent.type === 'workflow.step.failed') {
+          setAssistantTool(
+            readPayloadText(agentEvent.payload, 'stepId'),
+            workflowStepName(agentEvent.payload),
+            'failed',
+            eventTime(agentEvent),
+          );
+        }
+        if (agentEvent.type === 'run.failed' || agentEvent.type === 'workflow.run.failed') {
+          terminal = true;
+          appendAssistantError(readPayloadText(agentEvent.payload, 'error'));
+          completeAssistant('failed', eventTime(agentEvent));
+        }
+        if (agentEvent.type === 'run.cancelled' || agentEvent.type === 'workflow.run.cancelled') {
+          terminal = true;
+          completeAssistant('cancelled', eventTime(agentEvent));
+        }
+        if (agentEvent.type === 'run.completed' || agentEvent.type === 'workflow.run.completed') {
+          terminal = true;
+          setAssistantAnswer(readCompletedAnswer(agentEvent.payload));
+          completeAssistant(
+            'completed',
+            eventTime(agentEvent),
+            readUsage(agentEvent.payload),
+          );
         }
       }
+      if (!terminal) throw new Error('Run stream ended before a terminal event.');
     } catch (error) {
-      appendAssistantDelta(toErrorMessage(error));
-      completeAssistant();
+      if (!terminal) {
+        appendAssistantError(toErrorMessage(error));
+        completeAssistant('failed');
+      }
     } finally {
+      if (runControllerRef.current === controller) runControllerRef.current = null;
+      setActiveRunId(undefined);
       setIsRunning(false);
+    }
+  }
+
+  async function cancelActiveRun() {
+    if (!activeRunId) return;
+    try {
+      await client.cancelRun(activeRunId);
+    } catch (error) {
+      appendAssistantError(toErrorMessage(error));
     }
   }
 
@@ -191,6 +280,49 @@ export default function Home() {
     });
   }
 
+  function appendAssistantError(error: string) {
+    if (!error) return;
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      const separator = last.content.trim() ? '\n\n' : '';
+      next[next.length - 1] = { ...last, content: `${last.content}${separator}${error}` };
+      return next;
+    });
+  }
+
+  function setAssistantRun(run: RunRecord) {
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      next[next.length - 1] = {
+        ...last,
+        runId: run.id,
+        sessionId: run.sessionId,
+      };
+      return next;
+    });
+  }
+
+  function recordAssistantEvent(event: AgentEvent) {
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      next[next.length - 1] = {
+        ...last,
+        runId: event.runId,
+        events: [...(last.events ?? []), event],
+        ...(event.type === 'run.started' || event.type === 'workflow.run.started'
+          ? { startedAt: eventTime(event) }
+          : {}),
+      };
+      return next;
+    });
+  }
+
   function setAssistantAnswer(content: string) {
     if (!content) return;
     setMessages((current) => {
@@ -203,16 +335,22 @@ export default function Home() {
     });
   }
 
-  function setAssistantTool(name: string, status: ToolActivity['status'], time: number) {
-    if (!name) return;
+  function setAssistantTool(
+    id: string,
+    name: string,
+    status: ToolActivity['status'],
+    time: number,
+  ) {
+    if (!id || !name) return;
     setMessages((current) => {
       const next = [...current];
       const last = next[next.length - 1];
       if (last?.role !== 'assistant') return current;
       const tools = [...(last.tools ?? [])];
-      const index = tools.findIndex((tool) => tool.name === name);
+      const index = tools.findIndex((tool) => tool.id === id);
       const previous = tools[index];
       const tool = {
+        id,
         name,
         status,
         startedAt: previous?.startedAt ?? time,
@@ -225,17 +363,27 @@ export default function Home() {
     });
   }
 
-  function completeAssistant(time = Date.now()) {
+  function completeAssistant(
+    status: NonNullable<Message['status']>,
+    time = Date.now(),
+    usage?: Record<string, number>,
+  ) {
     setMessages((current) => {
       const next = [...current];
       const last = next[next.length - 1];
       if (last?.role !== 'assistant' || last.completedAt) return current;
       const completedAt = time;
+      const unfinishedToolStatus =
+        status === 'completed' ? 'done' : status === 'cancelled' ? 'cancelled' : 'failed';
       next[next.length - 1] = {
         ...last,
+        status,
         completedAt,
+        ...(usage ? { usage } : {}),
         tools: last.tools?.map((tool) =>
-          tool.status === 'running' ? { ...tool, status: 'done', completedAt } : tool,
+          tool.status === 'running'
+            ? { ...tool, status: unfinishedToolStatus, completedAt }
+            : tool,
         ),
       };
       return next;
@@ -247,6 +395,12 @@ export default function Home() {
     if (!conversation) return;
     const distance = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
     stickToBottomRef.current = distance < 64;
+  }
+
+  function resetConversation() {
+    setMessages([{ role: 'assistant', content: 'Ready.' }]);
+    setSessionId(undefined);
+    setInput('');
   }
 
   return (
@@ -263,10 +417,20 @@ export default function Home() {
         </div>
         <div className="toolbar">
           <button
+            aria-label={`${debug ? 'Disable' : 'Enable'} debug mode`}
+            aria-pressed={debug}
+            className={`icon-button ${debug ? 'active' : ''}`}
+            onClick={() => setDebug((value) => !value)}
+            title={`${debug ? 'Disable' : 'Enable'} debug mode`}
+            type="button"
+          >
+            <Bug size={16} />
+          </button>
+          <button
             aria-label="Clear conversation"
             className="icon-button"
-            disabled={messages.length === 1}
-            onClick={() => setMessages(initialMessages)}
+            disabled={isRunning || (messages.length === 1 && !sessionId)}
+            onClick={resetConversation}
             title="Clear conversation"
             type="button"
           >
@@ -281,23 +445,24 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="sidebar">
-          <p className="sidebar-title">Agents</p>
-          <nav className="agent-list" aria-label="Agents">
-            {!agents.length && (
-              <p className="empty-state">{isLoadingAgents ? 'Loading...' : 'No agents'}</p>
+          <p className="sidebar-title">Agents & workflows</p>
+          <nav className="agent-list" aria-label="Agents and workflows">
+            {!runnables.length && (
+              <p className="empty-state">{isLoadingRunnables ? 'Loading...' : 'No demos'}</p>
             )}
-            {agents.map((agent) => {
-              const Icon = agent.name === 'assistant' ? Sparkles : Circle;
+            {runnables.map((item) => {
+              const Icon = item.kind === 'workflow' ? Sparkles : Circle;
+              const id = runnableId(item);
 
               return (
                 <button
-                  aria-pressed={agent.name === selectedAgentName}
-                  className={`agent-option ${agent.name === selectedAgentName ? 'active' : ''}`}
-                  key={agent.name}
+                  aria-pressed={id === selectedRunnableId}
+                  className={`agent-option ${id === selectedRunnableId ? 'active' : ''}`}
+                  disabled={isRunning}
+                  key={id}
                   onClick={() => {
-                    setSelectedAgentName(agent.name);
-                    setMessages([{ role: 'assistant', content: 'Ready.' }]);
-                    setInput('');
+                    setSelectedRunnableId(id);
+                    resetConversation();
                   }}
                   type="button"
                 >
@@ -305,8 +470,8 @@ export default function Home() {
                     <Icon size={16} />
                   </span>
                   <span>
-                    <strong>{agent.label}</strong>
-                    <small>{agent.description}</small>
+                    <strong>{item.label}</strong>
+                    <small>{item.kind === 'workflow' ? 'Workflow' : 'Agent'} · {item.description}</small>
                   </span>
                   <Check className="agent-check" size={14} />
                 </button>
@@ -318,7 +483,7 @@ export default function Home() {
         <main className="playground">
           <section
             className="conversation"
-            aria-label="Agent conversation"
+            aria-label="Run conversation"
             aria-live="polite"
             onScroll={updateStickToBottom}
             ref={conversationRef}
@@ -328,8 +493,8 @@ export default function Home() {
                 <AgentIcon size={17} />
               </span>
               <div>
-                <strong>{selectedAgent?.label ?? 'No agent selected'}</strong>
-                <span>{selectedAgent?.description ?? 'Start the Nest API to load agents.'}</span>
+                <strong>{selectedRunnable?.label ?? 'No demo selected'}</strong>
+                <span>{selectedRunnable?.description ?? 'Start the Nest API to load demos.'}</span>
               </div>
             </div>
 
@@ -340,8 +505,10 @@ export default function Home() {
                     {message.role === 'user' ? <User size={16} /> : <AgentIcon size={16} />}
                   </span>
                   <div>
-                    <strong>{message.role === 'user' ? 'You' : selectedAgent?.label ?? 'Agent'}</strong>
-                    {message.role === 'assistant' && <RunActivityPanel message={message} now={now} />}
+                    <strong>{message.role === 'user' ? 'You' : selectedRunnable?.label ?? 'Agent'}</strong>
+                    {message.role === 'assistant' && (
+                      <RunActivityPanel debug={debug} message={message} now={now} />
+                    )}
                     <MessageContent content={message.content} />
                   </div>
                 </article>
@@ -355,6 +522,7 @@ export default function Home() {
             <textarea
               id="prompt"
               maxLength={4000}
+              disabled={isRunning}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -362,22 +530,24 @@ export default function Home() {
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              placeholder="Ask the agent anything..."
+              placeholder="Ask the selected demo anything..."
               rows={2}
               value={input}
             />
             <div className="composer-footer">
               <span>
                 <AgentIcon size={14} />
-                {selectedAgent?.name ?? 'none'}
+                {selectedRunnable?.name ?? 'none'}
               </span>
               <button
-                aria-label="Run agent"
-                disabled={!input.trim() || !selectedAgent || isRunning}
-                title="Run agent"
-                type="submit"
+                aria-label={isRunning ? 'Cancel run' : 'Run selected demo'}
+                className={isRunning ? 'cancel' : ''}
+                disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable}
+                onClick={isRunning ? () => void cancelActiveRun() : undefined}
+                title={isRunning ? 'Cancel run' : 'Run selected demo'}
+                type={isRunning ? 'button' : 'submit'}
               >
-                <ArrowUp size={17} />
+                {isRunning ? <Square fill="currentColor" size={14} /> : <ArrowUp size={17} />}
               </button>
             </div>
           </form>
@@ -387,14 +557,28 @@ export default function Home() {
   );
 }
 
-function RunActivityPanel({ message, now }: { message: Message; now: number }) {
+function RunActivityPanel({
+  debug,
+  message,
+  now,
+}: {
+  debug: boolean;
+  message: Message;
+  now: number;
+}) {
   if (!message.startedAt) return null;
   const running = !message.completedAt;
   const elapsedMs = (message.completedAt ?? now) - message.startedAt;
-  const stage = running ? currentStage(message) : 'Procesado';
+  const stage = running
+    ? currentStage(message)
+    : message.status === 'cancelled'
+      ? 'Cancelado'
+      : message.status === 'failed'
+        ? 'Falló'
+        : 'Procesado';
 
   return (
-    <details className={`run-activity ${running ? 'running' : 'done'}`}>
+    <details className={`run-activity ${running ? 'running' : message.status ?? 'completed'}`}>
       <summary>
         <span className={`activity-dot ${activityKind(stage)}`} />
         <span>{stage} durante {formatDuration(elapsedMs)}</span>
@@ -406,7 +590,7 @@ function RunActivityPanel({ message, now }: { message: Message; now: number }) {
             <p>Se usaron las tools</p>
             <ul>
               {message.tools.map((tool) => (
-                <li className={`tool-activity ${tool.status}`} key={tool.name}>
+                <li className={`tool-activity ${tool.status}`} key={tool.id}>
                   <code>{tool.name}</code>
                   <small>{toolStatusText(tool)} · {formatToolDuration((tool.completedAt ?? now) - tool.startedAt)}</small>
                 </li>
@@ -414,12 +598,30 @@ function RunActivityPanel({ message, now }: { message: Message; now: number }) {
             </ul>
           </>
         ) : (
-          <span className={`tool-activity ${running ? 'running' : 'done'}`}>
+          <span className={`tool-activity ${running ? 'running' : message.status ?? 'done'}`}>
             {running ? 'Respondiendo' : 'Sin tools'}
           </span>
         )}
+        {debug && <DebugPanel message={message} elapsedMs={elapsedMs} />}
       </div>
     </details>
+  );
+}
+
+function DebugPanel({ message, elapsedMs }: { message: Message; elapsedMs: number }) {
+  return (
+    <div className="debug-panel">
+      <dl>
+        <div><dt>runId</dt><dd>{message.runId ?? 'pending'}</dd></div>
+        <div><dt>sessionId</dt><dd>{message.sessionId ?? 'pending'}</dd></div>
+        <div><dt>duration</dt><dd>{formatToolDuration(elapsedMs)}</dd></div>
+        <div><dt>usage</dt><dd>{formatUsage(message.usage)}</dd></div>
+      </dl>
+      <details>
+        <summary>Raw events ({message.events?.length ?? 0})</summary>
+        <pre>{JSON.stringify(message.events ?? [], null, 2)}</pre>
+      </details>
+    </div>
   );
 }
 
@@ -433,42 +635,14 @@ function MessageContent({ content }: { content: string }) {
   );
 }
 
-async function* readEventStream(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamMessage> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const data = frame
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart())
-          .join('\n');
-        if (data) yield readStreamMessage(data);
-        boundary = buffer.indexOf('\n\n');
-      }
-
-      if (done) break;
-    }
-  } finally {
-    reader.releaseLock();
-  }
+function runnableId(item: RunnableSummary) {
+  return `${item.kind}:${item.name}`;
 }
 
-function readStreamMessage(data: string): StreamMessage {
-  try {
-    return { type: 'event', event: JSON.parse(data) as AgentEvent };
-  } catch {
-    return { type: 'error', error: data };
-  }
+function workflowStepName(payload: unknown) {
+  const stepId = readPayloadText(payload, 'stepId');
+  const agentName = readPayloadText(payload, 'agentName');
+  return agentName ? `${stepId}:${agentName}` : stepId;
 }
 
 function readPayloadText(payload: unknown, key: string) {
@@ -480,10 +654,6 @@ function readPayloadText(payload: unknown, key: string) {
 function eventTime(event: AgentEvent) {
   const time = event.timestamp ? Date.parse(event.timestamp) : NaN;
   return Number.isFinite(time) ? time : Date.now();
-}
-
-function toolLabel(name: string) {
-  return toolLabels[name] ?? (name || 'tool');
 }
 
 function currentStage(message: Message) {
@@ -503,6 +673,7 @@ function activityKind(stage: string) {
 
 function toolStatusText(tool: ToolActivity) {
   if (tool.status === 'failed') return 'Falló';
+  if (tool.status === 'cancelled') return 'Cancelada';
   if (tool.status === 'running') return tool.name === 'tickets_recent' ? 'Buscando' : 'Usando';
   return 'Usó';
 }
@@ -527,6 +698,23 @@ function readCompletedAnswer(payload: unknown) {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return '';
   const answer = (output as Record<string, unknown>).answer;
   return typeof answer === 'string' ? answer : '';
+}
+
+function readUsage(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const usage = (payload as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return undefined;
+  const entries = Object.entries(usage).filter(
+    (entry): entry is [string, number] => typeof entry[1] === 'number',
+  );
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function formatUsage(usage: Record<string, number> | undefined) {
+  if (!usage) return 'unavailable';
+  return Object.entries(usage)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(', ');
 }
 
 function readJsonAnswer(content: string) {

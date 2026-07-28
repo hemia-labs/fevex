@@ -3,6 +3,7 @@ import type {
   AgentEvent,
   AgentMessage,
   ExecutionContext,
+  JsonObject,
   JsonValue,
   RunId,
 } from '../core';
@@ -20,13 +21,21 @@ export interface ApprovalRequest {
   requestedAt: string;
 }
 
-export type RunPause =
+export type AgentRunPause =
   | { type: 'approval'; approval: ApprovalRequest }
   | {
       type: 'tool_execution_unknown';
       toolCallId: string;
       toolName: string;
       input: JsonValue;
+    };
+
+export type RunPause =
+  | AgentRunPause
+  | {
+      type: 'workflow_child';
+      childRunId: RunId;
+      childPause: AgentRunPause;
     };
 
 export interface ApprovalResolution {
@@ -54,6 +63,7 @@ export type ToolExecutionResolution =
 export type ResumeRunResolution = ApprovalResolution | ToolExecutionResolution;
 
 export interface AgentRun<TOutput = JsonValue> {
+  kind?: 'agent';
   id: RunId;
   sessionId: SessionId;
   agentName: string;
@@ -67,6 +77,22 @@ export interface AgentRun<TOutput = JsonValue> {
   usage?: ModelUsage;
 }
 
+export interface WorkflowRun<TOutput = JsonValue> {
+  kind: 'workflow';
+  id: RunId;
+  sessionId: SessionId;
+  workflowName: string;
+  status: RunStatus;
+  revision: number;
+  pause?: RunPause;
+  createdAt: string;
+  updatedAt: string;
+  output?: TOutput;
+  error?: string;
+}
+
+export type RunRecord<TOutput = unknown> = AgentRun<TOutput> | WorkflowRun<TOutput>;
+
 export interface Session {
   id: SessionId;
   history: AgentMessage[];
@@ -79,8 +105,8 @@ export interface ListEventsOptions {
 }
 
 export interface RunStore {
-  getRun(runId: RunId): Promise<AgentRun | undefined>;
-  saveRun(run: AgentRun): Promise<void>;
+  getRun<TRun extends RunRecord<unknown> = AgentRun>(runId: RunId): Promise<TRun | undefined>;
+  saveRun(run: RunRecord): Promise<void>;
   getSession(sessionId: SessionId): Promise<Session | undefined>;
   saveSession(session: Session): Promise<void>;
   appendEvent(event: AgentEvent): Promise<void>;
@@ -103,6 +129,7 @@ export interface PendingToolExecution {
 }
 
 export interface RunCheckpoint {
+  kind?: 'agent';
   runId: RunId;
   definitionHash: string;
   messages: AgentMessage[];
@@ -116,6 +143,42 @@ export interface RunCheckpoint {
   pendingTools: PendingToolExecution[];
   pendingIndex: number;
 }
+
+export type WorkflowStepRecord =
+  | {
+      type: 'agent';
+      status: 'running';
+      agentName: string;
+      childRunId: RunId;
+    }
+  | {
+      type: 'agent';
+      status: 'completed';
+      agentName: string;
+      childRunId: RunId;
+      result: RunResult<JsonValue>;
+    }
+  | {
+      type: 'parallel';
+      status: 'running';
+    }
+  | {
+      type: 'parallel';
+      status: 'completed';
+      result: JsonObject;
+    };
+
+export interface WorkflowCheckpoint {
+  kind: 'workflow';
+  runId: RunId;
+  workflowName: string;
+  definitionHash: string;
+  input: JsonValue;
+  context?: ExecutionContext;
+  steps: Record<string, WorkflowStepRecord>;
+}
+
+export type StoredRunCheckpoint = RunCheckpoint | WorkflowCheckpoint;
 
 export type ToolExecutionStatus = 'started' | 'completed' | 'failed' | 'unknown';
 
@@ -140,15 +203,17 @@ export interface RunLease {
 
 export interface ExecutionCommit {
   expectedRevision: number;
-  run: AgentRun;
-  checkpoint?: RunCheckpoint | null;
+  run: RunRecord;
+  checkpoint?: StoredRunCheckpoint | null;
   session?: Session;
   toolExecution?: ToolExecutionRecord;
   events?: AgentEvent[];
 }
 
 export interface DurableRunStore extends RunStore {
-  getCheckpoint(runId: RunId): Promise<RunCheckpoint | undefined>;
+  getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(
+    runId: RunId,
+  ): Promise<TCheckpoint | undefined>;
   getToolExecution(runId: RunId, toolCallId: string): Promise<ToolExecutionRecord | undefined>;
   commitExecution(commit: ExecutionCommit): Promise<boolean>;
   acquireLease(lease: RunLease): Promise<boolean>;
@@ -169,19 +234,21 @@ export function isDurableRunStore(store: RunStore): store is DurableRunStore {
 }
 
 export class InMemoryRunStore implements DurableRunStore {
-  readonly #runs = new Map<RunId, AgentRun>();
+  readonly #runs = new Map<RunId, RunRecord>();
   readonly #sessions = new Map<SessionId, Session>();
   readonly #events = new Map<RunId, AgentEvent[]>();
-  readonly #checkpoints = new Map<RunId, RunCheckpoint>();
+  readonly #checkpoints = new Map<RunId, StoredRunCheckpoint>();
   readonly #toolExecutions = new Map<string, ToolExecutionRecord>();
   readonly #leases = new Map<RunId, RunLease>();
 
-  async getRun(runId: RunId): Promise<AgentRun | undefined> {
+  async getRun<TRun extends RunRecord<unknown> = AgentRun>(
+    runId: RunId,
+  ): Promise<TRun | undefined> {
     const run = this.#runs.get(runId);
-    return run === undefined ? undefined : structuredClone(run);
+    return run === undefined ? undefined : structuredClone(run) as TRun;
   }
 
-  async saveRun(run: AgentRun): Promise<void> {
+  async saveRun(run: RunRecord): Promise<void> {
     this.#runs.set(run.id, structuredClone(run));
     if (!this.#events.has(run.id)) this.#events.set(run.id, []);
   }
@@ -217,9 +284,11 @@ export class InMemoryRunStore implements DurableRunStore {
     return structuredClone(events.slice(start).sort((a, b) => a.sequence - b.sequence));
   }
 
-  async getCheckpoint(runId: RunId): Promise<RunCheckpoint | undefined> {
+  async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(
+    runId: RunId,
+  ): Promise<TCheckpoint | undefined> {
     const checkpoint = this.#checkpoints.get(runId);
-    return checkpoint === undefined ? undefined : structuredClone(checkpoint);
+    return checkpoint === undefined ? undefined : structuredClone(checkpoint) as TCheckpoint;
   }
 
   async getToolExecution(

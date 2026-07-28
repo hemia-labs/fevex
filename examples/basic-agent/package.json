@@ -8,7 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@fevex/core": "0.1.0-alpha.0",
+    "@fevex/core": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

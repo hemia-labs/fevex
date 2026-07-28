@@ -8,6 +8,7 @@ import type {
   ToolSpec,
 } from '../core';
 import type { ExactDefinition } from '../internal/exact-definition';
+export * from './json-schema-profile';
 
 export type { ToolCall, ToolSpec } from '../core';
 
@@ -36,11 +37,14 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   description?: string;
   inputSchema?: StandardSchemaV1<unknown, TInput>;
   outputSchema?: StandardSchemaV1<unknown, TOutput>;
+  inputJsonSchema?: JsonObject;
+  outputJsonSchema?: JsonObject;
   risk?: ToolRisk;
   approval?: ToolApproval;
   idempotency?: ToolIdempotency;
   retry?: ToolRetryPolicy;
   credentials?: string[];
+  resolve?: (context?: ToolProviderContext) => Promise<ToolProviderTool | undefined>;
   execute(input: TInput, context: ToolExecutionContext): TOutput | Promise<TOutput>;
 }
 
@@ -96,3 +100,70 @@ export function toToolSpec(tool: ToolDefinition, inputSchema?: JsonObject): Tool
 }
 
 export type ToolResult = JsonValue;
+
+export interface ToolProviderContext {
+  runId?: RunId;
+  toolCallId?: string;
+  attempt?: number;
+  idempotencyKey?: string;
+  context?: ExecutionContext;
+  signal?: AbortSignal;
+}
+
+export interface ToolProviderTool {
+  name: string;
+  description?: string;
+  inputSchema?: JsonObject;
+  outputSchema?: JsonObject;
+}
+
+export interface ToolProvider {
+  listTools(context?: ToolProviderContext): Promise<ToolProviderTool[]>;
+  callTool(
+    name: string,
+    input: JsonValue,
+    context: ToolProviderContext,
+  ): JsonValue | Promise<JsonValue>;
+  close?(): Promise<void>;
+}
+
+export type IntegrationErrorCategory = 'auth' | 'validation' | 'network' | 'remote' | 'timeout';
+
+export class IntegrationError extends Error {
+  readonly name = 'IntegrationError';
+
+  constructor(
+    readonly code: string,
+    readonly category: IntegrationErrorCategory,
+    readonly retryable: boolean,
+    readonly safeMessage: string,
+    options?: ErrorOptions,
+  ) {
+    super(safeMessage, options);
+  }
+}
+
+export interface ConnectionToolPolicy {
+  description?: string;
+  inputSchema?: JsonObject;
+  outputSchema?: JsonObject;
+  risk?: ToolRisk;
+  approval?: ToolApproval;
+  idempotency?: ToolIdempotency;
+  retry?: ToolRetryPolicy;
+  credentials?: string[];
+}
+
+export interface ConnectionDefinition {
+  name: string;
+  provider: ToolProvider;
+  allowlist?: readonly string[];
+  tools?: { allow: readonly string[] } | Record<string, ConnectionToolPolicy>;
+  timeoutMs?: number;
+}
+
+export function defineConnection<TDefinition extends ConnectionDefinition>(
+  connection: TDefinition,
+): TDefinition {
+  return connection;
+}

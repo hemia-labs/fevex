@@ -2,6 +2,8 @@ import type { RunId } from './core';
 import type { RunPause } from './runtime';
 
 export type FevexRunErrorCode =
+  | 'AGENT_NOT_FOUND'
+  | 'SESSION_NOT_FOUND'
   | 'DURABLE_STORE_REQUIRED'
   | 'RUN_CONFLICT'
   | 'RUN_NOT_RESUMABLE'

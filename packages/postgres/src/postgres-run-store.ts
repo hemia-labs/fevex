@@ -5,10 +5,12 @@ import type {
   DurableRunStore,
   ExecutionCommit,
   ListEventsOptions,
+  RunRecord,
   RunCheckpoint,
   RunLease,
   Session,
   SessionId,
+  StoredRunCheckpoint,
   ToolExecutionRecord,
 } from '@fevex/core/runtime';
 import { migration } from './migration';
@@ -51,15 +53,17 @@ class PgRunStore implements PostgresRunStore {
     if (this.#ownsPool) await this.#pool.end();
   }
 
-  async getRun(runId: RunId): Promise<AgentRun | undefined> {
-    const result = await this.#pool.query<{ data: AgentRun }>(
+  async getRun<TRun extends RunRecord<unknown> = AgentRun>(
+    runId: RunId,
+  ): Promise<TRun | undefined> {
+    const result = await this.#pool.query<{ data: TRun }>(
       'SELECT data FROM fevex.runs WHERE id = $1',
       [runId],
     );
     return result.rows[0] ? clone(result.rows[0].data) : undefined;
   }
 
-  async saveRun(run: AgentRun): Promise<void> {
+  async saveRun(run: RunRecord): Promise<void> {
     await this.#pool.query(
       `INSERT INTO fevex.runs (id, session_id, revision, data)
        VALUES ($1, $2, $3, $4)
@@ -111,8 +115,10 @@ class PgRunStore implements PostgresRunStore {
     return clone(result.rows.slice(start).map(({ data }) => data));
   }
 
-  async getCheckpoint(runId: RunId): Promise<RunCheckpoint | undefined> {
-    const result = await this.#pool.query<{ data: RunCheckpoint }>(
+  async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(
+    runId: RunId,
+  ): Promise<TCheckpoint | undefined> {
+    const result = await this.#pool.query<{ data: TCheckpoint }>(
       'SELECT data FROM fevex.checkpoints WHERE run_id = $1',
       [runId],
     );

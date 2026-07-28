@@ -33,6 +33,8 @@ For official model adapters:
 ```bash
 npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
+npm install @fevex/core @fevex/mcp
+npm install @fevex/core @fevex/openapi
 npm install @fevex/core @fevex/sqlite
 npm install @fevex/core @fevex/postgres
 npm install @fevex/core @fevex/opentelemetry @opentelemetry/api
@@ -184,8 +186,25 @@ such as temperature, metadata and provider-only reasoning settings are kept.
 
 `createFevex` validates the complete composition before returning the app,
 including JavaScript values that bypass TypeScript. Invalid registrations throw
-`FevexConfigurationError` with a stable `code` such as `INVALID_TOOL`,
-`DUPLICATE_AGENT` or `MISSING_MODEL`, while preserving a readable message.
+`FevexConfigurationError` with a stable `code`, while preserving a readable
+message.
+
+Codes follow one rule: `INVALID_CONFIG` covers the shape of the root config
+object, and every registered entity gets its own code.
+
+| Entity | Invalid | Duplicated by name | Referenced but missing |
+|---|---|---|---|
+| Model | `INVALID_MODEL` | — | `MISSING_MODEL` |
+| Agent | `INVALID_AGENT` | `DUPLICATE_AGENT` | — |
+| Tool | `INVALID_TOOL` | `DUPLICATE_TOOL` | `MISSING_TOOL` |
+| Workflow | `INVALID_WORKFLOW` | `DUPLICATE_WORKFLOW` | — |
+| Context provider | `INVALID_CONTEXT_PROVIDER` | `DUPLICATE_CONTEXT_PROVIDER` | — |
+| Connection | `INVALID_CONNECTION` | — | — |
+| Policy | `INVALID_POLICY` | — | — |
+
+Connections have no duplicate code of their own: two connections sharing a name
+produce colliding `<connection>__<tool>` entries and fail with
+`DUPLICATE_TOOL`.
 
 The app captures a shallow snapshot of registered definitions, tool lists,
 limits, model options and `onEvent`. Mutating those caller-owned containers
@@ -353,6 +372,28 @@ Unknown cursors fail instead of silently replaying events.
 it. The default survives only while the process lives, and one run at a time
 may update a session.
 
+## HTTP protocol
+
+`@fevex/core/http` exposes the runtime through versioned JSON and SSE using
+native Fetch types:
+
+```ts
+import { createFevexHttpHandler, createFevexHttpClient } from '@fevex/core/http';
+
+const handler = createFevexHttpHandler({ fevex: app });
+const client = createFevexHttpClient({ baseUrl: 'http://localhost:3001' });
+
+const run = await client.startRun('support', { input: 'Check account 42.' });
+for await (const event of client.observeRun(run.id)) {
+  console.log(event.type);
+}
+```
+
+Hosts pass authenticated `ExecutionContext` separately to `handler(request,
+{ context })`. Observation reconnects with `Last-Event-ID`; disconnecting an
+SSE response never cancels its run. Cancellation is explicit through
+`client.cancelRun(run.id)`.
+
 ## Approvals and durable runs
 
 Tools can declare risk, approval, idempotency, retries and credential names.
@@ -510,14 +551,162 @@ or `textReporter` with your own write callback, and `compareEvaluationReports`
 to fail CI when cases disappear, passing scores fail or scores drop beyond the
 configured tolerance.
 
+## Connections
+
+Connections turn remote tool providers into normal Fevex tools. Names are local
+and explicit: a connection named `docs` with remote tool `search` is exposed to
+agents as `docs__search`.
+
+```ts
+import { createFevex, defineAgent, defineConnection } from '@fevex/core';
+import { createMcpToolProvider } from '@fevex/mcp';
+
+const docs = defineConnection({
+  name: 'docs',
+  provider: createMcpToolProvider({ url: 'https://example.com/mcp' }),
+  allowlist: ['search'],
+  timeoutMs: 30_000,
+  tools: {
+    search: {
+      description: 'Search docs.',
+      inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+    },
+  },
+});
+
+createFevex({
+  models: {},
+  agents: [defineAgent({
+    name: 'assistant',
+    instructions: 'Help.',
+    tools: ['docs__search'],
+  })],
+  connections: [docs],
+});
+```
+
+Fevex owns allowlists, timeouts, approvals, policies and safe error messages.
+MCP metadata and annotations are treated as untrusted hints. The first MCP
+adapter supports Streamable HTTP only; `stdio`, resources, prompts and legacy
+HTTP+SSE stay out of scope.
+
+OpenAPI providers use the same connection contract:
+
+```ts
+import { createOpenApiToolProvider } from '@fevex/openapi';
+
+const billing = defineConnection({
+  name: 'billing',
+  provider: createOpenApiToolProvider({
+    document: openApiDocument,
+    operations: { allow: ['getInvoice'] },
+    headers: () => ({ Authorization: `Bearer ${process.env.BILLING_TOKEN}` }),
+  }),
+  allowlist: ['getInvoice'],
+});
+```
+
+`@fevex/openapi` accepts bundled JSON OpenAPI 3.1.x documents, local refs and
+JSON request/response bodies. It rejects unsupported JSON Schema keywords,
+remote refs, YAML, OpenAPI 3.0/3.2 and non-JSON payloads instead of silently
+dropping constraints.
+
+## Channels
+
+`@fevex/core/channels` provides a small adapter contract and `handleChannelInput`
+for hosting apps that receive messages from another surface:
+
+```ts
+import { handleChannelInput } from '@fevex/core/channels';
+
+const sessions = new Map<string, string>();
+
+const result = await handleChannelInput(
+  { id: 'm1', conversationId: 'c1', text: 'hello' },
+  {
+    fevex: app,
+    agentName: 'assistant',
+    adapter: {
+      name: 'memory',
+      async parse(input) {
+        return {
+          id: input.id,
+          deliveryId: input.id,
+          conversationId: input.conversationId,
+          content: input.text,
+        };
+      },
+      async deliver(output) {
+        return output;
+      },
+    },
+    resolveSessionId(message) {
+      return sessions.get(message.conversationId);
+    },
+  },
+);
+
+if (!result.ignored) sessions.set(result.message.conversationId, result.run.sessionId);
+```
+
+The helper emits local channel events around the run. Slack verification,
+acknowledgement, durable redelivery and deduplication remain outside this core
+helper and belong to the Slack adapter phase.
+
+## Knowledge and memory
+
+`@fevex/core/knowledge` keeps external context separate from sessions:
+
+```ts
+import {
+  InMemoryMemoryStore,
+  createFevex,
+  defineAgent,
+  defineContextProvider,
+  defineSkill,
+} from '@fevex/core';
+
+const app = createFevex({
+  models,
+  memoryStore: new InMemoryMemoryStore(),
+  contextProviders: [
+    defineSkill({
+      name: 'refunds',
+      instructions: 'Refunds are allowed for 30 days after purchase.',
+    }),
+    defineContextProvider({
+      name: 'account',
+      async read({ context }) {
+        return [{ id: 'tier', content: `Plan: ${context?.attributes?.plan ?? 'free'}` }];
+      },
+    }),
+  ],
+  agents: [
+    defineAgent({
+      name: 'support',
+      instructions: 'Answer with business context.',
+      skills: ['refunds'],
+      context: ['account'],
+      memory: { read: true, write: true },
+    }),
+  ],
+});
+```
+
+Context providers are lazy per run. Memory is a replaceable store; the built-in
+store is in-memory substring search, not embeddings, vector search or durable
+storage.
+
 ## Public Exports
 
 | Import | Purpose |
 | --- | --- |
 | `@fevex/core` | Common runtime, definitions and contracts |
 | `@fevex/core/agents` | Agent definitions |
+| `@fevex/core/channels` | Channel adapters and message handling |
+| `@fevex/core/knowledge` | Context providers, skills and memory contracts |
 | `@fevex/core/models` | Provider-neutral model contracts |
-| `@fevex/core/tools` | Tool definitions and execution context |
+| `@fevex/core/tools` | Tool, connection and provider contracts |
 | `@fevex/core/runtime` | Runs, sessions and store contracts |
 | `@fevex/core/policies` | Authorization policy contracts |
 | `@fevex/core/observability` | Trace, redaction and cost contracts |

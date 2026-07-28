@@ -1,5 +1,12 @@
 import type { ModelGateway, ModelInput, ModelResult } from '../models';
-import type { JsonObject, ToolCall } from '../core';
+import type {
+  ChannelAdapter,
+  ChannelMessage,
+  ChannelOutput,
+} from '../channels';
+import type { JsonObject, JsonValue, ToolCall } from '../core';
+import type { MemoryStore } from '../knowledge';
+import { IntegrationError, type ToolProvider } from '../tools';
 import type {
   AgentRun,
   DurableRunStore,
@@ -60,6 +67,181 @@ const contractToolInputSchema: JsonObject = {
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new TypeError(message);
+}
+
+export interface ChannelAdapterContract<TInput, TOutput> {
+  input: TInput;
+  message: ChannelMessage;
+  output: ChannelOutput;
+  delivered: TOutput;
+  ignoredInput?: TInput;
+}
+
+export interface ToolProviderContract {
+  allowedTool: string;
+  input?: unknown;
+  output?: unknown;
+  disallowedTool?: string;
+  safeError?: boolean;
+  timeout?: boolean;
+}
+
+export async function testMemoryStore(store: MemoryStore): Promise<void> {
+  const actor = { id: `actor-${crypto.randomUUID()}` };
+  const sessionId = `session-${crypto.randomUUID()}`;
+  const context = {
+    agentName: 'assistant',
+    input: 'refund status',
+    sessionId,
+    context: { namespace: 'tenant-a', actor },
+  };
+  const saved = await store.write(
+    {
+      content: 'Refund status is approved.',
+      agentName: 'assistant',
+      sessionId,
+      namespace: 'tenant-a',
+      actor,
+      metadata: { source: 'contract' },
+    },
+    context,
+  );
+  assert(saved.id.trim(), 'MemoryRecord id cannot be empty');
+  assert(saved.createdAt.trim(), 'MemoryRecord createdAt cannot be empty');
+  saved.content = 'mutated';
+  assert(
+    (await store.search({ query: 'refund', sessionId, namespace: 'tenant-a', actor }, context))[0]
+      ?.content === 'Refund status is approved.',
+    'MemoryStore must not expose mutable record references',
+  );
+  assert(
+    (await store.search({ query: 'refund', sessionId: 'other' }, context)).length === 0,
+    'MemoryStore must isolate sessions',
+  );
+  assert(
+    (await store.search({ query: 'refund', namespace: 'tenant-b' }, context)).length === 0,
+    'MemoryStore must isolate namespaces',
+  );
+  assert(
+    (await store.search({ query: 'refund', actor: { id: 'other' } }, context)).length === 0,
+    'MemoryStore must isolate actors',
+  );
+  await store.write({ content: 'Refund backup note.', sessionId, namespace: 'tenant-a', actor }, context);
+  assert(
+    (await store.search({ query: 'refund', sessionId, namespace: 'tenant-a', actor, limit: 1 }, context))
+      .length === 1,
+    'MemoryStore must respect limits',
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await store.search(
+    { query: 'refund' },
+    { ...context, signal: controller.signal },
+  ).then(
+    () => {
+      throw new TypeError('MemoryStore must reject aborted searches');
+    },
+    () => {},
+  );
+}
+
+export async function testToolProvider(
+  provider: ToolProvider,
+  contract: ToolProviderContract,
+): Promise<void> {
+  const tools = await provider.listTools({});
+  assert(
+    tools.some((tool) => tool.name === contract.allowedTool),
+    'ToolProvider must list the allowed contract tool',
+  );
+  if (contract.disallowedTool !== undefined) {
+    assert(
+      !tools.some((tool) => tool.name === contract.disallowedTool),
+      'ToolProvider must not list disallowed tools',
+    );
+  }
+
+  const output = await provider.callTool(
+    contract.allowedTool,
+    (contract.input ?? { query: 'value' }) as JsonValue,
+    {},
+  );
+  assert(
+    JSON.stringify(output) === JSON.stringify(contract.output ?? { answer: 'ok' }),
+    'ToolProvider returned an unexpected output',
+  );
+
+  if (contract.safeError) {
+    await Promise.resolve(provider.callTool('contract_error', {}, {})).then(
+      () => {
+        throw new TypeError('ToolProvider must reject configured error calls');
+      },
+      (error: unknown) => {
+        assert(error instanceof IntegrationError, 'ToolProvider errors must be IntegrationError');
+        assert(error.message === error.safeMessage, 'IntegrationError message must be safe');
+      },
+    );
+  }
+
+  if (contract.timeout) {
+    const controller = new AbortController();
+    controller.abort();
+    await Promise.resolve(
+      provider.callTool(contract.allowedTool, {}, { signal: controller.signal }),
+    ).then(
+      () => {
+        throw new TypeError('ToolProvider must reject aborted calls');
+      },
+      () => {},
+    );
+  }
+}
+
+export async function testChannelAdapter<TInput, TOutput>(
+  adapter: ChannelAdapter<TInput, TOutput>,
+  contract: ChannelAdapterContract<TInput, TOutput>,
+): Promise<void> {
+  assert(adapter.name.trim(), 'ChannelAdapter name cannot be empty');
+  const message = await adapter.parse(contract.input, {});
+  assert(message !== null, 'ChannelAdapter must parse the contract input');
+  for (const [name, value] of [
+    ['id', message.id],
+    ['deliveryId', message.deliveryId],
+    ['conversationId', message.conversationId],
+    ['content', message.content],
+  ]) {
+    assert(value.trim(), `ChannelMessage ${name} cannot be empty`);
+  }
+  if (message.threadId !== undefined) {
+    assert(message.threadId.trim(), 'ChannelMessage threadId cannot be empty');
+  }
+  if (message.actor !== undefined) {
+    assert(message.actor.id.trim(), 'ChannelMessage actor id cannot be empty');
+  }
+  if (message.metadata !== undefined) {
+    JSON.stringify(message.metadata);
+  }
+  assert(
+    JSON.stringify(message) === JSON.stringify(contract.message),
+    'ChannelAdapter returned an unexpected message',
+  );
+  if (contract.ignoredInput !== undefined) {
+    assert(
+      (await adapter.parse(contract.ignoredInput, {})) === null,
+      'ChannelAdapter must ignore the configured input',
+    );
+  }
+  if (contract.output.threadId !== undefined) {
+    assert(contract.output.threadId.trim(), 'ChannelOutput threadId cannot be empty');
+  }
+  if (contract.output.metadata !== undefined) {
+    JSON.stringify(contract.output.metadata);
+  }
+  assert(
+    JSON.stringify(await adapter.deliver(contract.output, {}))
+      === JSON.stringify(contract.delivered),
+    'ChannelAdapter returned an unexpected delivery',
+  );
 }
 
 export async function testModelGateway(

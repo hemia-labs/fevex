@@ -1,0 +1,172 @@
+import type { ExecutionContext, JsonObject, JsonValue } from '../core';
+import type { SessionId } from '../runtime';
+
+export interface KnowledgeContext {
+  agentName: string;
+  input: string;
+  sessionId: SessionId;
+  context?: ExecutionContext;
+  signal?: AbortSignal;
+}
+
+export interface ContextBlock {
+  id: string;
+  content: string;
+  metadata?: JsonObject;
+}
+
+export interface ContextProvider {
+  name: string;
+  read(context: KnowledgeContext): Promise<ContextBlock[]>;
+}
+
+export interface MemoryQuery {
+  query: string;
+  limit?: number;
+  agentName?: string;
+  sessionId?: SessionId;
+  namespace?: string;
+  actor?: ExecutionContext['actor'];
+}
+
+export interface MemoryWrite {
+  content: string;
+  agentName?: string;
+  sessionId?: SessionId;
+  namespace?: string;
+  actor?: ExecutionContext['actor'];
+  metadata?: JsonObject;
+}
+
+export interface MemoryRecord extends MemoryWrite {
+  id: string;
+  createdAt: string;
+}
+
+export interface MemoryStore {
+  search(query: MemoryQuery, context: KnowledgeContext): Promise<MemoryRecord[]>;
+  write(record: MemoryWrite, context: KnowledgeContext): Promise<MemoryRecord>;
+}
+
+export interface SkillDefinition {
+  name: string;
+  instructions: string;
+  resources?: Array<string | JsonValue | { id?: string; content: string | JsonValue; metadata?: JsonObject }>;
+}
+
+export function defineContextProvider<T extends ContextProvider>(provider: T): T {
+  return provider;
+}
+
+export function defineSkill(skill: SkillDefinition): ContextProvider {
+  return defineContextProvider({
+    name: skill.name,
+    async read() {
+      return [
+        { id: `${skill.name}:instructions`, content: skill.instructions },
+        ...(skill.resources ?? []).map((resource, index) => {
+          const normalized = isSkillResource(resource) ? resource : { content: resource };
+          return {
+            id: normalized.id ?? `${skill.name}:resource:${index + 1}`,
+            content: stringifyKnowledge(normalized.content),
+            ...(normalized.metadata === undefined ? {} : { metadata: normalized.metadata }),
+          };
+        }),
+      ];
+    },
+  });
+}
+
+function isSkillResource(
+  value: string | JsonValue | { id?: string; content: string | JsonValue; metadata?: JsonObject },
+): value is { id?: string; content: string | JsonValue; metadata?: JsonObject } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    'content' in value &&
+    (value.id === undefined || typeof value.id === 'string')
+  );
+}
+
+export function createMemoryContextProvider(options: {
+  name?: string;
+  store: MemoryStore;
+  limit?: number;
+}): ContextProvider {
+  return defineContextProvider({
+    name: options.name ?? 'memory',
+    async read(context) {
+      const records = await options.store.search(
+        {
+          query: context.input,
+          limit: options.limit,
+          agentName: context.agentName,
+          sessionId: context.sessionId,
+          namespace: context.context?.namespace,
+          actor: context.context?.actor,
+        },
+        context,
+      );
+      return records.map((record) => ({
+        id: record.id,
+        content: record.content,
+        metadata: {
+          ...(record.metadata ?? {}),
+          createdAt: record.createdAt,
+          ...(record.agentName === undefined ? {} : { agentName: record.agentName }),
+          ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }),
+        },
+      }));
+    },
+  });
+}
+
+export class InMemoryMemoryStore implements MemoryStore {
+  readonly #records = new Map<string, MemoryRecord>();
+
+  async search(query: MemoryQuery, context: KnowledgeContext): Promise<MemoryRecord[]> {
+    context.signal?.throwIfAborted();
+    const terms = query.query.toLowerCase().split(/\s+/).filter(Boolean);
+    const scored = [...this.#records.values()]
+      .filter((record) => matchesScope(record, query))
+      .map((record) => ({ record, score: score(record.content, terms) }))
+      .filter(({ score }) => !terms.length || score > 0)
+      .sort((left, right) => right.score - left.score || right.record.createdAt.localeCompare(left.record.createdAt));
+    return scored.slice(0, query.limit ?? scored.length).map(({ record }) => structuredClone(record));
+  }
+
+  async write(record: MemoryWrite, context: KnowledgeContext): Promise<MemoryRecord> {
+    context.signal?.throwIfAborted();
+    const saved: MemoryRecord = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      ...structuredClone(record),
+    };
+    this.#records.set(saved.id, saved);
+    return structuredClone(saved);
+  }
+}
+
+function matchesScope(record: MemoryRecord, query: MemoryQuery): boolean {
+  return (
+    matches(record.agentName, query.agentName) &&
+    matches(record.sessionId, query.sessionId) &&
+    matches(record.namespace, query.namespace) &&
+    matches(record.actor?.id, query.actor?.id)
+  );
+}
+
+function matches(left: string | undefined, right: string | undefined): boolean {
+  return right === undefined || left === undefined || left === right;
+}
+
+function score(content: string, terms: string[]): number {
+  const text = content.toLowerCase();
+  // ponytail: simple local ranking; replace with embeddings/vector search when adapters need it.
+  return terms.reduce((total, term) => total + (text.includes(term) ? 1 : 0), 0);
+}
+
+function stringifyKnowledge(value: string | JsonValue): string {
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}

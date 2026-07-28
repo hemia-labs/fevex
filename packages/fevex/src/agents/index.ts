@@ -14,6 +14,9 @@ export interface AgentDefinition<TOutput = unknown> {
   instructions: string;
   model?: ModelRef;
   tools?: string[];
+  context?: string[];
+  memory?: { read?: boolean; write?: boolean; limit?: number };
+  skills?: string[];
   reasoning?: ReasoningEffort;
   modelOptions?: Record<string, unknown>;
   outputSchema?: StandardSchemaV1<unknown, TOutput>;

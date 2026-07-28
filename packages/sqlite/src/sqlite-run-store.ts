@@ -4,10 +4,12 @@ import type {
   DurableRunStore,
   ExecutionCommit,
   ListEventsOptions,
+  RunRecord,
   RunCheckpoint,
   RunLease,
   Session,
   SessionId,
+  StoredRunCheckpoint,
   ToolExecutionRecord,
 } from '@fevex/core/runtime';
 import {
@@ -46,14 +48,16 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
     this.#closed = true;
   }
 
-  async getRun(runId: RunId): Promise<AgentRun | undefined> {
+  async getRun<TRun extends RunRecord<unknown> = AgentRun>(
+    runId: RunId,
+  ): Promise<TRun | undefined> {
     const row = this.#database.prepare(
       'SELECT data FROM runs WHERE id = ?',
     ).get(runId) as { data: string } | undefined;
     return row ? parse(row.data) : undefined;
   }
 
-  async saveRun(run: AgentRun): Promise<void> {
+  async saveRun(run: RunRecord): Promise<void> {
     this.#database.prepare(
       `INSERT INTO runs (id, session_id, revision, data)
        VALUES (?, ?, ?, ?)
@@ -94,7 +98,9 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
     return events.slice(cursor + 1);
   }
 
-  async getCheckpoint(runId: RunId): Promise<RunCheckpoint | undefined> {
+  async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(
+    runId: RunId,
+  ): Promise<TCheckpoint | undefined> {
     const row = this.#database.prepare(
       'SELECT data FROM checkpoints WHERE run_id = ?',
     ).get(runId) as { data: string } | undefined;

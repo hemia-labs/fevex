@@ -4,12 +4,13 @@
   "scripts": {
     "dev": "bun --watch src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
+    "start": "bun dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@fevex/core": "workspace:*",
     "@fevex/deepseek": "workspace:*",
+    "@fevex/openai": "workspace:*",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",
     "@nestjs/platform-express": "^11.1.28",

@@ -1,4 +1,4 @@
-import { defineAgent, defineTool } from '@fevex/core';
+import { defineAgent, defineTool, defineWorkflow } from '@fevex/core';
 import { z } from 'zod';
 
 export const agentCatalog = [
@@ -15,6 +15,19 @@ export const agentCatalog = [
     description: 'Investigates account health using account, tickets, metrics and incidents tools.',
     instructions:
       'You are an operations triage agent. Investigate the account before answering: get the account, recent tickets, service metrics and open incidents when relevant. Present findings in Markdown with a short status, tables for data, and clear next actions. Only create an escalation when the user asks you to escalate or when there is an open critical incident.',
+  },
+];
+
+export const workflowCatalog = [
+  {
+    name: 'support-workflow',
+    label: 'Smart Support Workflow',
+    description: 'Routes simple account questions to Support and operational questions to Ops.',
+  },
+  {
+    name: 'incident-workflow',
+    label: 'Incident Workflow',
+    description: 'Runs Support and Ops in parallel, then merges both perspectives.',
   },
 ];
 
@@ -176,3 +189,44 @@ export const agents = agentCatalog.map(({ name, instructions }) => defineAgent({
       ? ['accounts_get']
       : tools.map((tool) => tool.name),
 }));
+
+function routeToOps(input: unknown) {
+  const text = typeof input === 'string' ? input : JSON.stringify(input);
+  return /\b(incident|latency|error|uptime|ticket|escalat|critical|ops|health)\b/i.test(text);
+}
+
+export const workflows = [
+  defineWorkflow({
+    name: 'support-workflow',
+    version: '1',
+    async run(step, input) {
+      return (
+        await step.agent('route', routeToOps(input) ? 'ops' : 'support', {
+          input,
+        })
+      ).output;
+    },
+  }),
+  defineWorkflow({
+    name: 'incident-workflow',
+    version: '1',
+    async run(step, input) {
+      const research = await step.parallel('research', {
+        support: () => step.agent('support', 'support', { input }),
+        ops: () => step.agent('ops', 'ops', { input }),
+      });
+
+      return (
+        await step.agent('merge', 'ops', {
+          input: {
+            request: input,
+            support: research.support.output,
+            ops: research.ops.output,
+            instruction:
+              'Merge both findings into a concise incident briefing with status, evidence and next actions.',
+          },
+        })
+      ).output;
+    },
+  }),
+];

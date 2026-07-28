@@ -1,6 +1,13 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { defineAgent } from './agents';
 import {
+  type ChannelAdapter,
+  ChannelError,
+  handleChannelInput,
+  type ChannelMessage,
+  type ChannelRunResult,
+} from './channels';
+import {
   PROVIDER_REASONING_UNSUPPORTED,
   PROVIDER_SCHEMA_UNSUPPORTED,
   type AgentEvent,
@@ -11,10 +18,25 @@ import {
   InMemoryRunStore,
   type AgentRun,
   type FevexConfigurationErrorCode,
+  type RunRecord,
   type Session,
 } from './index';
 import { defineTool } from './tools';
 import type { ModelInput, ModelResult } from './models';
+import {
+  createFevexHttpClient,
+  createFevexHttpHandler,
+  FEVEX_HTTP_PROTOCOL_VERSION,
+} from './http';
+import {
+  createMemoryContextProvider,
+  defineContextProvider,
+  defineSkill,
+  InMemoryMemoryStore,
+  type ContextBlock,
+  type KnowledgeContext,
+  type MemoryRecord,
+} from './knowledge';
 
 declare const inputSchema: StandardSchemaV1<unknown, { accountId: number }>;
 declare const outputSchema: StandardSchemaV1<unknown, { status: string }>;
@@ -101,7 +123,24 @@ const app = createFevex({
       },
     },
   },
-  agents: [{ name: 'assistant', instructions: 'Answer.' }],
+  contextProviders: [
+    defineSkill({ name: 'skill', instructions: 'Use this skill.' }),
+    defineContextProvider({
+      name: 'context',
+      async read(context) {
+        context.agentName satisfies string;
+        return [{ id: 'block', content: context.input }];
+      },
+    }),
+    createMemoryContextProvider({ store: new InMemoryMemoryStore() }),
+  ],
+  agents: [{
+    name: 'assistant',
+    instructions: 'Answer.',
+    context: ['context'],
+    skills: ['skill'],
+    memory: { read: true, write: true, limit: 3 },
+  }],
   runStore: new InMemoryRunStore(),
 });
 
@@ -112,7 +151,32 @@ run.sessionId satisfies string;
 session.history satisfies Array<{ role: string; content: string }>;
 
 app.startAgent<string, string>('assistant', { input: 'hello' }) satisfies Promise<AgentRun<string>>;
-app.getRun<string>(run.id) satisfies Promise<AgentRun<string> | undefined>;
+app.getRun<string>(run.id) satisfies Promise<RunRecord<string> | undefined>;
 app.listEvents(run.id, { after: event.id }) satisfies Promise<AgentEvent[]>;
 app.cancelRun(run.id) satisfies Promise<boolean>;
 app.compactSession(session.id, 'Summary') satisfies Promise<Session>;
+
+declare const channel: ChannelAdapter<Request, Response>;
+declare const channelMessage: ChannelMessage;
+channel.parse(new Request('https://example.com'), {}) satisfies Promise<ChannelMessage | null>;
+channelMessage.conversationId satisfies string;
+handleChannelInput(new Request('https://example.com'), {
+  fevex: app,
+  adapter: channel,
+  agentName: 'assistant',
+}) satisfies Promise<ChannelRunResult<Response>>;
+new ChannelError('CHANNEL_DELIVERY_FAILED', 'Delivery failed') satisfies ChannelError;
+
+createFevexHttpHandler({ fevex: app }) satisfies (
+  request: Request,
+  context?: { context?: import('./core').ExecutionContext },
+) => Promise<Response>;
+createFevexHttpClient({ baseUrl: 'https://example.com' }).getRun(run.id) satisfies Promise<RunRecord>;
+FEVEX_HTTP_PROTOCOL_VERSION satisfies '1';
+
+declare const knowledgeContext: KnowledgeContext;
+declare const contextBlock: ContextBlock;
+declare const memoryRecord: MemoryRecord;
+knowledgeContext.sessionId satisfies string;
+contextBlock.content satisfies string;
+memoryRecord.createdAt satisfies string;

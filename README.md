@@ -33,6 +33,8 @@ For official model adapters:
 ```bash
 npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
+npm install @fevex/core @fevex/mcp
+npm install @fevex/core @fevex/openapi
 npm install @fevex/core @fevex/sqlite
 npm install @fevex/core @fevex/postgres
 npm install @fevex/core @fevex/opentelemetry @opentelemetry/api
@@ -44,6 +46,163 @@ Schema-compatible validator can be used:
 ```bash
 npm install zod
 ```
+
+## HTTP v1 playground
+
+Run a real OpenAI or DeepSeek agent through the versioned Fetch/SSE protocol:
+
+```bash
+FEVEX_PROVIDER=deepseek DEEPSEEK_API_KEY=... bun run dev:nest
+bun run dev:next
+```
+
+Open `http://localhost:3000`. Routes, sessions, cancellation and reconnection
+are documented in
+[`examples/nest-api/README.md`](examples/nest-api/README.md).
+
+## Connections, MCP and OpenAPI
+
+Remote tools are registered as explicit connections. Fevex keeps the local
+allowlist, timeout, approvals and policies; the provider only handles remote
+discovery and calls.
+
+```ts
+import { createFevex, defineAgent, defineConnection } from '@fevex/core';
+import { createMcpToolProvider } from '@fevex/mcp';
+
+const docs = defineConnection({
+  name: 'docs',
+  provider: createMcpToolProvider({ url: 'https://example.com/mcp' }),
+  allowlist: ['search'],
+  tools: {
+    search: {
+      description: 'Search docs.',
+      inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+    },
+  },
+});
+
+createFevex({
+  models: {},
+  agents: [defineAgent({
+    name: 'assistant',
+    instructions: 'Help.',
+    tools: ['docs__search'],
+  })],
+  connections: [docs],
+});
+```
+
+OpenAPI connections turn bundled JSON OpenAPI 3.1 operations into the same
+kind of remote tools:
+
+```ts
+import { createOpenApiToolProvider } from '@fevex/openapi';
+
+const billing = defineConnection({
+  name: 'billing',
+  provider: createOpenApiToolProvider({
+    document: openApiDocument,
+    operations: { allow: ['getInvoice'] },
+    headers: () => ({ Authorization: `Bearer ${process.env.BILLING_TOKEN}` }),
+  }),
+  allowlist: ['getInvoice'],
+});
+```
+
+`@fevex/openapi` supports JSON OpenAPI 3.1.x, local refs and JSON
+request/response bodies. YAML, remote refs, multipart, binary payloads and OAuth
+lifecycles stay with the hosting app or later phases.
+
+## Channels core
+
+Channels adapt external message surfaces to Fevex without making the runtime
+know about that surface. The hosting app receives the webhook/message, then
+passes it through an adapter:
+
+```ts
+import { handleChannelInput } from '@fevex/core/channels';
+
+const sessions = new Map<string, string>();
+
+const result = await handleChannelInput(
+  { id: 'm1', conversationId: 'c1', text: 'hello' },
+  {
+    fevex: app,
+    agentName: 'assistant',
+    adapter: {
+      name: 'memory',
+      async parse(input) {
+        return {
+          id: input.id,
+          deliveryId: input.id,
+          conversationId: input.conversationId,
+          content: input.text,
+        };
+      },
+      async deliver(output) {
+        return output;
+      },
+    },
+    resolveSessionId(message) {
+      return sessions.get(message.conversationId);
+    },
+  },
+);
+
+if (!result.ignored) sessions.set(result.message.conversationId, result.run.sessionId);
+```
+
+The helper emits `channel.received`, `channel.delivered` and `channel.failed`
+events through its local `onEvent` callback. Durable redelivery/deduplication
+and Slack-specific signature checks stay for the Slack adapter phase.
+
+## Knowledge and memory
+
+Knowledge adds prompt context without changing the run/session store:
+
+```ts
+import {
+  InMemoryMemoryStore,
+  createFevex,
+  defineAgent,
+  defineContextProvider,
+  defineSkill,
+} from '@fevex/core';
+
+const memoryStore = new InMemoryMemoryStore();
+
+const app = createFevex({
+  models,
+  memoryStore,
+  contextProviders: [
+    defineSkill({
+      name: 'refunds',
+      instructions: 'Refunds are allowed for 30 days after purchase.',
+    }),
+    defineContextProvider({
+      name: 'account',
+      async read({ context }) {
+        return [{ id: 'tier', content: `Plan: ${context?.attributes?.plan ?? 'free'}` }];
+      },
+    }),
+  ],
+  agents: [
+    defineAgent({
+      name: 'support',
+      instructions: 'Answer with the available business context.',
+      skills: ['refunds'],
+      context: ['account'],
+      memory: { read: true, write: true, limit: 5 },
+    }),
+  ],
+});
+```
+
+Sessions keep conversation history; context providers add fresh business
+context; memory stores searchable prior facts. The built-in memory store is a
+local substring search only—vector DBs and durable storage belong in optional
+adapters.
 
 ## Quickstart
 
@@ -516,6 +675,8 @@ configured tolerance.
 | --- | --- |
 | `@fevex/core` | Common runtime, definitions and contracts |
 | `@fevex/core/agents` | Agent definitions |
+| `@fevex/core/channels` | Channel adapters and message handling |
+| `@fevex/core/knowledge` | Context providers, skills and memory contracts |
 | `@fevex/core/models` | Provider-neutral model contracts |
 | `@fevex/core/tools` | Tool definitions and execution context |
 | `@fevex/core/runtime` | Runs, sessions and store contracts |

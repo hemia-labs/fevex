@@ -3,10 +3,12 @@ import type {
   AgentEventPayloads,
   AgentEventType,
   AgentMessage,
+  JsonObject,
   JsonValue,
   ToolCall,
 } from '../core';
 import type { Fevex } from '../fevex';
+import type { ContextBlock, KnowledgeContext, MemoryStore } from '../knowledge';
 import type { ModelGateway, ModelUsage } from '../models';
 import type { PolicyDecision } from '../policies';
 import { FevexRunError, RunPausedError } from '../run-error';
@@ -16,13 +18,18 @@ import {
   type DurableRunStore,
   type PendingToolExecution,
   type ResumeRunResolution,
+  type RunRecord,
   type RunCheckpoint,
   type RunRequest,
   type RunResult,
   type Session,
   type ToolExecutionRecord,
+  type WorkflowCheckpoint,
+  type WorkflowRun,
+  type WorkflowStepRecord,
 } from '../runtime';
 import { toToolSpec, type ToolDefinition } from '../tools';
+import type { WorkflowStep } from '../workflows';
 import type { FevexComposition } from './configuration';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import { buildRunTrace } from './observability';
@@ -58,6 +65,19 @@ interface ExecutionState<TInput = unknown, TOutput = unknown> {
   leaseTimer?: ReturnType<typeof setInterval>;
 }
 
+interface WorkflowExecutionState<TInput = unknown, TOutput = unknown> {
+  run: WorkflowRun;
+  session: Session;
+  request: RunRequest<TInput, TOutput> & { signal: AbortSignal };
+  controller: AbortController;
+  eventSequence: number;
+  checkpoint: WorkflowCheckpoint;
+  advancing: boolean;
+  leaseOwner?: string;
+  leaseTimer?: ReturnType<typeof setInterval>;
+  commitQueue: Promise<void>;
+}
+
 function redact(message: string, secrets: readonly string[]): string {
   return secrets.reduce(
     (safe, secret) => (secret ? safe.split(secret).join('[REDACTED]') : safe),
@@ -85,45 +105,70 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
+async function transportableTool(
+  tool: ToolDefinition,
+  context?: RunRequest['context'],
+): Promise<{
+  name: string;
+  description?: string;
+  inputSchema?: JsonObject;
+  outputSchema?: JsonObject;
+  risk: string;
+  approval: string;
+  idempotency: string;
+  retry: ToolDefinition['retry'];
+  credentials: string[];
+}> {
+  const remote = await tool.resolve?.({ context });
+  return {
+    name: tool.name,
+    description: tool.description ?? remote?.description,
+    inputSchema:
+      tool.inputJsonSchema ??
+      remote?.inputSchema ??
+      (tool.inputSchema === undefined
+        ? undefined
+        : toTransportableSchema(
+            tool.inputSchema,
+            'input',
+            `Input schema for tool "${tool.name}" is not transportable`,
+          )),
+    outputSchema:
+      tool.outputJsonSchema ??
+      remote?.outputSchema ??
+      (tool.outputSchema === undefined
+        ? undefined
+        : toTransportableSchema(
+            tool.outputSchema,
+            'output',
+            `Output schema for tool "${tool.name}" is not transportable`,
+          )),
+    risk: tool.risk ?? 'read',
+    approval: tool.approval ?? 'never',
+    idempotency: tool.idempotency ?? 'none',
+    retry: tool.retry,
+    credentials: tool.credentials ?? [],
+  };
+}
+
 async function definitionHash(
   name: string,
   modelName: string,
   agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
   tools: Map<string, ToolDefinition>,
 ): Promise<string> {
+  const toolDefinitions = await Promise.all(
+    (agent.tools ?? []).map((toolName) => transportableTool(tools.get(toolName)!)),
+  );
   const portable = JSON.stringify(
     canonicalize({
       name,
       modelName,
       instructions: agent.instructions,
-      tools: (agent.tools ?? []).map((toolName) => {
-        const tool = tools.get(toolName)!;
-        return {
-          name: tool.name,
-          description: tool.description,
-          inputSchema:
-            tool.inputSchema === undefined
-              ? undefined
-              : toTransportableSchema(
-                  tool.inputSchema,
-                  'input',
-                  `Input schema for tool "${tool.name}" is not transportable`,
-                ),
-          outputSchema:
-            tool.outputSchema === undefined
-              ? undefined
-              : toTransportableSchema(
-                  tool.outputSchema,
-                  'output',
-                  `Output schema for tool "${tool.name}" is not transportable`,
-                ),
-          risk: tool.risk ?? 'read',
-          approval: tool.approval ?? 'never',
-          idempotency: tool.idempotency ?? 'none',
-          retry: tool.retry,
-          credentials: tool.credentials ?? [],
-        };
-      }),
+      context: agent.context,
+      memory: agent.memory,
+      skills: agent.skills,
+      tools: toolDefinitions,
       reasoning: agent.reasoning,
       modelOptions: agent.modelOptions,
       limits: agent.limits,
@@ -141,10 +186,70 @@ async function definitionHash(
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function workflowDefinitionHash(
+  name: string,
+  workflow: FevexComposition['workflows'] extends Map<string, infer T> ? T : never,
+): Promise<string> {
+  // Hash the declared surface, never the source of `run`. `run.toString()`
+  // changes on any minified redeploy and still misses changes inside the
+  // functions `run` closes over, so it is wrong in both directions. This
+  // mirrors the agent hash, which covers declarations and skips `tool.execute`.
+  const portable = JSON.stringify(canonicalize({ name, version: workflow.version ?? '1' }));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(portable));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function isWorkflowRun(run: RunRecord): run is WorkflowRun {
+  return run.kind === 'workflow';
+}
+
+function systemBlock(label: string, provider: string, block: ContextBlock): AgentMessage {
+  return {
+    role: 'system',
+    content: `[${label}: ${provider}/${block.id}]\n${block.content}`,
+  };
+}
+
+async function readMemoryMessages(
+  agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
+  context: KnowledgeContext,
+  memoryStore: MemoryStore | undefined,
+): Promise<AgentMessage[]> {
+  if (!agent.memory || agent.memory.read === false || !memoryStore) return [];
+  try {
+    const records = await abortable(
+      () =>
+        memoryStore.search(
+          {
+            query: context.input,
+            limit: agent.memory?.limit ?? 5,
+            agentName: context.agentName,
+            sessionId: context.sessionId,
+            namespace: context.context?.namespace,
+            actor: context.context?.actor,
+          },
+          context,
+        ),
+      context.signal!,
+    );
+    return records
+      .filter((record) => record.content.trim())
+      .map((record) => ({
+        role: 'system',
+        content: `[Memory: ${record.id}]\n${record.content}`,
+      }));
+  } catch (cause) {
+    throw new Error('Memory search failed', { cause });
+  }
+}
+
 export function createRuntime({
   models,
   agents,
+  workflows,
   tools,
+  contextProviders,
+  memoryStore,
   runStore,
   credentialStore,
   policies,
@@ -152,6 +257,7 @@ export function createRuntime({
   observability,
 }: FevexComposition): Fevex {
   const activeRuns = new Map<string, ExecutionState>();
+  const activeWorkflowRuns = new Map<string, WorkflowExecutionState>();
   const activeSessions = new Set<string>();
   const pendingExports = new Set<Promise<void>>();
   const exportFailures: unknown[] = [];
@@ -169,18 +275,20 @@ export function createRuntime({
     exportedRuns.add(event.runId);
     let task!: Promise<void>;
     task = (async () => {
-      const run = await runStore.getRun(event.runId);
+      const run = await runStore.getRun<RunRecord>(event.runId);
       if (!run) throw new Error(`Run "${event.runId}" does not exist`);
-      const agent = agents.get(run.agentName);
-      if (!agent) throw new Error(`Agent "${run.agentName}" is not registered`);
+      if (isWorkflowRun(run)) return;
+      const agentRun = run as AgentRun;
+      const agent = agents.get(agentRun.agentName);
+      if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
       const modelRegistryName = typeof agent.model === 'string' ? agent.model : 'default';
       const gateway =
         typeof agent.model === 'string'
           ? models.get(agent.model)
           : (agent.model ?? models.get('default'));
       const trace = buildRunTrace(
-        run,
-        await runStore.listEvents(run.id),
+        agentRun,
+        await runStore.listEvents(agentRun.id),
         modelRegistryName,
         gateway?.metadata,
         observability,
@@ -209,7 +317,7 @@ export function createRuntime({
   };
 
   const createEvent = <TType extends AgentEventType>(
-    state: ExecutionState,
+    state: { run: RunRecord; eventSequence: number },
     type: TType,
     payload: AgentEventPayloads[TType],
   ): AgentEvent<TType> =>
@@ -243,9 +351,9 @@ export function createRuntime({
   };
 
   const commit = async (
-    state: ExecutionState,
+    state: ExecutionState | WorkflowExecutionState,
     options: {
-      checkpoint?: RunCheckpoint | null;
+      checkpoint?: RunCheckpoint | WorkflowCheckpoint | null;
       session?: Session;
       toolExecution?: ToolExecutionRecord;
       events?: AgentEvent[];
@@ -270,7 +378,7 @@ export function createRuntime({
     for (const event of options.events ?? []) notifyObserver(event);
   };
 
-  const startLease = (state: ExecutionState, store: DurableRunStore): void => {
+  const startLease = (state: ExecutionState | WorkflowExecutionState, store: DurableRunStore): void => {
     state.leaseTimer = setInterval(() => {
       if (!state.leaseOwner || state.request.signal.aborted) return;
       const expiresAt = new Date(Date.now() + LEASE_MS).toISOString();
@@ -317,11 +425,56 @@ export function createRuntime({
     return event;
   };
 
+  const releaseWorkflowExecution = async (state: WorkflowExecutionState): Promise<void> => {
+    activeWorkflowRuns.delete(state.run.id);
+    activeSessions.delete(state.session.id);
+    if (state.leaseTimer) clearInterval(state.leaseTimer);
+    if (state.leaseOwner && isDurableRunStore(runStore)) {
+      await runStore.releaseLease(state.run.id, state.leaseOwner).catch(() => {});
+    }
+  };
+
+  const commitWorkflow = async (
+    state: WorkflowExecutionState,
+    update: () => void,
+    events: AgentEvent[] = [],
+  ): Promise<void> => {
+    state.commitQueue = state.commitQueue.then(async () => {
+      update();
+      await commit(state, { checkpoint: state.checkpoint, events });
+    });
+    await state.commitQueue;
+  };
+
+  const cancelWorkflowExecution = async (
+    state: WorkflowExecutionState,
+    reason: AgentEventPayloads['workflow.run.cancelled']['reason'] = cancellationReason(
+      state.request.signal,
+    ),
+  ): Promise<AgentEvent<'workflow.run.cancelled'> | undefined> => {
+    if (
+      state.run.status === 'completed' ||
+      state.run.status === 'failed' ||
+      state.run.status === 'cancelled'
+    ) {
+      return undefined;
+    }
+    state.run.status = 'cancelled';
+    state.run.pause = undefined;
+    state.run.error = reason;
+    const event = createEvent(state, 'workflow.run.cancelled', { reason });
+    await commit(state, { checkpoint: null, events: [event] });
+    await releaseWorkflowExecution(state);
+    return event;
+  };
+
   const prepareExecution = async <TInput, TOutput>(
     name: string,
     request: RunRequest<TInput, TOutput>,
   ): Promise<ExecutionState<TInput, TOutput>> => {
-    if (!agents.has(name)) throw new Error(`Agent "${name}" is not registered`);
+    if (!agents.has(name)) {
+      throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
+    }
     const now = new Date().toISOString();
     let session: Session;
     if (request.sessionId === undefined) {
@@ -329,11 +482,16 @@ export function createRuntime({
       await runStore.saveSession(session);
     } else {
       const stored = await runStore.getSession(request.sessionId);
-      if (!stored) throw new Error(`Session "${request.sessionId}" does not exist`);
+      if (!stored) {
+        throw new FevexRunError(
+          'SESSION_NOT_FOUND',
+          `Session "${request.sessionId}" does not exist`,
+        );
+      }
       session = stored;
     }
     if (activeSessions.has(session.id)) {
-      throw new Error(`Session "${session.id}" already has an active run`);
+      throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" already has an active run`);
     }
     activeSessions.add(session.id);
     const controller = new AbortController();
@@ -364,6 +522,86 @@ export function createRuntime({
       throw error;
     }
     activeRuns.set(run.id, state as ExecutionState);
+    return state;
+  };
+
+  const prepareWorkflowExecution = async <TInput, TOutput>(
+    name: string,
+    request: RunRequest<TInput, TOutput>,
+  ): Promise<WorkflowExecutionState<TInput, TOutput>> => {
+    const workflow = workflows.get(name);
+    if (!workflow) {
+      throw new FevexRunError('AGENT_NOT_FOUND', `Workflow "${name}" is not registered`);
+    }
+    if (!isDurableRunStore(runStore)) {
+      throw new FevexRunError(
+        'DURABLE_STORE_REQUIRED',
+        'Workflows require a DurableRunStore',
+      );
+    }
+    const now = new Date().toISOString();
+    let session: Session;
+    if (request.sessionId === undefined) {
+      session = { id: crypto.randomUUID(), history: [], createdAt: now, updatedAt: now };
+      await runStore.saveSession(session);
+    } else {
+      const stored = await runStore.getSession(request.sessionId);
+      if (!stored) {
+        throw new FevexRunError(
+          'SESSION_NOT_FOUND',
+          `Session "${request.sessionId}" does not exist`,
+        );
+      }
+      session = stored;
+    }
+    if (activeSessions.has(session.id)) {
+      throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" already has an active run`);
+    }
+    activeSessions.add(session.id);
+    const controller = new AbortController();
+    const signal = request.signal
+      ? AbortSignal.any([controller.signal, request.signal])
+      : controller.signal;
+    const input = toJsonValue(
+      request.input,
+      'Workflow input must be a string or JSON-serializable value',
+    );
+    const run: WorkflowRun = {
+      kind: 'workflow',
+      id: crypto.randomUUID(),
+      sessionId: session.id,
+      workflowName: name,
+      status: 'running',
+      revision: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const checkpoint: WorkflowCheckpoint = {
+      kind: 'workflow',
+      runId: run.id,
+      workflowName: name,
+      definitionHash: await workflowDefinitionHash(name, workflow),
+      input,
+      context: request.context,
+      steps: {},
+    };
+    const state: WorkflowExecutionState<TInput, TOutput> = {
+      run,
+      session,
+      request: { ...request, sessionId: session.id, signal },
+      controller,
+      eventSequence: 0,
+      checkpoint,
+      advancing: false,
+      commitQueue: Promise.resolve(),
+    };
+    try {
+      await runStore.saveRun(run);
+    } catch (error) {
+      activeSessions.delete(session.id);
+      throw error;
+    }
+    activeWorkflowRuns.set(run.id, state as WorkflowExecutionState);
     return state;
   };
 
@@ -456,6 +694,78 @@ export function createRuntime({
     };
   };
 
+  const knowledgeContext = (
+    state: ExecutionState,
+    input: string,
+  ): KnowledgeContext => ({
+    agentName: state.run.agentName,
+    input,
+    sessionId: state.session.id,
+    ...(state.request.context === undefined ? {} : { context: state.request.context }),
+    signal: state.request.signal,
+  });
+
+  const readProvider = async (
+    providerName: string,
+    label: string,
+    context: KnowledgeContext,
+  ): Promise<AgentMessage[]> => {
+    try {
+      const provider = contextProviders.get(providerName)!;
+      const blocks = await abortable(() => provider.read(context), context.signal!);
+      return blocks
+        .filter((block) => block.content.trim())
+        .map((block) => systemBlock(label, providerName, block));
+    } catch (cause) {
+      throw new Error(`${label} provider "${providerName}" failed`, { cause });
+    }
+  };
+
+  const readKnowledgeMessages = async (
+    state: ExecutionState,
+    agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
+    input: string,
+  ): Promise<{ skills: AgentMessage[]; context: AgentMessage[]; memory: AgentMessage[] }> => {
+    const context = knowledgeContext(state, input);
+    const skills = (
+      await Promise.all((agent.skills ?? []).map((name) => readProvider(name, 'Skill', context)))
+    ).flat();
+    const contextual = (
+      await Promise.all((agent.context ?? []).map((name) => readProvider(name, 'Context', context)))
+    ).flat();
+    const memory = await readMemoryMessages(agent, context, memoryStore);
+    return { skills, context: contextual, memory };
+  };
+
+  const writeMemory = async (
+    state: ExecutionState,
+    agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
+    input: string,
+    output: JsonValue,
+  ): Promise<void> => {
+    if (!agent.memory?.write || !memoryStore) return;
+    const context = knowledgeContext(state, input);
+    try {
+      await abortable(
+        () =>
+          memoryStore.write(
+            {
+              content: `User: ${input}\nAssistant: ${serializeJsonValue(output)}`,
+              agentName: state.run.agentName,
+              sessionId: state.session.id,
+              namespace: state.request.context?.namespace,
+              actor: state.request.context?.actor,
+              metadata: { runId: state.run.id },
+            },
+            context,
+          ),
+        state.request.signal,
+      );
+    } catch (cause) {
+      throw new Error('Memory write failed', { cause });
+    }
+  };
+
   async function* executeAgent<TInput = unknown, TOutput = unknown>(
     name: string,
     state: ExecutionState<TInput, TOutput>,
@@ -522,9 +832,13 @@ export function createRuntime({
           request.input,
           'Run input must be a string or JSON-serializable value',
         );
+        const knowledge = await readKnowledgeMessages(state, agent, inputContent);
         messages = [
           { role: 'system', content: agent.instructions },
+          ...knowledge.skills,
           ...state.session.history,
+          ...knowledge.context,
+          ...knowledge.memory,
           { role: 'user', content: inputContent },
         ];
         step = 1;
@@ -543,18 +857,26 @@ export function createRuntime({
               'output',
               `Output schema for agent "${name}" is not transportable`,
             );
-      const agentTools = (agent.tools ?? []).map((toolName) => {
+      const agentTools = await Promise.all((agent.tools ?? []).map(async (toolName) => {
         const tool = tools.get(toolName)!;
+        const remote = await tool.resolve?.({ context: request.context });
         const inputSchema =
-          tool.inputSchema === undefined
+          tool.inputJsonSchema ??
+          remote?.inputSchema ??
+          (tool.inputSchema === undefined
             ? undefined
             : toTransportableSchema(
                 tool.inputSchema,
                 'input',
                 `Input schema for tool "${tool.name}" is not transportable`,
-              );
-        return toToolSpec(tool, inputSchema);
-      });
+              ));
+        return toToolSpec(
+          tool.description === undefined && remote?.description !== undefined
+            ? { ...tool, description: remote.description }
+            : tool,
+          inputSchema,
+        );
+      }));
       const maxSteps = agent.limits?.maxSteps ?? DEFAULT_MAX_STEPS;
       const maxToolCalls = agent.limits?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
 
@@ -630,6 +952,7 @@ export function createRuntime({
               validated,
               `Output from agent "${name}" must be JSON-serializable`,
             );
+            await writeMemory(state, agent, inputContent, output);
             state.session.history.push(
               { role: 'user', content: inputContent },
               { role: 'assistant', content: serializeValue(output, 'Output must be serializable') },
@@ -1133,8 +1456,325 @@ export function createRuntime({
     }
   }
 
+  async function* executeWorkflow<TInput = unknown, TOutput = unknown>(
+    name: string,
+    state: WorkflowExecutionState<TInput, TOutput>,
+  ): AsyncGenerator<AgentEvent, RunResult<TOutput> | undefined> {
+    const workflow = workflows.get(name)!;
+    const events: AgentEvent[] = [];
+    const emit = async <TType extends AgentEventType>(
+      type: TType,
+      payload: AgentEventPayloads[TType],
+    ): Promise<AgentEvent> => {
+      const event = createEvent(state, type, payload) as AgentEvent;
+      await commitWorkflow(state, () => {}, [event]);
+      events.push(event);
+      return event;
+    };
+    const pauseForChild = async (
+      stepId: string,
+      error: RunPausedError,
+    ): Promise<never> => {
+      const childPause = error.pause;
+      if (childPause.type === 'workflow_child') throw error;
+      const event = createEvent(state, 'workflow.run.paused', {
+        stepId,
+        childRunId: error.runId,
+      }) as AgentEvent;
+      await commitWorkflow(
+        state,
+        () => {
+          state.run.status = 'paused';
+          state.run.pause = {
+            type: 'workflow_child',
+            childRunId: error.runId,
+            childPause,
+          };
+        },
+        [event],
+      );
+      events.push(event);
+      await releaseWorkflowExecution(state);
+      throw new RunPausedError(state.run.id, state.run.pause!);
+    };
+    const completeAgentStep = async (
+      stepId: string,
+      agentName: string,
+      childRunId: string,
+      output: JsonValue,
+    ): Promise<RunResult<JsonValue>> => {
+      const result: RunResult<JsonValue> = {
+        runId: childRunId,
+        sessionId: (await runStore.getRun(childRunId))!.sessionId,
+        output,
+      };
+      const event = createEvent(state, 'workflow.step.completed', {
+        stepId,
+        kind: 'agent',
+      }) as AgentEvent;
+      await commitWorkflow(
+        state,
+        () => {
+          state.checkpoint.steps[stepId] = {
+            type: 'agent',
+            status: 'completed',
+            agentName,
+            childRunId,
+            result,
+          };
+        },
+        [event],
+      );
+      events.push(event);
+      return structuredClone(result);
+    };
+    const step: WorkflowStep = {
+      async agent<TStepInput = unknown, TStepOutput = unknown>(
+        stepId: string,
+        agentName: string,
+        request: RunRequest<TStepInput, TStepOutput>,
+      ): Promise<RunResult<TStepOutput>> {
+        if (!stepId.trim()) throw new Error('Workflow step id cannot be empty');
+        const existing = state.checkpoint.steps[stepId];
+        if (existing?.type === 'agent' && existing.status === 'completed') {
+          return structuredClone(existing.result) as RunResult<TStepOutput>;
+        }
+        if (existing?.type === 'agent' && existing.status === 'running') {
+          const child = await runStore.getRun(existing.childRunId);
+          if (!child) throw new Error(`Child run "${existing.childRunId}" does not exist`);
+          if (child.status === 'completed') {
+            return completeAgentStep(
+              stepId,
+              existing.agentName,
+              existing.childRunId,
+              toJsonValue(child.output, 'Child agent output must be JSON-serializable'),
+            ) as Promise<RunResult<TStepOutput>>;
+          }
+          if (child.status === 'paused' && child.pause) {
+            return pauseForChild(stepId, new RunPausedError(child.id, child.pause));
+          }
+          if (child.status === 'failed' || child.status === 'cancelled') {
+            throw new Error(`Child run "${child.id}" ${child.status}`);
+          }
+        }
+        if (existing && existing.type !== 'agent') {
+          throw new Error(`Workflow step "${stepId}" was already used as ${existing.type}`);
+        }
+        if (!agents.has(agentName)) {
+          throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${agentName}" is not registered`);
+        }
+        const childSignal = request.signal
+          ? AbortSignal.any([state.request.signal, request.signal])
+          : state.request.signal;
+        const childState = await prepareExecution(agentName, { ...request, signal: childSignal });
+        const started = createEvent(state, 'workflow.step.started', {
+          stepId,
+          kind: 'agent',
+          agentName,
+        }) as AgentEvent;
+        await commitWorkflow(
+          state,
+          () => {
+            state.checkpoint.steps[stepId] = {
+              type: 'agent',
+              status: 'running',
+              agentName,
+              childRunId: childState.run.id,
+            };
+          },
+          [started],
+        );
+        events.push(started);
+        try {
+          const result = await drainExecution(agentName, childState, true);
+          if (!result) throw new Error(`Agent "${agentName}" did not complete`);
+          const completed = createEvent(state, 'workflow.step.completed', {
+            stepId,
+            kind: 'agent',
+          }) as AgentEvent;
+          await commitWorkflow(
+            state,
+            () => {
+              state.checkpoint.steps[stepId] = {
+                type: 'agent',
+                status: 'completed',
+                agentName,
+                childRunId: result.runId,
+                result: structuredClone(result) as RunResult<JsonValue>,
+              };
+            },
+            [completed],
+          );
+          events.push(completed);
+          return result;
+        } catch (error) {
+          if (error instanceof RunPausedError) return pauseForChild(stepId, error);
+          const failed = createEvent(state, 'workflow.step.failed', {
+            stepId,
+            kind: 'agent',
+            error: toErrorMessage(error),
+          }) as AgentEvent;
+          await commitWorkflow(state, () => {}, [failed]);
+          events.push(failed);
+          throw error;
+        }
+      },
+      async parallel<TTasks extends Record<string, () => Promise<unknown>>>(
+        stepId: string,
+        tasks: TTasks,
+      ): Promise<{ [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>> }> {
+        if (!stepId.trim()) throw new Error('Workflow step id cannot be empty');
+        const existing = state.checkpoint.steps[stepId];
+        if (existing?.type === 'parallel' && existing.status === 'completed') {
+          return structuredClone(existing.result) as {
+            [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>>;
+          };
+        }
+        if (existing && existing.type !== 'parallel') {
+          throw new Error(`Workflow step "${stepId}" was already used as ${existing.type}`);
+        }
+        const started = createEvent(state, 'workflow.step.started', {
+          stepId,
+          kind: 'parallel',
+        }) as AgentEvent;
+        await commitWorkflow(
+          state,
+          () => {
+            state.checkpoint.steps[stepId] = { type: 'parallel', status: 'running' };
+          },
+          [started],
+        );
+        events.push(started);
+        try {
+          const entries = await Promise.all(
+            Object.entries(tasks).map(async ([key, task]) => [key, await task()] as const),
+          );
+          const result = toJsonValue(
+            Object.fromEntries(entries),
+            `Workflow parallel step "${stepId}" result must be JSON-serializable`,
+          );
+          if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+            throw new Error(`Workflow parallel step "${stepId}" result must be an object`);
+          }
+          const completed = createEvent(state, 'workflow.step.completed', {
+            stepId,
+            kind: 'parallel',
+          }) as AgentEvent;
+          await commitWorkflow(
+            state,
+            () => {
+              state.checkpoint.steps[stepId] = {
+                type: 'parallel',
+                status: 'completed',
+                result,
+              };
+            },
+            [completed],
+          );
+          events.push(completed);
+          return structuredClone(result) as {
+            [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>>;
+          };
+        } catch (error) {
+          if (error instanceof RunPausedError) throw error;
+          const failed = createEvent(state, 'workflow.step.failed', {
+            stepId,
+            kind: 'parallel',
+            error: toErrorMessage(error),
+          }) as AgentEvent;
+          await commitWorkflow(state, () => {}, [failed]);
+          events.push(failed);
+          throw error;
+        }
+      },
+    };
+
+    try {
+      const hash = await workflowDefinitionHash(name, workflow);
+      if (state.checkpoint.definitionHash !== hash) {
+        throw new FevexRunError(
+          'RUN_DEFINITION_CHANGED',
+          `Definition for workflow "${name}" changed`,
+          state.run.id,
+        );
+      }
+      if (state.run.revision === 0) {
+        yield await emit('workflow.run.started', undefined);
+      }
+      state.request.signal.throwIfAborted();
+      if (state.request.outputSchema !== undefined) {
+        assertStandardSchema(
+          state.request.outputSchema,
+          `Output schema for workflow "${name}" must implement Standard Schema`,
+        );
+      }
+      const rawOutput = await workflow.run(step, state.checkpoint.input as TInput);
+      const validated =
+        state.request.outputSchema === undefined
+          ? rawOutput
+          : await validateSchema(
+              state.request.outputSchema,
+              rawOutput,
+              `Output from workflow "${name}" does not match outputSchema`,
+            );
+      const output = toJsonValue(
+        validated,
+        `Output from workflow "${name}" must be JSON-serializable`,
+      );
+      await state.commitQueue;
+      state.run.status = 'completed';
+      state.run.pause = undefined;
+      state.run.output = output;
+      const completed = createEvent(state, 'workflow.run.completed', { output }) as AgentEvent;
+      await commit(state, { checkpoint: null, events: [completed] });
+      events.push(completed);
+      await releaseWorkflowExecution(state);
+      yield completed;
+      return {
+        runId: state.run.id,
+        sessionId: state.session.id,
+        output: output as TOutput,
+        events,
+      };
+    } catch (error) {
+      if (state.request.signal.aborted) {
+        const event = await cancelWorkflowExecution(state);
+        if (event) {
+          events.push(event);
+          yield event;
+        }
+      } else if (state.run.status === 'paused') {
+        throw error;
+      } else if (state.run.status === 'running') {
+        await state.commitQueue;
+        state.run.status = 'failed';
+        state.run.error = toErrorMessage(error);
+        const failed = createEvent(state, 'workflow.run.failed', {
+          error: toErrorMessage(error),
+        }) as AgentEvent;
+        await commit(state, { checkpoint: null, events: [failed] });
+        events.push(failed);
+        await releaseWorkflowExecution(state);
+        yield failed;
+      }
+      throw error;
+    }
+  }
+
   const nextEvent = async <TInput, TOutput>(
     state: ExecutionState<TInput, TOutput>,
+    execution: AsyncGenerator<AgentEvent, RunResult<TOutput> | undefined>,
+  ) => {
+    state.advancing = true;
+    try {
+      return await execution.next();
+    } finally {
+      state.advancing = false;
+    }
+  };
+
+  const nextWorkflowEvent = async <TInput, TOutput>(
+    state: WorkflowExecutionState<TInput, TOutput>,
     execution: AsyncGenerator<AgentEvent, RunResult<TOutput> | undefined>,
   ) => {
     state.advancing = true;
@@ -1163,9 +1803,28 @@ export function createRuntime({
     }
   };
 
-  const resume = async <TOutput>(
+  const drainWorkflowExecution = async <TInput, TOutput>(
+    name: string,
+    state: WorkflowExecutionState<TInput, TOutput>,
+    throwOnPause: boolean,
+  ): Promise<RunResult<TOutput> | undefined> => {
+    const execution = executeWorkflow(name, state);
+    while (true) {
+      const next = await nextWorkflowEvent(state, execution);
+      if (next.done) {
+        if (next.value === undefined && throwOnPause) {
+          const run = await runStore.getRun<WorkflowRun>(state.run.id);
+          if (run?.pause) throw new RunPausedError(run.id, run.pause);
+        }
+        return next.value;
+      }
+    }
+  };
+
+  const resumeAgent = async <TOutput>(
     runId: string,
     resolution: ResumeRunResolution,
+    waitForCompletion = false,
   ): Promise<AgentRun<TOutput>> => {
     if (!isDurableRunStore(runStore)) {
       throw new FevexRunError(
@@ -1174,8 +1833,8 @@ export function createRuntime({
         runId,
       );
     }
-    const run = await runStore.getRun(runId);
-    const checkpoint = await runStore.getCheckpoint(runId);
+    const run = await runStore.getRun<AgentRun>(runId);
+    const checkpoint = await runStore.getCheckpoint<RunCheckpoint>(runId);
     if (!run || !checkpoint) {
       throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
     }
@@ -1363,12 +2022,120 @@ export function createRuntime({
       activeRuns.set(runId, state);
       activeSessions.add(session.id);
       startLease(state, runStore);
-      void drainExecution(run.agentName, state, false).catch(() => {});
+      if (waitForCompletion) {
+        await drainExecution(run.agentName, state, false);
+      } else {
+        void drainExecution(run.agentName, state, false).catch(() => {});
+      }
       return structuredClone(run) as AgentRun<TOutput>;
     } catch (error) {
       await runStore.releaseLease(runId, ownerId).catch(() => {});
       throw error;
     }
+  };
+
+  const resumeWorkflow = async <TOutput>(
+    runId: string,
+    resolution: ResumeRunResolution,
+  ): Promise<WorkflowRun<TOutput>> => {
+    if (!isDurableRunStore(runStore)) {
+      throw new FevexRunError(
+        'DURABLE_STORE_REQUIRED',
+        'resumeRun requires DurableRunStore',
+        runId,
+      );
+    }
+    const run = await runStore.getRun<WorkflowRun>(runId);
+    const checkpoint = await runStore.getCheckpoint<WorkflowCheckpoint>(runId);
+    if (!run || !checkpoint) {
+      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+    }
+    if (run.status !== 'paused' && run.status !== 'running') {
+      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" is terminal`, runId);
+    }
+    const workflow = workflows.get(run.workflowName);
+    if (!workflow) {
+      throw new FevexRunError(
+        'RUN_DEFINITION_CHANGED',
+        `Workflow "${run.workflowName}" is unavailable`,
+        runId,
+      );
+    }
+    if (checkpoint.definitionHash !== (await workflowDefinitionHash(run.workflowName, workflow))) {
+      throw new FevexRunError(
+        'RUN_DEFINITION_CHANGED',
+        `Definition for workflow "${run.workflowName}" changed`,
+        runId,
+      );
+    }
+    if (run.pause?.type !== 'workflow_child') {
+      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+    }
+    const session = await runStore.getSession(run.sessionId);
+    if (!session) throw new Error(`Session "${run.sessionId}" does not exist`);
+    if (activeSessions.has(session.id)) {
+      throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" is active`, runId);
+    }
+    const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+    const acquired = await runStore.acquireLease({
+      runId,
+      ownerId,
+      expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+    });
+    if (!acquired) throw new FevexRunError('RUN_CONFLICT', `Run "${runId}" is leased`, runId);
+
+    try {
+      const childRun = await resumeAgent(run.pause.childRunId, resolution, true);
+      const controller = new AbortController();
+      const state: WorkflowExecutionState = {
+        run,
+        session,
+        request: {
+          input: checkpoint.input,
+          sessionId: session.id,
+          context: checkpoint.context,
+          signal: controller.signal,
+        },
+        controller,
+        eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+        checkpoint,
+        advancing: false,
+        leaseOwner: ownerId,
+        commitQueue: Promise.resolve(),
+      };
+      if (childRun.status === 'cancelled') {
+        run.status = 'cancelled';
+        run.pause = undefined;
+        run.error = childRun.error ?? 'aborted';
+        const cancelled = createEvent(state, 'workflow.run.cancelled', {
+          reason: childRun.error === 'approval_rejected' ? 'approval_rejected' : 'aborted',
+        }) as AgentEvent;
+        await commit(state, { checkpoint: null, events: [cancelled] });
+        await releaseWorkflowExecution(state);
+        return structuredClone(run) as WorkflowRun<TOutput>;
+      }
+      run.status = 'running';
+      run.pause = undefined;
+      const resumed = createEvent(state, 'workflow.run.resumed', undefined) as AgentEvent;
+      await commit(state, { checkpoint, events: [resumed] });
+      activeWorkflowRuns.set(runId, state);
+      activeSessions.add(session.id);
+      startLease(state, runStore);
+      void drainWorkflowExecution(run.workflowName, state, false).catch(() => {});
+      return structuredClone(run) as WorkflowRun<TOutput>;
+    } catch (error) {
+      await runStore.releaseLease(runId, ownerId).catch(() => {});
+      throw error;
+    }
+  };
+
+  const resumeRun = async <TOutput>(
+    runId: string,
+    resolution: ResumeRunResolution,
+  ): Promise<RunRecord<TOutput>> => {
+    const run = await runStore.getRun<RunRecord>(runId);
+    if (run && isWorkflowRun(run)) return resumeWorkflow<TOutput>(runId, resolution);
+    return resumeAgent<TOutput>(runId, resolution);
   };
 
   return {
@@ -1423,26 +2190,77 @@ export function createRuntime({
         },
       };
     },
+    async startWorkflow<TInput = unknown, TOutput = unknown>(
+      name: string,
+      request: RunRequest<TInput, TOutput>,
+    ) {
+      const state = await prepareWorkflowExecution(name, request);
+      void drainWorkflowExecution(name, state, false).catch(() => {});
+      return structuredClone(state.run) as WorkflowRun<TOutput>;
+    },
+    async runWorkflow<TInput = unknown, TOutput = unknown>(
+      name: string,
+      request: RunRequest<TInput, TOutput>,
+    ) {
+      const state = await prepareWorkflowExecution(name, request);
+      return (await drainWorkflowExecution(name, state, true)) as RunResult<TOutput>;
+    },
     getRun<TOutput = unknown>(runId: string) {
-      return runStore.getRun(runId) as Promise<AgentRun<TOutput> | undefined>;
+      return runStore.getRun<RunRecord<TOutput>>(runId);
     },
     listEvents(runId, options) {
       return runStore.listEvents(runId, options);
     },
     async cancelRun(runId) {
+      const activeWorkflow = activeWorkflowRuns.get(runId);
+      if (activeWorkflow && !activeWorkflow.request.signal.aborted) {
+        activeWorkflow.controller.abort(new DOMException('Run cancelled', 'AbortError'));
+        if (!activeWorkflow.advancing) await cancelWorkflowExecution(activeWorkflow);
+        return true;
+      }
       const active = activeRuns.get(runId);
       if (active && !active.request.signal.aborted) {
         active.controller.abort(new DOMException('Run cancelled', 'AbortError'));
         if (!active.advancing) await cancelExecution(active);
         return true;
       }
-      const run = await runStore.getRun(runId);
+      const run = await runStore.getRun<RunRecord>(runId);
       if (run?.status !== 'paused') return false;
       if (!isDurableRunStore(runStore)) return false;
       const session = await runStore.getSession(run.sessionId);
       if (!session) return false;
+      if (isWorkflowRun(run)) {
+        const checkpoint = await runStore.getCheckpoint<WorkflowCheckpoint>(runId);
+        if (!checkpoint) return false;
+        const state: WorkflowExecutionState = {
+          run,
+          session,
+          request: { input: checkpoint.input, sessionId: session.id, signal: new AbortController().signal },
+          controller: new AbortController(),
+          eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+          checkpoint,
+          advancing: false,
+          commitQueue: Promise.resolve(),
+        };
+        run.status = 'cancelled';
+        run.pause = undefined;
+        run.error = 'aborted';
+        const cancelled = createEvent(state, 'workflow.run.cancelled', { reason: 'aborted' }) as AgentEvent;
+        try {
+          await commit(state, { checkpoint: null, events: [cancelled] });
+          return true;
+        } catch (error) {
+          if (
+            error instanceof FevexRunError &&
+            error.code === 'RUN_CONFLICT' &&
+            (await runStore.getRun<RunRecord>(runId))?.status !== 'paused'
+          )
+            return false;
+          throw error;
+        }
+      }
       const state: ExecutionState = {
-        run,
+        run: run as AgentRun,
         session,
         request: { input: '', sessionId: session.id, signal: new AbortController().signal },
         controller: new AbortController(),
@@ -1467,7 +2285,7 @@ export function createRuntime({
       }
     },
     resumeRun<TOutput = unknown>(runId: string, resolution: ResumeRunResolution) {
-      return resume<TOutput>(runId, resolution);
+      return resumeRun<TOutput>(runId, resolution);
     },
     async compactSession(sessionId, summary) {
       if (typeof summary !== 'string' || !summary.trim()) {

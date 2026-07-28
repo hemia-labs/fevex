@@ -52,7 +52,16 @@ export type AgentEventType =
   | 'approval.resolved'
   | 'run.completed'
   | 'run.failed'
-  | 'run.cancelled';
+  | 'run.cancelled'
+  | 'workflow.run.started'
+  | 'workflow.step.started'
+  | 'workflow.step.completed'
+  | 'workflow.step.failed'
+  | 'workflow.run.paused'
+  | 'workflow.run.resumed'
+  | 'workflow.run.completed'
+  | 'workflow.run.failed'
+  | 'workflow.run.cancelled';
 
 export interface AgentEventPayloads {
   'run.started': undefined;
@@ -83,6 +92,15 @@ export interface AgentEventPayloads {
   'run.completed': { output: JsonValue; usage?: JsonObject };
   'run.failed': { error: string };
   'run.cancelled': { reason: 'aborted' | 'timeout' | 'approval_rejected' };
+  'workflow.run.started': undefined;
+  'workflow.step.started': { stepId: string; kind: 'agent' | 'parallel'; agentName?: string };
+  'workflow.step.completed': { stepId: string; kind: 'agent' | 'parallel' };
+  'workflow.step.failed': { stepId: string; kind: 'agent' | 'parallel'; error: string };
+  'workflow.run.paused': { stepId: string; childRunId: string };
+  'workflow.run.resumed': undefined;
+  'workflow.run.completed': { output: JsonValue };
+  'workflow.run.failed': { error: string };
+  'workflow.run.cancelled': { reason: 'aborted' | 'timeout' | 'approval_rejected' };
 }
 
 interface AgentEventBase {

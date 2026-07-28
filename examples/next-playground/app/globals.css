@@ -144,6 +144,11 @@ button {
   background: #1b1b1f;
 }
 
+.icon-button.active {
+  border-color: var(--ruby);
+  color: #ffffff;
+}
+
 .icon-button:disabled {
   color: #52525b;
   cursor: default;
@@ -192,6 +197,11 @@ button {
 .agent-option.active {
   border-color: var(--border);
   background: var(--raised);
+}
+
+.agent-option:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 .sidebar-icon {
@@ -297,7 +307,7 @@ button {
   font-size: 12px;
 }
 
-.run-activity summary {
+.run-activity > summary {
   width: fit-content;
   display: flex;
   align-items: center;
@@ -308,19 +318,19 @@ button {
   list-style: none;
 }
 
-.run-activity summary::-webkit-details-marker {
+.run-activity > summary::-webkit-details-marker {
   display: none;
 }
 
-.run-activity summary svg {
+.run-activity > summary svg {
   transition: transform 160ms ease;
 }
 
-.run-activity[open] summary svg {
+.run-activity[open] > summary svg {
   transform: rotate(90deg);
 }
 
-.run-activity.running summary span:nth-child(2) {
+.run-activity.running > summary span:nth-child(2) {
   background: linear-gradient(90deg, var(--muted), #f4f4f5, var(--muted));
   background-size: 220% 100%;
   background-clip: text;
@@ -351,8 +361,18 @@ button {
   animation-name: blink;
 }
 
-.run-activity.done .activity-dot {
+.run-activity.completed .activity-dot {
   background: #22c55e;
+  animation: none;
+}
+
+.run-activity.failed .activity-dot {
+  background: #ef4444;
+  animation: none;
+}
+
+.run-activity.cancelled .activity-dot {
+  background: #71717a;
   animation: none;
 }
 
@@ -402,6 +422,57 @@ button {
 
 .tool-activity.failed {
   color: #ef4444;
+}
+
+.tool-activity.cancelled {
+  color: #71717a;
+}
+
+.debug-panel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.debug-panel dl {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 10px;
+}
+
+.debug-panel dl div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.debug-panel dt {
+  color: #71717a;
+}
+
+.debug-panel dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #d4d4d8;
+}
+
+.debug-panel summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #d4d4d8;
+}
+
+.debug-panel pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #050506;
+  color: #a1a1aa;
+  white-space: pre-wrap;
 }
 
 @keyframes shimmer {
@@ -566,6 +637,10 @@ button {
   color: #71717a;
 }
 
+.composer textarea:disabled {
+  opacity: 0.6;
+}
+
 .composer:focus-within {
   border-color: #52525b;
 }
@@ -593,6 +668,11 @@ button {
 
 .composer button:hover:not(:disabled) {
   background: #9f1f2b;
+}
+
+.composer button.cancel {
+  border-color: #52525b;
+  background: #27272a;
 }
 
 .composer button:disabled {

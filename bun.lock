@@ -40,7 +40,7 @@
     "examples/basic-agent": {
       "name": "@fevex/example-basic-agent",
       "dependencies": {
-        "@fevex/core": "0.1.0-alpha.0",
+        "@fevex/core": "workspace:*",
         "zod": "^4.0.0",
       },
       "devDependencies": {
@@ -51,7 +51,7 @@
     "examples/deepseek-agent": {
       "name": "@fevex/example-deepseek-agent",
       "dependencies": {
-        "@fevex/core": "0.1.0-alpha.0",
+        "@fevex/core": "workspace:*",
         "@fevex/deepseek": "workspace:*",
         "zod": "^4.0.0",
       },
@@ -65,6 +65,7 @@
       "dependencies": {
         "@fevex/core": "workspace:*",
         "@fevex/deepseek": "workspace:*",
+        "@fevex/openai": "workspace:*",
         "@nestjs/common": "^11.1.28",
         "@nestjs/core": "^11.1.28",
         "@nestjs/platform-express": "^11.1.28",
@@ -79,6 +80,7 @@
     "examples/next-playground": {
       "name": "@fevex/example-next-playground",
       "dependencies": {
+        "@fevex/core": "workspace:*",
         "lucide-react": "^1.25.0",
         "next": "^16.2.12",
         "react": "^19.2.8",
@@ -96,7 +98,7 @@
     "examples/openai-agent": {
       "name": "@fevex/example-openai-agent",
       "dependencies": {
-        "@fevex/core": "0.1.0-alpha.0",
+        "@fevex/core": "workspace:*",
         "@fevex/openai": "workspace:*",
         "zod": "^4.0.0",
       },
@@ -125,8 +127,28 @@
         "typescript": "^5.7.0",
       },
     },
+    "packages/mcp": {
+      "name": "@fevex/mcp",
+      "version": "0.1.0-alpha.1",
+      "dependencies": {
+        "@fevex/core": "0.1.0-alpha.1",
+      },
+      "devDependencies": {
+        "typescript": "^5.7.0",
+      },
+    },
     "packages/openai": {
       "name": "@fevex/openai",
+      "version": "0.1.0-alpha.1",
+      "dependencies": {
+        "@fevex/core": "0.1.0-alpha.1",
+      },
+      "devDependencies": {
+        "typescript": "^5.7.0",
+      },
+    },
+    "packages/openapi": {
+      "name": "@fevex/openapi",
       "version": "0.1.0-alpha.1",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.1",
@@ -346,7 +368,11 @@
 
     "@fevex/example-openai-agent": ["@fevex/example-openai-agent@workspace:examples/openai-agent"],
 
+    "@fevex/mcp": ["@fevex/mcp@workspace:packages/mcp"],
+
     "@fevex/openai": ["@fevex/openai@workspace:packages/openai"],
+
+    "@fevex/openapi": ["@fevex/openapi@workspace:packages/openapi"],
 
     "@fevex/opentelemetry": ["@fevex/opentelemetry@workspace:packages/opentelemetry"],
 
@@ -2087,12 +2113,6 @@
     "@dotenvx/dotenvx/open": ["open@8.4.2", "", { "dependencies": { "define-lazy-prop": "^2.0.0", "is-docker": "^2.1.1", "is-wsl": "^2.2.0" } }, "sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ=="],
 
     "@dotenvx/dotenvx/yocto-spinner": ["yocto-spinner@1.2.2", "", { "dependencies": { "yoctocolors": "^2.1.1" } }, "sha512-DODGl1wJjA/s5pnJFKau9lIYHT81lnhob1i3e1TjxZRxEhWRKl74nTbWE6H5KlkViQQTo/Z29YFdxzTZAMY3ng=="],
-
-    "@fevex/example-basic-agent/@fevex/core": ["@fevex/core@0.1.0-alpha.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0" } }, "sha512-4cEm/NX3AQ32M1o9yMGK6T5A7pUykEmLLsQuBdDRlchQBg0rs2eREko/xWoqUtih/MtHEEEy9sBYYvzaLTVQ2Q=="],
-
-    "@fevex/example-deepseek-agent/@fevex/core": ["@fevex/core@0.1.0-alpha.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0" } }, "sha512-4cEm/NX3AQ32M1o9yMGK6T5A7pUykEmLLsQuBdDRlchQBg0rs2eREko/xWoqUtih/MtHEEEy9sBYYvzaLTVQ2Q=="],
-
-    "@fevex/example-openai-agent/@fevex/core": ["@fevex/core@0.1.0-alpha.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0" } }, "sha512-4cEm/NX3AQ32M1o9yMGK6T5A7pUykEmLLsQuBdDRlchQBg0rs2eREko/xWoqUtih/MtHEEEy9sBYYvzaLTVQ2Q=="],
 
     "@modelcontextprotocol/sdk/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 

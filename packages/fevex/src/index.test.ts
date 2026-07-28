@@ -15,12 +15,14 @@ import {
   createFevex,
   defineAgent,
   defineTool,
+  defineWorkflow,
   FevexConfigurationError,
   FevexRunError,
   InMemoryRunStore,
   RunPausedError,
   type FevexConfig,
   type FevexConfigurationErrorCode,
+  type WorkflowDefinition,
 } from './index';
 
 type TestSchema<TOutput> = StandardSchemaV1<unknown, TOutput> &
@@ -973,6 +975,23 @@ describe('createFevex', () => {
         agents: [agent('assistant', { limits: { maxInputTokens: 0 } })],
       }),
     ).toThrow('Agent "assistant" limit "maxInputTokens" must be a positive integer or false');
+    expect(() =>
+      createFevex({
+        models: { default: model },
+        agents: [],
+        workflows: [
+          defineWorkflow({ name: 'same', async run() {} }),
+          defineWorkflow({ name: 'same', async run() {} }),
+        ],
+      }),
+    ).toThrow('Workflow "same" is duplicated');
+    expect(() =>
+      createFevex({
+        models: { default: model },
+        agents: [],
+        workflows: [{ name: ' ', run() {} }],
+      }),
+    ).toThrow('Workflow name cannot be empty');
   });
 
   test('uses stable codes for configuration errors', () => {
@@ -1054,9 +1073,18 @@ describe('createFevex', () => {
   test('rejects malformed JavaScript configuration values', () => {
     const model = modelWithOutput('ok');
     const validRoot = { models: { default: model }, agents: [] };
+    const toolProvider = {
+      listTools: async () => [],
+      callTool: async () => null,
+    };
     const cases: Array<[unknown, FevexConfigurationErrorCode, string]> = [
       [{ ...validRoot, models: null }, 'INVALID_CONFIG', 'Fevex config "models" must be an object'],
       [{ ...validRoot, agents: {} }, 'INVALID_CONFIG', 'Fevex config "agents" must be an array'],
+      [
+        { ...validRoot, workflows: {} },
+        'INVALID_CONFIG',
+        'Fevex config "workflows" must be an array',
+      ],
       [{ ...validRoot, tools: {} }, 'INVALID_CONFIG', 'Fevex config "tools" must be an array'],
       [
         { ...validRoot, onEvent: true },
@@ -1126,6 +1154,78 @@ describe('createFevex', () => {
         { ...validRoot, agents: [{ name: 'assistant', instructions: 'Answer.', limits: [] }] },
         'INVALID_AGENT',
         'Agent "assistant" limits must be an object',
+      ],
+      [
+        { ...validRoot, workflows: [null] },
+        'INVALID_WORKFLOW',
+        'Workflow at index 0 must be an object',
+      ],
+      [
+        { ...validRoot, workflows: [{ name: 1, run() {} }] },
+        'INVALID_WORKFLOW',
+        'Workflow name must be a string',
+      ],
+      [
+        { ...validRoot, workflows: [{ name: 'flow' }] },
+        'INVALID_WORKFLOW',
+        'Workflow "flow" must implement run',
+      ],
+      [
+        {
+          ...validRoot,
+          workflows: [
+            { name: 'flow', run() {} },
+            { name: 'flow', run() {} },
+          ],
+        },
+        'DUPLICATE_WORKFLOW',
+        'Workflow "flow" is duplicated',
+      ],
+      [
+        { ...validRoot, workflows: [{ name: 'flow', version: '', run() {} }] },
+        'INVALID_WORKFLOW',
+        'Workflow "flow" version must be a non-empty string',
+      ],
+      [
+        { ...validRoot, workflows: [{ name: 'flow', version: 2, run() {} }] },
+        'INVALID_WORKFLOW',
+        'Workflow "flow" version must be a non-empty string',
+      ],
+      [
+        { ...validRoot, contextProviders: [null] },
+        'INVALID_CONTEXT_PROVIDER',
+        'Context provider at index 0 must have a name and read',
+      ],
+      [
+        {
+          ...validRoot,
+          contextProviders: [
+            { name: 'docs', read: async () => [] },
+            { name: 'docs', read: async () => [] },
+          ],
+        },
+        'DUPLICATE_CONTEXT_PROVIDER',
+        'Context provider "docs" is duplicated',
+      ],
+      [
+        { ...validRoot, policies: [{ name: 'p' }] },
+        'INVALID_POLICY',
+        'Policy at index 0 must have a name and authorize',
+      ],
+      [
+        { ...validRoot, connections: [{ name: '', provider: toolProvider, allowlist: ['a'] }] },
+        'INVALID_CONNECTION',
+        'Connection name must be a non-empty string',
+      ],
+      [
+        { ...validRoot, connections: [{ name: 'crm', provider: {}, allowlist: ['a'] }] },
+        'INVALID_CONNECTION',
+        'Connection "crm" provider must implement listTools and callTool',
+      ],
+      [
+        { ...validRoot, connections: [{ name: 'crm', provider: toolProvider, allowlist: [] }] },
+        'INVALID_CONNECTION',
+        'Connection "crm" allowlist must be a non-empty array',
       ],
     ];
 
@@ -2693,5 +2793,330 @@ describe('createFevex', () => {
     await completed;
     expect(executions).toBe(0);
     expect((await second.getRun(run.id))?.status).toBe('completed');
+  });
+
+  test('runs workflows with conditional agent steps and parallel fan-out', async () => {
+    const calls: string[] = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => {
+            const role = input.messages[0]!.content;
+            calls.push(role);
+            if (role === 'triage') return { output: { kind: 'support' } };
+            if (role === 'billing') return { output: 'billing' };
+            if (role === 'docs') return { output: 'docs-result' };
+            if (role === 'account') return { output: 'account-result' };
+            return { output: { answer: 'docs-result/account-result' } };
+          }),
+        },
+      },
+      agents: [
+        agent('triage', { instructions: 'triage' }),
+        agent('billing', { instructions: 'billing' }),
+        agent('docs', { instructions: 'docs' }),
+        agent('account', { instructions: 'account' }),
+        agent('answer', { instructions: 'answer' }),
+      ],
+      workflows: [
+        defineWorkflow({
+          name: 'support-flow',
+          async run(step, input) {
+            const triage = await step.agent<{ question: string }, { kind: string }>(
+              'triage',
+              'triage',
+              { input: input as { question: string } },
+            );
+            if (triage.output.kind === 'billing') {
+              return (await step.agent('billing', 'billing', { input })).output;
+            }
+            const research = await step.parallel('research', {
+              docs: () => step.agent('docs', 'docs', { input }),
+              account: () => step.agent('account', 'account', { input }),
+            });
+            return (
+              await step.agent('answer', 'answer', {
+                input: {
+                  question: input,
+                  docs: research.docs.output,
+                  account: research.account.output,
+                },
+              })
+            ).output;
+          },
+        }),
+      ],
+    });
+
+    const result = await app.runWorkflow<{ question: string }, { answer: string }>(
+      'support-flow',
+      { input: { question: 'help' } },
+    );
+
+    expect(result.output).toEqual({ answer: 'docs-result/account-result' });
+    expect(calls).toEqual(['triage', 'docs', 'account', 'answer']);
+    expect((await app.listEvents(result.runId)).map(({ type }) => type)).toEqual([
+      'workflow.run.started',
+      'workflow.step.started',
+      'workflow.step.completed',
+      'workflow.step.started',
+      'workflow.step.started',
+      'workflow.step.started',
+      'workflow.step.completed',
+      'workflow.step.completed',
+      'workflow.step.completed',
+      'workflow.step.started',
+      'workflow.step.completed',
+      'workflow.run.completed',
+    ]);
+    await expect(app.runWorkflow('missing-flow', { input: 'hello' })).rejects.toThrow(
+      'Workflow "missing-flow" is not registered',
+    );
+    await expect(
+      app.runWorkflow('support-flow', { input: { question: 'hello' }, context: {} }),
+    ).resolves.toMatchObject({ output: { answer: 'docs-result/account-result' } });
+  });
+
+  test('pauses and resumes durable workflows when a child agent needs approval', async () => {
+    const store = new InMemoryRunStore();
+    let executions = 0;
+    const workflow = defineWorkflow({
+      name: 'approval-flow',
+      async run(step, input) {
+        return (await step.agent('approve', 'assistant', { input })).output;
+      },
+    });
+    const configuredModel = (): ModelGateway => ({
+      stateCodec: {
+        serialize(state) {
+          return structuredClone(state) as JsonObject;
+        },
+        restore(state) {
+          return structuredClone(state);
+        },
+      },
+      stream: streamFrom(async (input) => {
+        if (input.providerState === undefined) {
+          return { toolCalls: [lookupCall], providerState: { turn: 1 } };
+        }
+        return { output: 'approved' };
+      }),
+    });
+    const configuredTool = () =>
+      defineTool({
+        name: 'lookup',
+        risk: 'write',
+        approval: 'required',
+        idempotency: 'keyed',
+        execute() {
+          executions += 1;
+          return 'found';
+        },
+      });
+    const makeApp = (onEvent?: (event: AgentEvent) => void) =>
+      createFevex({
+        models: { default: configuredModel() },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [configuredTool()],
+        workflows: [workflow],
+        runStore: store,
+        ...(onEvent ? { onEvent } : {}),
+      });
+
+    const first = makeApp();
+    let paused!: RunPausedError;
+    await first.runWorkflow('approval-flow', { input: 'hello' }).catch((error) => {
+      expect(error).toBeInstanceOf(RunPausedError);
+      paused = error;
+    });
+    expect(paused.pause.type).toBe('workflow_child');
+    expect(executions).toBe(0);
+
+    let complete!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const second = makeApp((event) => {
+      if (event.runId === paused.runId && event.type === 'workflow.run.completed') complete();
+    });
+    const childPause = paused.pause.type === 'workflow_child' ? paused.pause.childPause : undefined;
+    const approval = childPause?.type === 'approval' ? childPause.approval : undefined;
+    await second.resumeRun(paused.runId, {
+      type: 'approval',
+      approvalId: approval!.id,
+      decision: 'approve',
+      actor: { id: 'reviewer-1' },
+    });
+    await completed;
+
+    expect(await second.getRun(paused.runId)).toMatchObject({
+      kind: 'workflow',
+      status: 'completed',
+      output: 'approved',
+    });
+    expect(executions).toBe(1);
+    expect((await second.listEvents(paused.runId)).map(({ type }) => type)).toEqual([
+      'workflow.run.started',
+      'workflow.step.started',
+      'workflow.run.paused',
+      'workflow.run.resumed',
+      'workflow.step.completed',
+      'workflow.run.completed',
+    ]);
+  });
+
+  describe('definition guard', () => {
+    const approvalModel = (): ModelGateway => ({
+      stateCodec: {
+        serialize: (state) => structuredClone(state) as JsonObject,
+        restore: (state) => structuredClone(state),
+      },
+      stream: streamFrom(async (input) =>
+        input.providerState === undefined
+          ? { toolCalls: [lookupCall], providerState: { turn: 1 } }
+          : { output: 'approved' },
+      ),
+    });
+    const approvalTool = () =>
+      defineTool({
+        name: 'lookup',
+        risk: 'write',
+        approval: 'required',
+        idempotency: 'keyed',
+        execute: () => 'found',
+      });
+
+    const pauseWorkflow = async (
+      store: InMemoryRunStore,
+      workflow: WorkflowDefinition,
+    ): Promise<RunPausedError> => {
+      const app = createFevex({
+        models: { default: approvalModel() },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [approvalTool()],
+        workflows: [workflow],
+        runStore: store,
+      });
+      let paused!: RunPausedError;
+      await app.runWorkflow(workflow.name, { input: 'hello' }).catch((error) => {
+        paused = error as RunPausedError;
+      });
+      expect(paused).toBeInstanceOf(RunPausedError);
+      return paused;
+    };
+
+    const resumeWith = (store: InMemoryRunStore, workflow: WorkflowDefinition) =>
+      createFevex({
+        models: { default: approvalModel() },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [approvalTool()],
+        workflows: [workflow],
+        runStore: store,
+      });
+
+    const approve = (approvalId: string) =>
+      ({
+        type: 'approval',
+        approvalId,
+        decision: 'approve',
+        actor: { id: 'reviewer-1' },
+      }) as const;
+
+    const approvalIdOf = (paused: RunPausedError): string => {
+      const childPause =
+        paused.pause.type === 'workflow_child' ? paused.pause.childPause : paused.pause;
+      return childPause.type === 'approval' ? childPause.approval.id : '';
+    };
+
+    test('resumes a workflow whose run was rewritten but keeps its version', async () => {
+      const store = new InMemoryRunStore();
+      const paused = await pauseWorkflow(
+        store,
+        defineWorkflow({
+          name: 'rewritten-flow',
+          async run(step, input) {
+            return (await step.agent('approve', 'assistant', { input })).output;
+          },
+        }),
+      );
+
+      // Same declared version, different source text. This is what a bundler or
+      // a minifier produces, and it must not invalidate an in-flight run.
+      const rewritten = defineWorkflow({
+        name: 'rewritten-flow',
+        run: async (s, i) => {
+          const result = await s.agent('approve', 'assistant', { input: i });
+          return result.output;
+        },
+      });
+      const app = resumeWith(store, rewritten);
+      await app.resumeRun(paused.runId, approve(approvalIdOf(paused)));
+
+      await Bun.sleep(5);
+      expect(await app.getRun(paused.runId)).toMatchObject({ status: 'completed' });
+    });
+
+    test('refuses to resume a workflow after its version changes', async () => {
+      const store = new InMemoryRunStore();
+      const paused = await pauseWorkflow(
+        store,
+        defineWorkflow({
+          name: 'versioned-flow',
+          version: '1',
+          async run(step, input) {
+            return (await step.agent('approve', 'assistant', { input })).output;
+          },
+        }),
+      );
+
+      const bumped = defineWorkflow({
+        name: 'versioned-flow',
+        version: '2',
+        async run(step, input) {
+          return (await step.agent('approve', 'assistant', { input })).output;
+        },
+      });
+      const app = resumeWith(store, bumped);
+
+      await expect(
+        app.resumeRun(paused.runId, approve(approvalIdOf(paused))),
+      ).rejects.toMatchObject({
+        code: 'RUN_DEFINITION_CHANGED',
+        message: 'Definition for workflow "versioned-flow" changed',
+      });
+      expect(await app.getRun(paused.runId)).toMatchObject({ status: 'paused' });
+    });
+
+    test('refuses to resume an agent after its instructions change', async () => {
+      const store = new InMemoryRunStore();
+      const first = createFevex({
+        models: { default: approvalModel() },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [approvalTool()],
+        runStore: store,
+      });
+      let paused!: RunPausedError;
+      await first.runAgent('assistant', { input: 'hello' }).catch((error) => {
+        paused = error as RunPausedError;
+      });
+      expect(paused).toBeInstanceOf(RunPausedError);
+
+      const second = createFevex({
+        models: { default: approvalModel() },
+        agents: [
+          agent('assistant', { tools: ['lookup'], instructions: 'Answer very differently.' }),
+        ],
+        tools: [approvalTool()],
+        runStore: store,
+      });
+
+      await expect(
+        second.resumeRun(paused.runId, approve(approvalIdOf(paused))),
+      ).rejects.toMatchObject({
+        code: 'RUN_DEFINITION_CHANGED',
+        message: 'Definition for agent "assistant" changed',
+      });
+      expect(await second.getRun(paused.runId)).toMatchObject({ status: 'paused' });
+    });
   });
 });

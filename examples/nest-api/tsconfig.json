@@ -3,6 +3,10 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "baseUrl": "../..",
+    "paths": {
+      "@fevex/core/http": ["packages/fevex/src/http/index.ts"]
+    },
     "strict": true,
     "skipLibCheck": true,
     "declaration": false,
