@@ -108,6 +108,133 @@ console.log(result.output.answer);
 `fakeModel` returns its configured responses in order and records every input in
 `model.calls`.
 
+## Durable workflows
+
+Workflows require a `DurableRunStore`. Their definition owns the input, output,
+event and limit contracts:
+
+```ts
+const review = defineWorkflow({
+  name: 'review',
+  version: '2',
+  inputSchema: z.object({ draft: z.string() }),
+  outputSchema: z.string(),
+  events: {
+    'review.approved': {
+      payloadSchema: z.object({ approved: z.literal(true) }),
+      requireActor: true,
+    },
+  },
+  limits: { maxSteps: 8, maxToolCalls: 12 },
+  async run(step, input) {
+    const draft = await step.agent('draft', 'writer', { input });
+    const approval = await step.waitForEvent('approval', 'review.approved');
+    return `${draft.output} (${approval.actor?.id}, ${approval.receivedAt})`;
+  },
+});
+```
+
+Input is validated and transformed before the initial checkpoint is stored.
+Output is always validated with the definition schema, including after a pause
+or recovery. Effective workflow limits combine definition and request limits;
+agent steps additionally combine their own agent/request limits. These values
+are checkpointed so recovery cannot silently widen a budget.
+
+`stepId` is the durable identity of a step: keep it stable while its meaning is
+stable. Increment `version` when replay order, business rules or step meanings
+change. Completed agent steps are reused on replay and `step.agent` always
+returns `{ runId, sessionId, output, usage? }`, without a transient `events`
+field.
+
+Child execution context inherits the workflow context. Namespace, attributes
+and prompt values are merged; an authenticated parent actor cannot be replaced
+by a child. `parallel` waits for every declared task to settle, records durable
+child successes, reports multiple failures in declaration order and resolves
+multiple pauses one at a time. Arbitrary promises used in `parallel` must be
+pure or replay-safe; side effects belong in durable agent/tool steps.
+
+External events must be declared. `waitForEvent` returns
+`{ payload, actor, receivedAt }`; payload and required actor are checked before
+the checkpoint changes. Cancelling a workflow first cancels its running or
+paused children. Compensation runs in reverse completed-step order; if both the
+workflow and compensation fail, the terminal error is a stable
+`AggregateError`.
+
+Durable executions start with a checkpoint v2 and lease in the same atomic
+store operation. An external worker may recover an orphaned `running` run after
+its lease expires:
+
+```ts
+await app.recoverRun(runId, { actor: { id: 'recovery-worker', type: 'service' } });
+```
+
+Paused runs use `resumeRun`; terminal runs and older checkpoints are rejected.
+Fevex does not poll globally: deployments need an external orphan detector and
+a scheduler that calls `resumeRun` for elapsed timers. Exactly-once protection
+is limited to keyed/idempotent tools and durable steps.
+
+## Advanced teams
+
+Teams are an opt-in coordination layer on the durable workflow engine. They
+reuse registered agents and cannot widen an agent's model, tools, policies,
+sandbox or limits:
+
+```ts
+const model = fakeModel(
+  { output: 'plan' },
+  { output: 'research' },
+  { output: 'code' },
+  { output: 'approved' },
+);
+
+const softwareTeam = defineTeam({
+  name: 'software-team',
+  version: '1',
+  supervisor: 'planner',
+  members: [
+    { agent: 'researcher', role: 'research' },
+    { agent: 'coder', role: 'implementation' },
+    { agent: 'reviewer', role: 'review' },
+  ],
+  limits: { maxDelegations: 12, maxParallel: 2 },
+  async run(team, input) {
+    const plan = await team.delegate('plan', {
+      agent: 'planner',
+      task: input,
+      expectedOutput: 'Implementation plan',
+    });
+    const work = await team.parallel('work', {
+      research: () =>
+        team.delegate('research', { agent: 'researcher', task: plan.output }),
+      implementation: () =>
+        team.delegate('implementation', { agent: 'coder', task: plan.output }),
+    });
+    return (
+      await team.handoff('review', {
+        from: 'coder',
+        to: 'reviewer',
+        reason: 'Final review',
+        task: work,
+      })
+    ).output;
+  },
+});
+
+const app = createFevex({ models, agents, teams: [softwareTeam] });
+const result = await app.runTeam('software-team', { input: 'Implement the change.' });
+```
+
+Delegation and parallel step IDs are durable identities and must remain stable
+within a team version. Team runs emit `team.*` events and relay child events
+with `teamDelegationId` and `teamAgentName`. `startTeam`, `streamTeam`,
+`getTeamRun`, `resumeRun`, `recoverRun` and `cancelRun` use the same durable
+store as agents and workflows.
+
+This release intentionally omits automatic routers, network/graph modes,
+quorum, shared blackboards and nested teams. Coordination remains explicit
+TypeScript and shared context travels through task inputs, outputs and the
+existing memory contracts.
+
 ## Connect A Model
 
 Real providers connect through the small `ModelGateway` contract:
@@ -198,6 +325,7 @@ object, and every registered entity gets its own code.
 | Agent | `INVALID_AGENT` | `DUPLICATE_AGENT` | — |
 | Tool | `INVALID_TOOL` | `DUPLICATE_TOOL` | `MISSING_TOOL` |
 | Workflow | `INVALID_WORKFLOW` | `DUPLICATE_WORKFLOW` | — |
+| Team | `INVALID_TEAM` | `DUPLICATE_TEAM` | — |
 | Context provider | `INVALID_CONTEXT_PROVIDER` | `DUPLICATE_CONTEXT_PROVIDER` | — |
 | Connection | `INVALID_CONNECTION` | — | — |
 | Policy | `INVALID_POLICY` | — | — |
@@ -216,13 +344,15 @@ Fevex accepts
 [`StandardSchemaV1`](https://github.com/standard-schema/standard-schema)
 validators for:
 
+- agent, workflow and team input before it is persisted;
 - tool input before `execute`;
 - tool output before it is returned to the model;
-- final agent output before it is returned to the application.
+- final agent, workflow and team output before it is returned to the application;
+- declared workflow event payloads before a wait is resolved.
 
 Schemas may transform values. The transformed result must still be JSON-safe.
-The schema passed to `runAgent` takes precedence over the agent schema for that
-run. Plain JSON Schema objects are not executable validators and are not
+Schemas belong to agent, workflow or team definitions; requests cannot replace an output
+contract. Plain JSON Schema objects are not executable validators and are not
 accepted by these fields.
 
 When a model adapter needs schemas, Fevex converts authoring schemas that also
@@ -388,6 +518,10 @@ for await (const event of client.observeRun(run.id)) {
   console.log(event.type);
 }
 ```
+
+Protocol v3 also exposes `client.startWorkflow(...)` and
+`client.startTeam(...)`; all run kinds share observation, resume, recovery and
+cancellation endpoints.
 
 Hosts pass authenticated `ExecutionContext` separately to `handler(request,
 { context })`. Observation reconnects with `Last-Event-ID`; disconnecting an
@@ -707,13 +841,35 @@ storage.
 | `@fevex/core/knowledge` | Context providers, skills and memory contracts |
 | `@fevex/core/models` | Provider-neutral model contracts |
 | `@fevex/core/tools` | Tool, connection and provider contracts |
+| `@fevex/core/workflows` | Durable workflow definitions |
+| `@fevex/core/teams` | Multiagent team definitions |
 | `@fevex/core/runtime` | Runs, sessions and store contracts |
+| `@fevex/core/sandbox` | Sandbox contract and local development sandbox |
 | `@fevex/core/policies` | Authorization policy contracts |
 | `@fevex/core/observability` | Trace, redaction and cost contracts |
 | `@fevex/core/evals` | Datasets, scorers, reporters and regressions |
 | `@fevex/core/testing` | Deterministic testing helpers |
 
 All subpaths ship in the same `@fevex/core` package.
+
+## Source Layout
+
+Each public subpath is a folder under `src`. Its `index.ts` is intentionally a
+small export barrel; contracts and implementations live in files named after
+their responsibility. For example, `runtime/run-store.ts` owns persistence
+contracts while `runtime/in-memory-run-store.ts` owns the development
+implementation. Keep provider-neutral public contracts in their domain folder
+and orchestration details under `src/internal`.
+
+When adding a feature:
+
+- extend an existing responsibility before creating a new abstraction;
+- keep platform or provider-specific behavior outside `@fevex/core`;
+- export public API only through the domain barrel and preserve existing
+  subpath imports;
+- document lifecycle, persistence, security and replay semantics; avoid
+  comments that only restate the TypeScript signature;
+- add the smallest test that exercises the behavior at its public boundary.
 
 ## Current Scope
 

@@ -5,12 +5,16 @@
     "dev": "bun --watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "bun dist/main.js",
+    "test": "bun test src/capability-demos.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@fevex/core": "workspace:*",
     "@fevex/deepseek": "workspace:*",
+    "@fevex/mcp": "workspace:*",
     "@fevex/openai": "workspace:*",
+    "@fevex/openapi": "workspace:*",
+    "@fevex/sqlite": "workspace:*",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",
     "@nestjs/platform-express": "^11.1.28",

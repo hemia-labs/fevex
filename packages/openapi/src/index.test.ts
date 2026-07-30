@@ -87,6 +87,7 @@ describe('createOpenApiToolProvider', () => {
       fetch: async () => json({ id: 42, status: 'active' }),
     });
 
+    expect(provider.kind).toBe('openapi');
     await expect(testToolProvider(provider, {
       allowedTool: 'getAccount',
       disallowedTool: 'createAccount',

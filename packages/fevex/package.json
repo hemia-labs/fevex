@@ -55,9 +55,17 @@
       "types": "./dist/workflows/index.d.mts",
       "import": "./dist/workflows/index.mjs"
     },
+    "./teams": {
+      "types": "./dist/teams/index.d.mts",
+      "import": "./dist/teams/index.mjs"
+    },
     "./runtime": {
       "types": "./dist/runtime/index.d.mts",
       "import": "./dist/runtime/index.mjs"
+    },
+    "./sandbox": {
+      "types": "./dist/sandbox/index.d.mts",
+      "import": "./dist/sandbox/index.mjs"
     },
     "./policies": {
       "types": "./dist/policies/index.d.mts",
@@ -77,9 +85,9 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/agents/index.ts src/channels/index.ts src/http/index.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/runtime/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
+    "build": "tsdown src/index.ts src/agents/index.ts src/channels/index.ts src/http/index.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/teams/index.ts src/runtime/index.ts src/sandbox/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
     "prepack": "bun run build",
-    "test": "bun test src/index.test.ts src/http/index.test.ts src/internal/json.test.ts src/internal/model-stream.test.ts src/observability/index.test.ts src/evals/index.test.ts src/testing/index.test.ts",
+    "test": "bun test src/index.test.ts src/http/index.test.ts src/internal/json.test.ts src/internal/model-stream.test.ts src/observability/index.test.ts src/evals/index.test.ts src/sandbox/index.test.ts src/testing/index.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "publishConfig": {

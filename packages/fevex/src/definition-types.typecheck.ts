@@ -14,6 +14,7 @@ import {
 } from './core';
 import {
   createFevex,
+  defineTeam,
   FevexConfigurationError,
   InMemoryRunStore,
   type AgentRun,
@@ -55,6 +56,20 @@ defineTool({
   execute(input) {
     input.accountId satisfies number;
     return { status: 'active' };
+  },
+});
+
+defineTeam({
+  name: 'support-team',
+  supervisor: 'support',
+  members: [{ agent: 'support', role: 'support' }],
+  async run(team, input: { accountId: number }) {
+    return team.delegate('support', {
+      agent: 'support',
+      task: input,
+      expectedOutput: 'Account status',
+      constraints: ['Use registered tools only'],
+    });
   },
 });
 
@@ -172,7 +187,7 @@ createFevexHttpHandler({ fevex: app }) satisfies (
   context?: { context?: import('./core').ExecutionContext },
 ) => Promise<Response>;
 createFevexHttpClient({ baseUrl: 'https://example.com' }).getRun(run.id) satisfies Promise<RunRecord>;
-FEVEX_HTTP_PROTOCOL_VERSION satisfies '1';
+FEVEX_HTTP_PROTOCOL_VERSION satisfies '3';
 
 declare const knowledgeContext: KnowledgeContext;
 declare const contextBlock: ContextBlock;

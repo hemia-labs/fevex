@@ -1,9 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { createDeepSeek } from '@fevex/deepseek';
 import { createOpenAI } from '@fevex/openai';
-import { createFevex, type Fevex } from '@fevex/core';
+import { createFevex, createLocalSandbox, type Fevex } from '@fevex/core';
 import { createFevexHttpHandler, type FevexHttpHandler } from '@fevex/core/http';
-import { agentCatalog, agents, tools, workflowCatalog, workflows } from './agents.config';
+import { createSQLiteRunStore } from '@fevex/sqlite';
+import {
+  agentCatalog,
+  agents,
+  connections,
+  contextProviders,
+  memoryStore,
+  tools,
+  workflowCatalog,
+  workflows,
+} from './agents.config';
 
 @Injectable()
 export class FevexService {
@@ -16,8 +26,26 @@ export class FevexService {
       agents,
       workflows,
       tools,
+      connections,
+      contextProviders,
+      memoryStore,
+      sandbox: createLocalSandbox({
+        rootDir: process.cwd(),
+        commands: [process.execPath],
+        defaultTimeoutMs: 1_000,
+        maxOutputBytes: 2_048,
+      }),
+      runStore: createSQLiteRunStore({
+        filename: process.env.FEVEX_DB_PATH ?? '.fevex/demo.sqlite',
+      }),
     });
-    this.http = createFevexHttpHandler({ fevex: this.fevex });
+    const handler = createFevexHttpHandler({ fevex: this.fevex });
+    this.http = (request) => handler(request, {
+      context: {
+        actor: { id: 'demo-user' },
+        attributes: { plan: 'pro', region: 'MX' },
+      },
+    });
   }
 
   listAgents() {

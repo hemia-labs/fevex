@@ -27,6 +27,7 @@ export class AgentsController {
     'v1/runs/:runId',
     'v1/runs/:runId/events',
     'v1/runs/:runId/resume',
+    'v1/runs/:runId/recover',
   ])
   async protocol(@Req() req: any, @Res() res: any) {
     const controller = new AbortController();

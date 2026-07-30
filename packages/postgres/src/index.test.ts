@@ -3,6 +3,7 @@ import {
   createFevex,
   defineAgent,
   defineTool,
+  defineTeam,
   RunPausedError,
   type ModelGateway,
 } from '@fevex/core';
@@ -99,6 +100,45 @@ integration('PostgresRunStore', () => {
       expect((await firstStore.getRun(paused.runId))?.output).toBe('done');
     } finally {
       await Promise.all([firstStore.close(), secondStore.close()]);
+    }
+  });
+
+  test('persists team runs without a schema migration', async () => {
+    const store = createPostgresRunStore({ connectionString: connectionString! });
+    try {
+      await store.migrate();
+      const app = createFevex({
+        models: {
+          default: {
+            async *stream() {
+              yield { type: 'output.delta' as const, delta: 'done' };
+              yield { type: 'completed' as const, result: { output: 'done' } };
+            },
+          },
+        },
+        agents: [defineAgent({ name: 'worker', instructions: 'Work.' })],
+        teams: [
+          defineTeam({
+            name: 'postgres-team',
+            supervisor: 'worker',
+            members: [],
+            async run(step, input) {
+              return (
+                await step.delegate('work', { agent: 'worker', task: input })
+              ).output;
+            },
+          }),
+        ],
+        runStore: store,
+      });
+      const result = await app.runTeam('postgres-team', { input: 'go' });
+      expect(await store.getRun(result.runId)).toMatchObject({
+        kind: 'team',
+        teamName: 'postgres-team',
+        status: 'completed',
+      });
+    } finally {
+      await store.close();
     }
   });
 });

@@ -3,9 +3,8 @@ import type {
   AgentEventPayloads,
   AgentEventType,
   AgentMessage,
-  JsonObject,
+  ExecutionContext,
   JsonValue,
-  ToolCall,
 } from '../core';
 import type { Fevex } from '../fevex';
 import type { ContextBlock, KnowledgeContext, MemoryStore } from '../knowledge';
@@ -23,14 +22,30 @@ import {
   type RunRequest,
   type RunResult,
   type Session,
+  type StoredRunCheckpoint,
+  type CoordinatorCheckpoint,
+  type CoordinatorRun,
+  type TeamRun,
   type ToolExecutionRecord,
+  type WorkflowBudgetUsage,
   type WorkflowCheckpoint,
   type WorkflowRun,
   type WorkflowStepRecord,
 } from '../runtime';
-import { toToolSpec, type ToolDefinition } from '../tools';
-import type { WorkflowStep } from '../workflows';
+import { IntegrationError, toToolSpec, type ToolDefinition } from '../tools';
+import type {
+  WorkflowAgentResult,
+  WorkflowEventResult,
+  WorkflowStep,
+  WorkflowStepContext,
+  WorkflowStepOptions,
+} from '../workflows';
 import type { FevexComposition } from './configuration';
+import {
+  definitionHash,
+  teamDefinitionHash,
+  workflowDefinitionHash,
+} from './definition-hash';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import { buildRunTrace } from './observability';
 import {
@@ -47,6 +62,12 @@ import {
 } from './run-support';
 import { assertStandardSchema, toTransportableSchema, validateSchema } from './schemas';
 import { readModelStream } from './model-stream';
+import {
+  addWorkflowBudget,
+  assertWorkflowBudget,
+  combineLimits,
+  remainingWorkflowLimits,
+} from './workflow-budget';
 
 const LEASE_MS = 30_000;
 const LEASE_RENEW_MS = 10_000;
@@ -63,19 +84,22 @@ interface ExecutionState<TInput = unknown, TOutput = unknown> {
   forcedRetryToolCallId?: string;
   leaseOwner?: string;
   leaseTimer?: ReturnType<typeof setInterval>;
+  initialEvents?: AgentEvent[];
 }
 
 interface WorkflowExecutionState<TInput = unknown, TOutput = unknown> {
-  run: WorkflowRun;
+  run: CoordinatorRun;
   session: Session;
   request: RunRequest<TInput, TOutput> & { signal: AbortSignal };
   controller: AbortController;
   eventSequence: number;
-  checkpoint: WorkflowCheckpoint;
+  checkpoint: CoordinatorCheckpoint;
   advancing: boolean;
   leaseOwner?: string;
   leaseTimer?: ReturnType<typeof setInterval>;
   commitQueue: Promise<void>;
+  initialEvents?: AgentEvent[];
+  recoveryActor?: { id: string; type?: string };
 }
 
 function redact(message: string, secrets: readonly string[]): string {
@@ -94,113 +118,42 @@ function containsSecret(value: JsonValue, secrets: readonly string[]): boolean {
   return false;
 }
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== 'object' || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonicalize(item)]),
-  );
+function isCoordinatorRun(run: RunRecord): run is CoordinatorRun {
+  return run.kind === 'workflow' || run.kind === 'team';
 }
 
-async function transportableTool(
-  tool: ToolDefinition,
-  context?: RunRequest['context'],
-): Promise<{
-  name: string;
-  description?: string;
-  inputSchema?: JsonObject;
-  outputSchema?: JsonObject;
-  risk: string;
-  approval: string;
-  idempotency: string;
-  retry: ToolDefinition['retry'];
-  credentials: string[];
-}> {
-  const remote = await tool.resolve?.({ context });
+function isTeamRun(run: RunRecord): run is TeamRun {
+  return run.kind === 'team';
+}
+
+function coordinatorName(run: CoordinatorRun): string {
+  return run.kind === 'team' ? run.teamName : run.workflowName;
+}
+
+class WorkflowChildPausedError extends Error {
+  constructor(
+    readonly stepId: string,
+    readonly paused: RunPausedError,
+  ) {
+    super(paused.message, { cause: paused });
+  }
+}
+
+function mergeExecutionContext(
+  parent: ExecutionContext | undefined,
+  child: ExecutionContext | undefined,
+): ExecutionContext | undefined {
+  if (!parent) return child;
+  if (!child) return parent;
   return {
-    name: tool.name,
-    description: tool.description ?? remote?.description,
-    inputSchema:
-      tool.inputJsonSchema ??
-      remote?.inputSchema ??
-      (tool.inputSchema === undefined
-        ? undefined
-        : toTransportableSchema(
-            tool.inputSchema,
-            'input',
-            `Input schema for tool "${tool.name}" is not transportable`,
-          )),
-    outputSchema:
-      tool.outputJsonSchema ??
-      remote?.outputSchema ??
-      (tool.outputSchema === undefined
-        ? undefined
-        : toTransportableSchema(
-            tool.outputSchema,
-            'output',
-            `Output schema for tool "${tool.name}" is not transportable`,
-          )),
-    risk: tool.risk ?? 'read',
-    approval: tool.approval ?? 'never',
-    idempotency: tool.idempotency ?? 'none',
-    retry: tool.retry,
-    credentials: tool.credentials ?? [],
+    ...parent,
+    ...child,
+    actor: parent.actor ?? child.actor,
+    ...(parent.attributes || child.attributes
+      ? { attributes: { ...parent.attributes, ...child.attributes } }
+      : {}),
+    ...(parent.prompt || child.prompt ? { prompt: { ...parent.prompt, ...child.prompt } } : {}),
   };
-}
-
-async function definitionHash(
-  name: string,
-  modelName: string,
-  agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
-  tools: Map<string, ToolDefinition>,
-): Promise<string> {
-  const toolDefinitions = await Promise.all(
-    (agent.tools ?? []).map((toolName) => transportableTool(tools.get(toolName)!)),
-  );
-  const portable = JSON.stringify(
-    canonicalize({
-      name,
-      modelName,
-      instructions: agent.instructions,
-      context: agent.context,
-      memory: agent.memory,
-      skills: agent.skills,
-      tools: toolDefinitions,
-      reasoning: agent.reasoning,
-      modelOptions: agent.modelOptions,
-      limits: agent.limits,
-      outputSchema:
-        agent.outputSchema === undefined
-          ? undefined
-          : toTransportableSchema(
-              agent.outputSchema,
-              'output',
-              `Output schema for agent "${name}" is not transportable`,
-            ),
-    }),
-  );
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(portable));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function workflowDefinitionHash(
-  name: string,
-  workflow: FevexComposition['workflows'] extends Map<string, infer T> ? T : never,
-): Promise<string> {
-  // Hash the declared surface, never the source of `run`. `run.toString()`
-  // changes on any minified redeploy and still misses changes inside the
-  // functions `run` closes over, so it is wrong in both directions. This
-  // mirrors the agent hash, which covers declarations and skips `tool.execute`.
-  const portable = JSON.stringify(canonicalize({ name, version: workflow.version ?? '1' }));
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(portable));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function isWorkflowRun(run: RunRecord): run is WorkflowRun {
-  return run.kind === 'workflow';
 }
 
 function systemBlock(label: string, provider: string, block: ContextBlock): AgentMessage {
@@ -247,11 +200,13 @@ export function createRuntime({
   models,
   agents,
   workflows,
+  teams,
   tools,
   contextProviders,
   memoryStore,
   runStore,
   credentialStore,
+  sandbox,
   policies,
   onEvent,
   observability,
@@ -277,7 +232,7 @@ export function createRuntime({
     task = (async () => {
       const run = await runStore.getRun<RunRecord>(event.runId);
       if (!run) throw new Error(`Run "${event.runId}" does not exist`);
-      if (isWorkflowRun(run)) return;
+      if (isCoordinatorRun(run)) return;
       const agentRun = run as AgentRun;
       const agent = agents.get(agentRun.agentName);
       if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
@@ -330,14 +285,31 @@ export function createRuntime({
       ...(payload === undefined ? {} : { payload }),
     }) as AgentEvent<TType>;
 
+  const createCoordinatorEvent = (
+    state: WorkflowExecutionState,
+    workflowType: AgentEventType,
+    workflowPayload: unknown,
+    teamType: AgentEventType,
+    teamPayload = workflowPayload,
+  ): AgentEvent =>
+    createEvent(
+      state,
+      (isTeamRun(state.run) ? teamType : workflowType) as AgentEventType,
+      (isTeamRun(state.run) ? teamPayload : workflowPayload) as never,
+    ) as AgentEvent;
+
   const emitEvent = async <TType extends AgentEventType>(
     state: ExecutionState,
     type: TType,
     payload: AgentEventPayloads[TType],
   ): Promise<AgentEvent<TType>> => {
     const event = createEvent(state, type, payload);
-    await runStore.appendEvent(event as AgentEvent);
-    notifyObserver(event as AgentEvent);
+    if (isDurableRunStore(runStore)) {
+      await commit(state, { events: [event as AgentEvent] });
+    } else {
+      await runStore.appendEvent(event as AgentEvent);
+      notifyObserver(event as AgentEvent);
+    }
     return event;
   };
 
@@ -353,7 +325,7 @@ export function createRuntime({
   const commit = async (
     state: ExecutionState | WorkflowExecutionState,
     options: {
-      checkpoint?: RunCheckpoint | WorkflowCheckpoint | null;
+      checkpoint?: StoredRunCheckpoint | null;
       session?: Session;
       toolExecution?: ToolExecutionRecord;
       events?: AgentEvent[];
@@ -389,7 +361,11 @@ export function createRuntime({
           expiresAt,
         })
         .then((renewed) => {
-          if (!renewed) state.controller.abort(new Error('Run lease was lost'));
+          if (!renewed) {
+            if (state.leaseTimer) clearInterval(state.leaseTimer);
+            state.leaseTimer = undefined;
+            state.controller.abort(new Error('Run lease was lost'));
+          }
         });
     }, LEASE_RENEW_MS);
   };
@@ -440,6 +416,13 @@ export function createRuntime({
     events: AgentEvent[] = [],
   ): Promise<void> => {
     state.commitQueue = state.commitQueue.then(async () => {
+      if (state.run.status !== 'running') {
+        throw new FevexRunError(
+          'RUN_CONFLICT',
+          `Workflow run "${state.run.id}" is not running`,
+          state.run.id,
+        );
+      }
       update();
       await commit(state, { checkpoint: state.checkpoint, events });
     });
@@ -451,7 +434,7 @@ export function createRuntime({
     reason: AgentEventPayloads['workflow.run.cancelled']['reason'] = cancellationReason(
       state.request.signal,
     ),
-  ): Promise<AgentEvent<'workflow.run.cancelled'> | undefined> => {
+  ): Promise<AgentEvent | undefined> => {
     if (
       state.run.status === 'completed' ||
       state.run.status === 'failed' ||
@@ -459,10 +442,33 @@ export function createRuntime({
     ) {
       return undefined;
     }
+    const childRunIds = Object.values(state.checkpoint.steps)
+      .filter(
+        (record): record is Extract<
+          WorkflowStepRecord,
+          { type: 'agent'; status: 'running' }
+        > => record.type === 'agent' && record.status === 'running',
+      )
+      .map(({ childRunId }) => childRunId);
+    for (const childRunId of childRunIds) {
+      if (!(await cancelStoredAgent(childRunId))) {
+        throw new FevexRunError(
+          'RUN_CONFLICT',
+          `Workflow child "${childRunId}" could not be cancelled`,
+          state.run.id,
+        );
+      }
+    }
     state.run.status = 'cancelled';
     state.run.pause = undefined;
     state.run.error = reason;
-    const event = createEvent(state, 'workflow.run.cancelled', { reason });
+    state.run.usage = state.checkpoint.budget?.usage;
+    const event = createCoordinatorEvent(
+      state,
+      'workflow.run.cancelled',
+      { reason },
+      'team.run.cancelled',
+    );
     await commit(state, { checkpoint: null, events: [event] });
     await releaseWorkflowExecution(state);
     return event;
@@ -472,16 +478,17 @@ export function createRuntime({
     name: string,
     request: RunRequest<TInput, TOutput>,
   ): Promise<ExecutionState<TInput, TOutput>> => {
-    if (!agents.has(name)) {
+    const agent = agents.get(name);
+    if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
     }
     const now = new Date().toISOString();
     let session: Session;
-    if (request.sessionId === undefined) {
+    const newSession = request.sessionId === undefined;
+    if (newSession) {
       session = { id: crypto.randomUUID(), history: [], createdAt: now, updatedAt: now };
-      await runStore.saveSession(session);
     } else {
-      const stored = await runStore.getSession(request.sessionId);
+      const stored = await runStore.getSession(request.sessionId!);
       if (!stored) {
         throw new FevexRunError(
           'SESSION_NOT_FOUND',
@@ -516,7 +523,70 @@ export function createRuntime({
       advancing: false,
     };
     try {
-      await runStore.saveRun(run);
+      if (isDurableRunStore(runStore)) {
+        const modelName = typeof agent.model === 'string' ? agent.model : 'default';
+        const validatedInput =
+          agent.inputSchema === undefined
+            ? request.input
+            : await abortable(
+                () =>
+                  validateSchema(
+                    agent.inputSchema!,
+                    request.input,
+                    `Input for agent "${name}" does not match inputSchema`,
+                  ),
+                signal,
+              );
+        const inputContent = serializeValue(
+          validatedInput,
+          'Run input must be a string or JSON-serializable value',
+        );
+        const knowledge = await readKnowledgeMessages(state, agent, inputContent);
+        const messages: AgentMessage[] = [
+          { role: 'system', content: agent.instructions },
+          ...knowledge.skills,
+          ...session.history,
+          ...knowledge.context,
+          ...knowledge.memory,
+          { role: 'user', content: inputContent },
+        ];
+        const checkpoint: RunCheckpoint = {
+          version: 2,
+          runId: run.id,
+          definitionHash: await definitionHash(name, modelName, agent, tools),
+          limits: combineLimits(agent.limits, request.limits),
+          messages,
+          inputContent,
+          context: request.context,
+          step: 1,
+          toolCallCount: 0,
+          seenToolCallIds: [],
+          pendingTools: [],
+          pendingIndex: 0,
+        };
+        const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+        const started = createEvent(state, 'run.started', undefined) as AgentEvent;
+        const created = await runStore.createExecution({
+          run,
+          checkpoint,
+          ...(newSession ? { session } : {}),
+          lease: {
+            runId: run.id,
+            ownerId,
+            expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+          },
+          events: [started],
+        });
+        if (!created) throw new FevexRunError('RUN_CONFLICT', `Run "${run.id}" exists`, run.id);
+        state.checkpoint = checkpoint;
+        state.leaseOwner = ownerId;
+        state.initialEvents = [started];
+        notifyObserver(started);
+        startLease(state, runStore);
+      } else {
+        if (newSession) await runStore.saveSession(session);
+        await runStore.saveRun(run);
+      }
     } catch (error) {
       activeSessions.delete(session.id);
       throw error;
@@ -528,24 +598,34 @@ export function createRuntime({
   const prepareWorkflowExecution = async <TInput, TOutput>(
     name: string,
     request: RunRequest<TInput, TOutput>,
+    kind: 'workflow' | 'team' = 'workflow',
   ): Promise<WorkflowExecutionState<TInput, TOutput>> => {
     const workflow = workflows.get(name);
-    if (!workflow) {
-      throw new FevexRunError('AGENT_NOT_FOUND', `Workflow "${name}" is not registered`);
+    const team = kind === 'team' ? teams.get(name) : undefined;
+    if (
+      !workflow
+      || (kind === 'team' && !team)
+      || (kind === 'workflow' && teams.has(name))
+    ) {
+      const owner = kind === 'team' ? 'Team' : 'Workflow';
+      throw new FevexRunError(
+        kind === 'team' ? 'TEAM_NOT_FOUND' : 'WORKFLOW_NOT_FOUND',
+        `${owner} "${name}" is not registered`,
+      );
     }
     if (!isDurableRunStore(runStore)) {
       throw new FevexRunError(
         'DURABLE_STORE_REQUIRED',
-        'Workflows require a DurableRunStore',
+        `${kind === 'team' ? 'Teams' : 'Workflows'} require a DurableRunStore`,
       );
     }
     const now = new Date().toISOString();
     let session: Session;
-    if (request.sessionId === undefined) {
+    const newSession = request.sessionId === undefined;
+    if (newSession) {
       session = { id: crypto.randomUUID(), history: [], createdAt: now, updatedAt: now };
-      await runStore.saveSession(session);
     } else {
-      const stored = await runStore.getSession(request.sessionId);
+      const stored = await runStore.getSession(request.sessionId!);
       if (!stored) {
         throw new FevexRunError(
           'SESSION_NOT_FOUND',
@@ -562,29 +642,69 @@ export function createRuntime({
     const signal = request.signal
       ? AbortSignal.any([controller.signal, request.signal])
       : controller.signal;
+    const validatedInput =
+      workflow.inputSchema === undefined
+        ? request.input
+        : await abortable(
+            () =>
+              validateSchema(
+                workflow.inputSchema!,
+                request.input,
+                `Input for ${kind} "${name}" does not match inputSchema`,
+              ),
+            signal,
+          );
     const input = toJsonValue(
-      request.input,
-      'Workflow input must be a string or JSON-serializable value',
+      validatedInput,
+      `${kind === 'team' ? 'Team' : 'Workflow'} input must be a string or JSON-serializable value`,
     );
-    const run: WorkflowRun = {
-      kind: 'workflow',
-      id: crypto.randomUUID(),
-      sessionId: session.id,
-      workflowName: name,
-      status: 'running',
-      revision: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const checkpoint: WorkflowCheckpoint = {
-      kind: 'workflow',
-      runId: run.id,
-      workflowName: name,
-      definitionHash: await workflowDefinitionHash(name, workflow),
-      input,
-      context: request.context,
-      steps: {},
-    };
+    const id = crypto.randomUUID();
+    const run: CoordinatorRun =
+      kind === 'team'
+        ? {
+            kind: 'team',
+            id,
+            sessionId: session.id,
+            teamName: name,
+            status: 'running',
+            revision: 0,
+            createdAt: now,
+            updatedAt: now,
+          }
+        : {
+            kind: 'workflow',
+            id,
+            sessionId: session.id,
+            workflowName: name,
+            status: 'running',
+            revision: 0,
+            createdAt: now,
+            updatedAt: now,
+          };
+    const checkpoint: CoordinatorCheckpoint =
+      kind === 'team'
+        ? {
+            version: 2,
+            kind: 'team',
+            runId: run.id,
+            teamName: name,
+            definitionHash: await teamDefinitionHash(name, team!),
+            input,
+            context: request.context,
+            steps: {},
+            limits: combineLimits(workflow.limits, request.limits),
+          }
+        : {
+            version: 2,
+            kind: 'workflow',
+            runId: run.id,
+            workflowName: name,
+            definitionHash: await workflowDefinitionHash(name, workflow),
+            input,
+            context: request.context,
+            steps: {},
+            limits: combineLimits(workflow.limits, request.limits),
+          };
     const state: WorkflowExecutionState<TInput, TOutput> = {
       run,
       session,
@@ -596,7 +716,29 @@ export function createRuntime({
       commitQueue: Promise.resolve(),
     };
     try {
-      await runStore.saveRun(run);
+      const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+      const started = createCoordinatorEvent(
+        state,
+        'workflow.run.started',
+        undefined,
+        'team.run.started',
+      );
+      const created = await runStore.createExecution({
+        run,
+        checkpoint,
+        ...(newSession ? { session } : {}),
+        lease: {
+          runId: run.id,
+          ownerId,
+          expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+        },
+        events: [started],
+      });
+      if (!created) throw new FevexRunError('RUN_CONFLICT', `Run "${run.id}" exists`, run.id);
+      state.leaseOwner = ownerId;
+      state.initialEvents = [started];
+      notifyObserver(started);
+      startLease(state, runStore);
     } catch (error) {
       activeSessions.delete(session.id);
       throw error;
@@ -635,6 +777,27 @@ export function createRuntime({
     return approval ? 'require_approval' : 'allow';
   };
 
+  const toolSourcePayload = (tool: ToolDefinition, error?: unknown) => {
+    const source = error instanceof IntegrationError ? error.source ?? tool.source : tool.source;
+    return source === undefined ? {} : { source };
+  };
+
+  const toolErrorPayload = (tool: ToolDefinition, error: unknown) => ({
+    ...toolSourcePayload(tool, error),
+    ...(error instanceof IntegrationError
+      ? { errorCode: error.code, retryable: error.retryable }
+      : {}),
+  });
+
+  const runErrorPayload = (error: unknown) => {
+    if (!(error instanceof IntegrationError)) return {};
+    return {
+      errorCode: error.code,
+      retryable: error.retryable,
+      ...(error.source === undefined ? {} : { source: error.source }),
+    };
+  };
+
   const durableCheckpoint = async (
     state: ExecutionState,
     model: ModelGateway,
@@ -657,13 +820,6 @@ export function createRuntime({
         state.run.id,
       );
     }
-    if (state.request.outputSchema !== undefined) {
-      throw new FevexRunError(
-        'RUN_NOT_RESUMABLE',
-        'Durable runs must declare outputSchema on the agent',
-        state.run.id,
-      );
-    }
     let serializedState: JsonValue | undefined;
     if (providerState !== undefined) {
       if (!model.stateCodec) {
@@ -679,8 +835,10 @@ export function createRuntime({
       );
     }
     return {
+      version: 2,
       runId: state.run.id,
       definitionHash: await definitionHash(state.run.agentName, modelName, agent, tools),
+      limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
       messages: structuredClone(messages),
       inputContent,
       context: state.request.context,
@@ -777,7 +935,9 @@ export function createRuntime({
       typeof agent.model === 'string'
         ? models.get(agent.model)!
         : (agent.model ?? models.get('default')!);
-    const events: AgentEvent[] = [];
+    const events: AgentEvent[] = [...(state.initialEvents ?? [])];
+    const firstEvents = state.initialEvents ?? [];
+    state.initialEvents = undefined;
     const emit = async <TType extends AgentEventType>(
       type: TType,
       payload: AgentEventPayloads[TType],
@@ -797,8 +957,16 @@ export function createRuntime({
     let pendingIndex: number;
 
     try {
+      for (const event of firstEvents) yield event;
       if (state.checkpoint) {
         const checkpoint = state.checkpoint;
+        if (checkpoint.version !== 2) {
+          throw new FevexRunError(
+            'CHECKPOINT_UNSUPPORTED',
+            `Checkpoint for run "${state.run.id}" is unsupported`,
+            state.run.id,
+          );
+        }
         const hash = await definitionHash(name, modelName, agent, tools);
         if (checkpoint.definitionHash !== hash) {
           throw new FevexRunError(
@@ -822,14 +990,20 @@ export function createRuntime({
       } else {
         yield await emit('run.started', undefined);
         request.signal.throwIfAborted();
-        if (request.outputSchema !== undefined) {
-          assertStandardSchema(
-            request.outputSchema,
-            `Output schema for request to agent "${name}" must implement Standard Schema`,
-          );
-        }
+        const validatedInput =
+          agent.inputSchema === undefined
+            ? request.input
+            : await abortable(
+                () =>
+                  validateSchema(
+                    agent.inputSchema!,
+                    request.input,
+                    `Input for agent "${name}" does not match inputSchema`,
+                  ),
+                request.signal,
+              );
         inputContent = serializeValue(
-          request.input,
+          validatedInput,
           'Run input must be a string or JSON-serializable value',
         );
         const knowledge = await readKnowledgeMessages(state, agent, inputContent);
@@ -848,7 +1022,7 @@ export function createRuntime({
         pendingIndex = 0;
       }
 
-      const activeOutputSchema = request.outputSchema ?? agent.outputSchema;
+      const activeOutputSchema = agent.outputSchema;
       const outputSchema =
         activeOutputSchema === undefined
           ? undefined
@@ -877,8 +1051,9 @@ export function createRuntime({
           inputSchema,
         );
       }));
-      const maxSteps = agent.limits?.maxSteps ?? DEFAULT_MAX_STEPS;
-      const maxToolCalls = agent.limits?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
+      const effectiveLimits = state.checkpoint?.limits ?? combineLimits(agent.limits, request.limits);
+      const maxSteps = effectiveLimits?.maxSteps ?? DEFAULT_MAX_STEPS;
+      const maxToolCalls = effectiveLimits?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
 
       while (step <= maxSteps) {
         request.signal.throwIfAborted();
@@ -892,10 +1067,10 @@ export function createRuntime({
             reasoning: agent.reasoning,
             modelOptions: agent.modelOptions,
             outputSchema,
-            ...(remainingOutputTokens(agent.limits?.maxOutputTokens, usage) === undefined
+            ...(remainingOutputTokens(effectiveLimits?.maxOutputTokens, usage) === undefined
               ? {}
               : {
-                  maxOutputTokens: remainingOutputTokens(agent.limits?.maxOutputTokens, usage),
+                  maxOutputTokens: remainingOutputTokens(effectiveLimits?.maxOutputTokens, usage),
                 }),
             ...(providerState === undefined ? {} : { providerState }),
             signal: request.signal,
@@ -920,7 +1095,7 @@ export function createRuntime({
             name,
             'maxInputTokens',
             'inputTokens',
-            agent.limits?.maxInputTokens,
+            effectiveLimits?.maxInputTokens,
             result.usage,
             usage,
           );
@@ -928,7 +1103,7 @@ export function createRuntime({
             name,
             'maxOutputTokens',
             'outputTokens',
-            agent.limits?.maxOutputTokens,
+            effectiveLimits?.maxOutputTokens,
             result.usage,
             usage,
           );
@@ -1003,14 +1178,14 @@ export function createRuntime({
             name,
             'maxInputTokens',
             'inputTokens',
-            agent.limits?.maxInputTokens,
+            effectiveLimits?.maxInputTokens,
             usage,
           );
           assertContinuationBudget(
             name,
             'maxOutputTokens',
             'outputTokens',
-            agent.limits?.maxOutputTokens,
+            effectiveLimits?.maxOutputTokens,
             usage,
           );
           if (result.toolCalls.length > maxToolCalls - toolCallCount) {
@@ -1047,6 +1222,7 @@ export function createRuntime({
                 toolCallId: call.id,
                 toolName: call.name,
                 error: toErrorMessage(error),
+                ...toolErrorPayload(tool, error),
               });
               throw error;
             }
@@ -1084,10 +1260,18 @@ export function createRuntime({
               state.run.id,
             );
           }
+          let record = durable
+            ? await durable.getToolExecution(state.run.id, pending.call.id)
+            : undefined;
           const policy = await authorize(state, tool, pending.input, 'tool.execute');
           const needsApproval = tool.approval === 'required' || policy === 'require_approval';
 
-          if (needsApproval && state.approvedToolCallId !== pending.call.id) {
+          if (
+            needsApproval
+            && state.approvedToolCallId !== pending.call.id
+            && record?.status !== 'started'
+            && record?.status !== 'completed'
+          ) {
             const checkpoint = await durableCheckpoint(
               state,
               model,
@@ -1116,6 +1300,7 @@ export function createRuntime({
               approvalId: approval.id,
               toolCallId: approval.toolCallId,
               toolName: approval.toolName,
+              ...toolSourcePayload(tool),
             }) as AgentEvent;
             const paused = createEvent(state, 'run.paused', {
               reason: 'approval',
@@ -1157,9 +1342,6 @@ export function createRuntime({
             await commit(state, { checkpoint });
             state.checkpoint = checkpoint;
           }
-          let record = durable
-            ? await durable.getToolExecution(state.run.id, pending.call.id)
-            : undefined;
           if (record?.status === 'completed') {
             messages.push({
               role: 'tool',
@@ -1201,6 +1383,7 @@ export function createRuntime({
               step,
               toolCallId: pending.call.id,
               toolName: pending.call.name,
+              ...toolSourcePayload(tool),
             }) as AgentEvent;
             const paused = createEvent(state, 'run.paused', {
               reason: 'tool_execution_unknown',
@@ -1213,11 +1396,18 @@ export function createRuntime({
             yield paused;
             return undefined;
           }
+          const forcedRetry = state.forcedRetryToolCallId === pending.call.id;
           state.forcedRetryToolCallId = undefined;
 
-          const maxAttempts = tool.retry?.maxAttempts ?? 1;
+          const configuredMaxAttempts = tool.retry?.maxAttempts ?? 1;
+          const maxAttempts = forcedRetry
+            ? Math.max(configuredMaxAttempts, (record?.attempt ?? 0) + 1)
+            : configuredMaxAttempts;
           let output: JsonValue | undefined;
-          let attempt = record?.attempt ?? 0;
+          let attempt =
+            record?.status === 'started' && tool.idempotency === 'keyed'
+              ? Math.max(0, record.attempt - 1)
+              : (record?.attempt ?? 0);
           while (attempt < maxAttempts) {
             if (attempt > 0) {
               const retryDecision = await authorize(state, tool, pending.input, 'tool.execute');
@@ -1250,6 +1440,7 @@ export function createRuntime({
                   approvalId: approval.id,
                   toolCallId: approval.toolCallId,
                   toolName: approval.toolName,
+                  ...toolSourcePayload(tool),
                 }) as AgentEvent;
                 const paused = createEvent(state, 'run.paused', {
                   reason: 'approval',
@@ -1292,6 +1483,32 @@ export function createRuntime({
               }
               return resolvedCredentials.get(credentialName)!;
             };
+            const scopedSandbox = tool.sandbox === undefined
+              ? undefined
+              : {
+                  run: (sandboxRequest: Parameters<NonNullable<typeof sandbox>['run']>[0]) => {
+                    if (!sandbox) {
+                      throw new FevexRunError(
+                        'SANDBOX_REQUIRED',
+                        `Tool "${tool.name}" requires a sandbox`,
+                        state.run.id,
+                      );
+                    }
+                    const signal = sandboxRequest.signal
+                      ? AbortSignal.any([request.signal, sandboxRequest.signal])
+                      : request.signal;
+                    return sandbox.run({
+                      ...sandboxRequest,
+                      capabilities: tool.sandbox,
+                      runId: state.run.id,
+                      toolCallId: pending.call.id,
+                      attempt,
+                      idempotencyKey: pending.idempotencyKey,
+                      context: request.context,
+                      signal,
+                    });
+                  },
+                };
             record = {
               runId: state.run.id,
               toolCallId: pending.call.id,
@@ -1306,6 +1523,7 @@ export function createRuntime({
               step,
               toolCallId: pending.call.id,
               toolName: pending.call.name,
+              ...toolSourcePayload(tool),
               ...(attempt > 1 ? { attempt } : {}),
             }) as AgentEvent;
             if (durable) await commit(state, { toolExecution: record, events: [started] });
@@ -1324,6 +1542,7 @@ export function createRuntime({
                     attempt,
                     idempotencyKey: pending.idempotencyKey,
                     getCredential,
+                    ...(scopedSandbox === undefined ? {} : { sandbox: scopedSandbox }),
                     context: request.context,
                     signal: request.signal,
                   }),
@@ -1354,6 +1573,7 @@ export function createRuntime({
                 step,
                 toolCallId: pending.call.id,
                 toolName: pending.call.name,
+                ...toolSourcePayload(tool),
                 ...(attempt > 1 ? { attempt } : {}),
               }) as AgentEvent;
               if (durable) await commit(state, { toolExecution: record, events: [completed] });
@@ -1380,6 +1600,7 @@ export function createRuntime({
                   toolCallId: pending.call.id,
                   toolName: pending.call.name,
                   error: safeError,
+                  ...toolErrorPayload(tool, error),
                 });
                 throw secrets.length ? new Error(safeError, { cause: error }) : error;
               }
@@ -1394,6 +1615,7 @@ export function createRuntime({
                 attempt: attempt + 1,
                 delayMs,
                 error: safeError,
+                ...toolErrorPayload(tool, error),
               });
               if (delayMs) {
                 await abortable(
@@ -1440,9 +1662,15 @@ export function createRuntime({
         });
         const failed = createEvent(state, 'run.failed', {
           error: toErrorMessage(error),
+          ...runErrorPayload(error),
         }) as AgentEvent;
         if (isDurableRunStore(runStore)) {
-          await commit(state, { checkpoint: null, events: [failed] });
+          try {
+            await commit(state, { checkpoint: null, events: [failed] });
+          } catch (commitError) {
+            await releaseExecution(state);
+            throw commitError;
+          }
         } else {
           await runStore.saveRun(state.run);
           await runStore.appendEvent(failed);
@@ -1451,6 +1679,8 @@ export function createRuntime({
         events.push(failed);
         await releaseExecution(state);
         yield failed;
+      } else {
+        await releaseExecution(state);
       }
       throw error;
     }
@@ -1462,6 +1692,11 @@ export function createRuntime({
   ): AsyncGenerator<AgentEvent, RunResult<TOutput> | undefined> {
     const workflow = workflows.get(name)!;
     const events: AgentEvent[] = [];
+    let parallelDepth = 0;
+    const compensationHandlers = new Map<string, {
+      kind: 'agent' | 'parallel';
+      run(result: JsonValue): Promise<void>;
+    }>();
     const emit = async <TType extends AgentEventType>(
       type: TType,
       payload: AgentEventPayloads[TType],
@@ -1475,12 +1710,23 @@ export function createRuntime({
       stepId: string,
       error: RunPausedError,
     ): Promise<never> => {
+      if (parallelDepth > 0) throw new WorkflowChildPausedError(stepId, error);
       const childPause = error.pause;
       if (childPause.type === 'workflow_child') throw error;
-      const event = createEvent(state, 'workflow.run.paused', {
-        stepId,
-        childRunId: error.runId,
-      }) as AgentEvent;
+      if (childPause.type === 'workflow_timer' || childPause.type === 'workflow_event') {
+        throw new FevexRunError(
+          'RUN_NOT_RESUMABLE',
+          `Workflow child "${error.runId}" paused for a workflow wait`,
+          state.run.id,
+        );
+      }
+      const event = createCoordinatorEvent(
+        state,
+        'workflow.run.paused',
+        { stepId, reason: 'child', childRunId: error.runId },
+        'team.run.paused',
+        { delegationId: stepId, reason: 'child', childRunId: error.runId },
+      );
       await commitWorkflow(
         state,
         () => {
@@ -1497,35 +1743,165 @@ export function createRuntime({
       await releaseWorkflowExecution(state);
       throw new RunPausedError(state.run.id, state.run.pause!);
     };
+    const compensationContext = (stepId: string): WorkflowStepContext => ({
+      runId: state.run.id,
+      sessionId: state.session.id,
+      stepId,
+      context: state.request.context,
+      signal: state.request.signal,
+    });
+    const registerCompensation = <TResult>(
+      stepId: string,
+      kind: 'agent' | 'parallel',
+      result: TResult,
+      options: WorkflowStepOptions<TResult> | undefined,
+    ): void => {
+      if (!options?.compensate) return;
+      compensationHandlers.set(stepId, {
+        kind,
+        async run() {
+          await options.compensate!(structuredClone(result), compensationContext(stepId));
+        },
+      });
+    };
+    const childBudget = async (result: RunResult<JsonValue>): Promise<WorkflowBudgetUsage> => {
+      const childEvents = await runStore.listEvents(result.runId);
+      return {
+        usage: result.usage,
+        steps: childEvents.filter(({ type }) => type === 'model.completed').length,
+        toolCalls: childEvents.filter(({ type }) => type === 'tool.completed').length,
+      };
+    };
+    const addChildBudget = (budget: WorkflowBudgetUsage): void => {
+      state.checkpoint.budget = addWorkflowBudget(state.checkpoint.budget, budget);
+      state.run.usage = state.checkpoint.budget?.usage;
+    };
+    const relayChildEvent = async (
+      event: AgentEvent,
+      stepId: string,
+      agentName: string,
+    ): Promise<void> => {
+      if (
+        event.type !== 'model.started' &&
+        event.type !== 'model.output.delta' &&
+        event.type !== 'model.completed' &&
+        event.type !== 'tool.started' &&
+        event.type !== 'tool.completed' &&
+        event.type !== 'tool.failed' &&
+        event.type !== 'tool.retrying' &&
+        event.type !== 'tool.execution_unknown' &&
+        event.type !== 'approval.requested' &&
+        event.type !== 'approval.resolved'
+      ) return;
+
+      const relayed = createEvent(state, event.type, {
+        ...(event.payload as object),
+        ...(isTeamRun(state.run)
+          ? { teamDelegationId: stepId, teamAgentName: agentName }
+          : { workflowStepId: stepId, workflowAgentName: agentName }),
+      } as never) as AgentEvent;
+      await commitWorkflow(state, () => {}, [relayed]);
+      events.push(relayed);
+    };
+    const runCompensations = async (): Promise<void> => {
+      const entries = Object.entries(state.checkpoint.steps).reverse();
+      for (const [stepId, record] of entries) {
+        if (
+          (record.type !== 'agent' && record.type !== 'parallel') ||
+          record.status !== 'completed' ||
+          record.compensation?.status !== 'pending'
+        ) continue;
+        const handler = compensationHandlers.get(stepId);
+        if (!handler) throw new Error(`Workflow step "${stepId}" has no compensation handler`);
+        const started = createEvent(state, 'workflow.compensation.started', {
+          stepId,
+          kind: handler.kind,
+        }) as AgentEvent;
+        await commitWorkflow(state, () => {}, [started]);
+        events.push(started);
+        try {
+          await abortable(() => handler.run(record.result as JsonValue), state.request.signal);
+          const completed = createEvent(state, 'workflow.compensation.completed', {
+            stepId,
+            kind: handler.kind,
+          }) as AgentEvent;
+          await commitWorkflow(
+            state,
+            () => {
+              record.compensation = { status: 'completed' };
+            },
+            [completed],
+          );
+          events.push(completed);
+        } catch (error) {
+          const failed = createEvent(state, 'workflow.compensation.failed', {
+            stepId,
+            kind: handler.kind,
+            error: toErrorMessage(error),
+          }) as AgentEvent;
+          await commitWorkflow(
+            state,
+            () => {
+              record.compensation = { status: 'failed', error: toErrorMessage(error) };
+            },
+            [failed],
+          );
+          events.push(failed);
+          throw error;
+        }
+      }
+    };
     const completeAgentStep = async (
       stepId: string,
       agentName: string,
       childRunId: string,
       output: JsonValue,
-    ): Promise<RunResult<JsonValue>> => {
-      const result: RunResult<JsonValue> = {
+      options?: WorkflowStepOptions<WorkflowAgentResult<JsonValue>>,
+    ): Promise<WorkflowAgentResult<JsonValue>> => {
+      const child = (await runStore.getRun<AgentRun>(childRunId))!;
+      const result: WorkflowAgentResult<JsonValue> = {
         runId: childRunId,
-        sessionId: (await runStore.getRun(childRunId))!.sessionId,
+        sessionId: child.sessionId,
         output,
+        ...(child.usage === undefined ? {} : { usage: child.usage }),
       };
-      const event = createEvent(state, 'workflow.step.completed', {
-        stepId,
-        kind: 'agent',
-      }) as AgentEvent;
+      const budget = await childBudget(result);
+      const event = createCoordinatorEvent(
+        state,
+        'workflow.step.completed',
+        { stepId, kind: 'agent' },
+        'team.task.completed',
+        {
+          delegationId: stepId,
+          agentName,
+          ...(eventUsage(child.usage) === undefined
+            ? {}
+            : { usage: eventUsage(child.usage)! }),
+        },
+      );
       await commitWorkflow(
         state,
         () => {
+          addChildBudget(budget);
           state.checkpoint.steps[stepId] = {
             type: 'agent',
             status: 'completed',
             agentName,
             childRunId,
             result,
+            ...(options?.metadata === undefined
+              ? {}
+              : { metadata: structuredClone(options.metadata) }),
+            ...(options?.compensate === undefined
+              ? {}
+              : { compensation: { status: 'pending' as const } }),
           };
         },
         [event],
       );
+      if (options?.compensate) registerCompensation(stepId, 'agent', result, options);
       events.push(event);
+      assertWorkflowBudget(name, state.checkpoint.limits, state.checkpoint.budget);
       return structuredClone(result);
     };
     const step: WorkflowStep = {
@@ -1533,22 +1909,41 @@ export function createRuntime({
         stepId: string,
         agentName: string,
         request: RunRequest<TStepInput, TStepOutput>,
-      ): Promise<RunResult<TStepOutput>> {
+        options?: WorkflowStepOptions<WorkflowAgentResult<TStepOutput>>,
+      ): Promise<WorkflowAgentResult<TStepOutput>> {
         if (!stepId.trim()) throw new Error('Workflow step id cannot be empty');
         const existing = state.checkpoint.steps[stepId];
         if (existing?.type === 'agent' && existing.status === 'completed') {
-          return structuredClone(existing.result) as RunResult<TStepOutput>;
+          const result = structuredClone(existing.result) as WorkflowAgentResult<TStepOutput>;
+          registerCompensation(stepId, 'agent', result, options);
+          return result;
         }
         if (existing?.type === 'agent' && existing.status === 'running') {
-          const child = await runStore.getRun(existing.childRunId);
+          let child = await runStore.getRun(existing.childRunId);
           if (!child) throw new Error(`Child run "${existing.childRunId}" does not exist`);
+          if (child.status === 'running') {
+            if (!state.recoveryActor) {
+              throw new FevexRunError(
+                'RUN_NOT_RECOVERABLE',
+                `Child run "${child.id}" is still running`,
+                state.run.id,
+              );
+            }
+            child = await resumeAgent(
+              child.id,
+              undefined,
+              true,
+              state.recoveryActor,
+            );
+          }
           if (child.status === 'completed') {
             return completeAgentStep(
               stepId,
               existing.agentName,
               existing.childRunId,
               toJsonValue(child.output, 'Child agent output must be JSON-serializable'),
-            ) as Promise<RunResult<TStepOutput>>;
+              options as WorkflowStepOptions<WorkflowAgentResult<JsonValue>>,
+            ) as Promise<WorkflowAgentResult<TStepOutput>>;
           }
           if (child.status === 'paused' && child.pause) {
             return pauseForChild(stepId, new RunPausedError(child.id, child.pause));
@@ -1566,12 +1961,45 @@ export function createRuntime({
         const childSignal = request.signal
           ? AbortSignal.any([state.request.signal, request.signal])
           : state.request.signal;
-        const childState = await prepareExecution(agentName, { ...request, signal: childSignal });
-        const started = createEvent(state, 'workflow.step.started', {
-          stepId,
-          kind: 'agent',
-          agentName,
-        }) as AgentEvent;
+        const childState = await prepareExecution(agentName, {
+          ...request,
+          context: mergeExecutionContext(state.request.context, request.context),
+          limits: combineLimits(
+            request.limits,
+            remainingWorkflowLimits(state.checkpoint.limits, state.checkpoint.budget),
+          ),
+          signal: childSignal,
+        });
+        const action = options?.metadata?.teamAction === 'handoff' ? 'handoff' : 'delegate';
+        const lifecycleEvents: AgentEvent[] = [];
+        if (isTeamRun(state.run) && action === 'handoff') {
+          lifecycleEvents.push(
+            createEvent(state, 'team.handoff.created', {
+              delegationId: stepId,
+              from: String(options?.metadata?.from ?? ''),
+              to: agentName,
+              reason: String(options?.metadata?.reason ?? ''),
+            }) as AgentEvent,
+          );
+        }
+        const started = createCoordinatorEvent(
+          state,
+          'workflow.step.started',
+          { stepId, kind: 'agent', agentName },
+          'team.agent.assigned',
+          {
+            delegationId: stepId,
+            agentName,
+            action,
+            ...(typeof options?.metadata?.expectedOutput === 'string'
+              ? { expectedOutput: options.metadata.expectedOutput }
+              : {}),
+            ...(Array.isArray(options?.metadata?.constraints)
+              ? { constraints: options.metadata.constraints }
+              : {}),
+          },
+        );
+        lifecycleEvents.push(started);
         await commitWorkflow(
           state,
           () => {
@@ -1580,40 +2008,83 @@ export function createRuntime({
               status: 'running',
               agentName,
               childRunId: childState.run.id,
+              ...(options?.metadata === undefined
+                ? {}
+                : { metadata: structuredClone(options.metadata) }),
             };
           },
-          [started],
+          lifecycleEvents,
         );
-        events.push(started);
+        events.push(...lifecycleEvents);
         try {
-          const result = await drainExecution(agentName, childState, true);
+          const execution = executeAgent(agentName, childState);
+          let result: RunResult<TStepOutput> | undefined;
+          while (true) {
+            const next = await nextEvent(childState, execution);
+            if (next.done) {
+              if (next.value === undefined) {
+                const run = await runStore.getRun(childState.run.id);
+                if (run?.pause) throw new RunPausedError(run.id, run.pause);
+              }
+              result = next.value as RunResult<TStepOutput> | undefined;
+              break;
+            }
+            await relayChildEvent(next.value, stepId, agentName);
+          }
           if (!result) throw new Error(`Agent "${agentName}" did not complete`);
-          const completed = createEvent(state, 'workflow.step.completed', {
-            stepId,
-            kind: 'agent',
-          }) as AgentEvent;
+          const normalized: WorkflowAgentResult<TStepOutput> = {
+            runId: result.runId,
+            sessionId: result.sessionId,
+            output: result.output,
+            ...(result.usage === undefined ? {} : { usage: result.usage }),
+          };
+          const budget = await childBudget(normalized as RunResult<JsonValue>);
+          const completed = createCoordinatorEvent(
+            state,
+            'workflow.step.completed',
+            { stepId, kind: 'agent' },
+            'team.task.completed',
+            {
+              delegationId: stepId,
+              agentName,
+              ...(eventUsage(normalized.usage) === undefined
+                ? {}
+                : { usage: eventUsage(normalized.usage)! }),
+            },
+          );
           await commitWorkflow(
             state,
             () => {
+              addChildBudget(budget);
               state.checkpoint.steps[stepId] = {
                 type: 'agent',
                 status: 'completed',
                 agentName,
-                childRunId: result.runId,
-                result: structuredClone(result) as RunResult<JsonValue>,
+                childRunId: normalized.runId,
+                result: structuredClone(normalized) as RunResult<JsonValue>,
+                ...(options?.metadata === undefined
+                  ? {}
+                  : { metadata: structuredClone(options.metadata) }),
+                ...(options?.compensate === undefined
+                  ? {}
+                  : { compensation: { status: 'pending' as const } }),
               };
             },
             [completed],
           );
+          registerCompensation(stepId, 'agent', normalized, options);
           events.push(completed);
-          return result;
+          assertWorkflowBudget(name, state.checkpoint.limits, state.checkpoint.budget);
+          return normalized;
         } catch (error) {
           if (error instanceof RunPausedError) return pauseForChild(stepId, error);
-          const failed = createEvent(state, 'workflow.step.failed', {
-            stepId,
-            kind: 'agent',
-            error: toErrorMessage(error),
-          }) as AgentEvent;
+          const failed = createCoordinatorEvent(
+            state,
+            'workflow.step.failed',
+            { stepId, kind: 'agent', error: toErrorMessage(error) },
+            'team.task.failed',
+            { delegationId: stepId, agentName, error: toErrorMessage(error) },
+          );
           await commitWorkflow(state, () => {}, [failed]);
           events.push(failed);
           throw error;
@@ -1622,32 +2093,87 @@ export function createRuntime({
       async parallel<TTasks extends Record<string, () => Promise<unknown>>>(
         stepId: string,
         tasks: TTasks,
+        options?: WorkflowStepOptions<{ [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>> }>,
       ): Promise<{ [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>> }> {
         if (!stepId.trim()) throw new Error('Workflow step id cannot be empty');
         const existing = state.checkpoint.steps[stepId];
         if (existing?.type === 'parallel' && existing.status === 'completed') {
-          return structuredClone(existing.result) as {
+          const result = structuredClone(existing.result) as {
             [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>>;
           };
+          registerCompensation(stepId, 'parallel', result, options);
+          return result;
         }
         if (existing && existing.type !== 'parallel') {
           throw new Error(`Workflow step "${stepId}" was already used as ${existing.type}`);
         }
-        const started = createEvent(state, 'workflow.step.started', {
-          stepId,
-          kind: 'parallel',
-        }) as AgentEvent;
+        const started = createCoordinatorEvent(
+          state,
+          'workflow.step.started',
+          { stepId, kind: 'parallel' },
+          'team.merge.started',
+          {
+            stepId,
+            width:
+              typeof options?.metadata?.width === 'number'
+                ? options.metadata.width
+                : Object.keys(tasks).length,
+          },
+        );
         await commitWorkflow(
           state,
           () => {
-            state.checkpoint.steps[stepId] = { type: 'parallel', status: 'running' };
+            state.checkpoint.steps[stepId] = {
+              type: 'parallel',
+              status: 'running',
+              ...(options?.metadata === undefined
+                ? {}
+                : { metadata: structuredClone(options.metadata) }),
+            };
           },
           [started],
         );
         events.push(started);
         try {
-          const entries = await Promise.all(
-            Object.entries(tasks).map(async ([key, task]) => [key, await task()] as const),
+          parallelDepth += 1;
+          const taskEntries = Object.entries(tasks);
+          let settled: PromiseSettledResult<readonly [string, unknown]>[];
+          try {
+            settled = await Promise.allSettled(
+              taskEntries.map(async ([key, task]) => [key, await task()] as const),
+            );
+          } finally {
+            parallelDepth -= 1;
+          }
+          const failures = settled
+            .filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+            .map(({ reason }) => reason);
+          const pauses = failures.filter(
+            (error): error is WorkflowChildPausedError =>
+              error instanceof WorkflowChildPausedError,
+          );
+          const errors = failures.filter(
+            (error) => !(error instanceof WorkflowChildPausedError),
+          );
+          if (errors.length) {
+            for (const pause of pauses) {
+              if (!(await cancelStoredAgent(pause.paused.runId))) {
+                throw new FevexRunError(
+                  'RUN_CONFLICT',
+                  `Paused workflow child "${pause.paused.runId}" could not be cancelled`,
+                  state.run.id,
+                );
+              }
+            }
+            throw errors.length === 1
+              ? errors[0]
+              : new AggregateError(errors, `Workflow parallel step "${stepId}" failed`);
+          }
+          if (pauses.length) {
+            return pauseForChild(pauses[0]!.stepId, pauses[0]!.paused);
+          }
+          const entries = settled.map(
+            (item) => (item as PromiseFulfilledResult<readonly [string, unknown]>).value,
           );
           const result = toJsonValue(
             Object.fromEntries(entries),
@@ -1656,10 +2182,13 @@ export function createRuntime({
           if (typeof result !== 'object' || result === null || Array.isArray(result)) {
             throw new Error(`Workflow parallel step "${stepId}" result must be an object`);
           }
-          const completed = createEvent(state, 'workflow.step.completed', {
-            stepId,
-            kind: 'parallel',
-          }) as AgentEvent;
+          const completed = createCoordinatorEvent(
+            state,
+            'workflow.step.completed',
+            { stepId, kind: 'parallel' },
+            'team.merge.completed',
+            { stepId },
+          );
           await commitWorkflow(
             state,
             () => {
@@ -1667,9 +2196,23 @@ export function createRuntime({
                 type: 'parallel',
                 status: 'completed',
                 result,
+                ...(options?.metadata === undefined
+                  ? {}
+                  : { metadata: structuredClone(options.metadata) }),
+                ...(options?.compensate === undefined
+                  ? {}
+                  : { compensation: { status: 'pending' as const } }),
               };
             },
             [completed],
+          );
+          registerCompensation(
+            stepId,
+            'parallel',
+            structuredClone(result) as {
+              [TKey in keyof TTasks]: Awaited<ReturnType<TTasks[TKey]>>;
+            },
+            options,
           );
           events.push(completed);
           return structuredClone(result) as {
@@ -1677,55 +2220,177 @@ export function createRuntime({
           };
         } catch (error) {
           if (error instanceof RunPausedError) throw error;
-          const failed = createEvent(state, 'workflow.step.failed', {
-            stepId,
-            kind: 'parallel',
-            error: toErrorMessage(error),
-          }) as AgentEvent;
+          const failed = createCoordinatorEvent(
+            state,
+            'workflow.step.failed',
+            { stepId, kind: 'parallel', error: toErrorMessage(error) },
+            'team.merge.failed',
+            { stepId, error: toErrorMessage(error) },
+          );
           await commitWorkflow(state, () => {}, [failed]);
           events.push(failed);
           throw error;
         }
       },
+      async waitUntil(stepId: string, resumeAt: string | Date): Promise<void> {
+        if (!stepId.trim()) throw new Error('Workflow step id cannot be empty');
+        const existing = state.checkpoint.steps[stepId];
+        if (existing?.type === 'wait' && existing.status === 'completed') return;
+        if (existing && existing.type !== 'wait') {
+          throw new Error(`Workflow step "${stepId}" was already used as ${existing.type}`);
+        }
+        const at = resumeAt instanceof Date ? resumeAt : new Date(resumeAt);
+        if (!Number.isFinite(at.getTime())) {
+          throw new Error(`Workflow wait "${stepId}" resumeAt must be a valid date`);
+        }
+        const wait = { type: 'timer' as const, resumeAt: at.toISOString() };
+        if (Date.now() >= at.getTime()) {
+          const started = createEvent(state, 'workflow.wait.started', {
+            stepId,
+            kind: 'timer',
+            resumeAt: wait.resumeAt,
+          }) as AgentEvent;
+          const completed = createEvent(state, 'workflow.wait.completed', {
+            stepId,
+            kind: 'timer',
+          }) as AgentEvent;
+          await commitWorkflow(
+            state,
+            () => {
+              state.checkpoint.steps[stepId] = { type: 'wait', status: 'completed', wait };
+            },
+            [started, completed],
+          );
+          events.push(started, completed);
+          return;
+        }
+        const started = createEvent(state, 'workflow.wait.started', {
+          stepId,
+          kind: 'timer',
+          resumeAt: wait.resumeAt,
+        }) as AgentEvent;
+        const paused = createEvent(state, 'workflow.run.paused', {
+          stepId,
+          reason: 'timer',
+        }) as AgentEvent;
+        await commitWorkflow(
+          state,
+          () => {
+            state.checkpoint.steps[stepId] = { type: 'wait', status: 'running', wait };
+            state.run.status = 'paused';
+            state.run.pause = { type: 'workflow_timer', stepId, resumeAt: wait.resumeAt };
+          },
+          [started, paused],
+        );
+        events.push(started, paused);
+        await releaseWorkflowExecution(state);
+        throw new RunPausedError(state.run.id, state.run.pause!);
+      },
+      async waitForEvent<TPayload extends JsonValue = JsonValue>(
+        stepId: string,
+        eventName: string,
+      ): Promise<WorkflowEventResult<TPayload>> {
+        if (!stepId.trim()) throw new Error('Workflow step id cannot be empty');
+        if (!eventName.trim()) throw new Error('Workflow event name cannot be empty');
+        const definition = workflow.events?.[eventName];
+        if (!definition) {
+          throw new Error(`Workflow event "${eventName}" is not declared`);
+        }
+        const existing = state.checkpoint.steps[stepId];
+        if (existing?.type === 'wait' && existing.status === 'completed') {
+          return {
+            ...(existing.payload === undefined ? {} : { payload: existing.payload as TPayload }),
+            ...(existing.actor === undefined ? {} : { actor: existing.actor }),
+            receivedAt: existing.receivedAt!,
+          };
+        }
+        if (existing && existing.type !== 'wait') {
+          throw new Error(`Workflow step "${stepId}" was already used as ${existing.type}`);
+        }
+        const wait = {
+          type: 'event' as const,
+          eventName,
+          requireActor: definition.requireActor ?? false,
+        };
+        const started = createEvent(state, 'workflow.wait.started', {
+          stepId,
+          kind: 'event',
+          eventName,
+        }) as AgentEvent;
+        const paused = createEvent(state, 'workflow.run.paused', {
+          stepId,
+          reason: 'event',
+        }) as AgentEvent;
+        await commitWorkflow(
+          state,
+          () => {
+            state.checkpoint.steps[stepId] = { type: 'wait', status: 'running', wait };
+            state.run.status = 'paused';
+            state.run.pause = { type: 'workflow_event', stepId, eventName };
+          },
+          [started, paused],
+        );
+        events.push(started, paused);
+        await releaseWorkflowExecution(state);
+        throw new RunPausedError(state.run.id, state.run.pause!);
+      },
     };
 
+    const firstEvents = state.initialEvents ?? [];
+    state.initialEvents = undefined;
+    events.push(...firstEvents);
+
     try {
-      const hash = await workflowDefinitionHash(name, workflow);
-      if (state.checkpoint.definitionHash !== hash) {
+      for (const event of firstEvents) yield event;
+      if (state.checkpoint.version !== 2) {
         throw new FevexRunError(
-          'RUN_DEFINITION_CHANGED',
-          `Definition for workflow "${name}" changed`,
+          'CHECKPOINT_UNSUPPORTED',
+          `Checkpoint for run "${state.run.id}" is unsupported`,
           state.run.id,
         );
       }
-      if (state.run.revision === 0) {
-        yield await emit('workflow.run.started', undefined);
-      }
-      state.request.signal.throwIfAborted();
-      if (state.request.outputSchema !== undefined) {
-        assertStandardSchema(
-          state.request.outputSchema,
-          `Output schema for workflow "${name}" must implement Standard Schema`,
+      const hash = isTeamRun(state.run)
+        ? await teamDefinitionHash(name, teams.get(name)!)
+        : await workflowDefinitionHash(name, workflow);
+      if (state.checkpoint.definitionHash !== hash) {
+        const owner = isTeamRun(state.run) ? 'Team' : 'Workflow';
+        throw new FevexRunError(
+          'RUN_DEFINITION_CHANGED',
+          `Definition for ${owner.toLowerCase()} "${name}" changed`,
+          state.run.id,
         );
       }
+      state.request.signal.throwIfAborted();
       const rawOutput = await workflow.run(step, state.checkpoint.input as TInput);
       const validated =
-        state.request.outputSchema === undefined
+        workflow.outputSchema === undefined
           ? rawOutput
           : await validateSchema(
-              state.request.outputSchema,
+              workflow.outputSchema,
               rawOutput,
-              `Output from workflow "${name}" does not match outputSchema`,
+              `Output from ${isTeamRun(state.run) ? 'team' : 'workflow'} "${name}" does not match outputSchema`,
             );
       const output = toJsonValue(
         validated,
-        `Output from workflow "${name}" must be JSON-serializable`,
+        `Output from ${isTeamRun(state.run) ? 'team' : 'workflow'} "${name}" must be JSON-serializable`,
       );
       await state.commitQueue;
       state.run.status = 'completed';
       state.run.pause = undefined;
       state.run.output = output;
-      const completed = createEvent(state, 'workflow.run.completed', { output }) as AgentEvent;
+      state.run.usage = state.checkpoint.budget?.usage;
+      const completedPayload = {
+        output,
+        ...(eventUsage(state.run.usage) === undefined
+          ? {}
+          : { usage: eventUsage(state.run.usage)! }),
+      };
+      const completed = createCoordinatorEvent(
+        state,
+        'workflow.run.completed',
+        completedPayload,
+        'team.run.completed',
+      );
       await commit(state, { checkpoint: null, events: [completed] });
       events.push(completed);
       await releaseWorkflowExecution(state);
@@ -1735,29 +2400,59 @@ export function createRuntime({
         sessionId: state.session.id,
         output: output as TOutput,
         events,
+        ...(state.run.usage === undefined ? {} : { usage: state.run.usage }),
       };
     } catch (error) {
+      let thrown = error;
       if (state.request.signal.aborted) {
-        const event = await cancelWorkflowExecution(state);
-        if (event) {
-          events.push(event);
-          yield event;
+        try {
+          const event = await cancelWorkflowExecution(state);
+          if (event) {
+            events.push(event);
+            yield event;
+          }
+        } catch (cancellationError) {
+          await releaseWorkflowExecution(state);
+          throw cancellationError;
         }
       } else if (state.run.status === 'paused') {
         throw error;
+      } else if (error instanceof FevexRunError && error.code === 'RUN_CONFLICT') {
+        await releaseWorkflowExecution(state);
+        throw error;
       } else if (state.run.status === 'running') {
         await state.commitQueue;
+        let failure = error;
+        try {
+          await runCompensations();
+        } catch (compensationError) {
+          failure = new AggregateError(
+            [error, compensationError],
+            `Workflow failed: ${toErrorMessage(error)}; compensation failed: ${toErrorMessage(compensationError)}`,
+          );
+          thrown = failure;
+        }
         state.run.status = 'failed';
-        state.run.error = toErrorMessage(error);
-        const failed = createEvent(state, 'workflow.run.failed', {
-          error: toErrorMessage(error),
-        }) as AgentEvent;
+        state.run.error = toErrorMessage(failure);
+        state.run.usage = state.checkpoint.budget?.usage;
+        const failedPayload = {
+          error: toErrorMessage(failure),
+          ...runErrorPayload(failure),
+        };
+        const failed = createCoordinatorEvent(
+          state,
+          'workflow.run.failed',
+          failedPayload,
+          'team.run.failed',
+        );
         await commit(state, { checkpoint: null, events: [failed] });
         events.push(failed);
         await releaseWorkflowExecution(state);
         yield failed;
+      } else {
+        await releaseWorkflowExecution(state);
       }
-      throw error;
+      throw thrown;
     }
   }
 
@@ -1823,9 +2518,13 @@ export function createRuntime({
 
   const resumeAgent = async <TOutput>(
     runId: string,
-    resolution: ResumeRunResolution,
+    resolution: ResumeRunResolution | undefined,
     waitForCompletion = false,
+    recoveryActor?: { id: string; type?: string },
   ): Promise<AgentRun<TOutput>> => {
+    if (resolution?.type === 'timer' || resolution?.type === 'event') {
+      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+    }
     if (!isDurableRunStore(runStore)) {
       throw new FevexRunError(
         'DURABLE_STORE_REQUIRED',
@@ -1836,10 +2535,28 @@ export function createRuntime({
     const run = await runStore.getRun<AgentRun>(runId);
     const checkpoint = await runStore.getCheckpoint<RunCheckpoint>(runId);
     if (!run || !checkpoint) {
-      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+      throw new FevexRunError(
+        resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+        `Run "${runId}" cannot be ${resolution ? 'resumed' : 'recovered'}`,
+        runId,
+      );
     }
-    if (run.status !== 'paused' && run.status !== 'running') {
-      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" is terminal`, runId);
+    if (checkpoint.version !== 2) {
+      throw new FevexRunError(
+        'CHECKPOINT_UNSUPPORTED',
+        `Checkpoint for run "${runId}" is unsupported`,
+        runId,
+      );
+    }
+    if (
+      (resolution && run.status !== 'paused' && run.status !== 'running') ||
+      (!resolution && run.status !== 'running')
+    ) {
+      throw new FevexRunError(
+        resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+        `Run "${runId}" is not ${resolution ? 'resumable' : 'recoverable'}`,
+        runId,
+      );
     }
     const agent = agents.get(run.agentName);
     if (!agent) {
@@ -1893,6 +2610,7 @@ export function createRuntime({
           input: '',
           sessionId: session.id,
           context: checkpoint.context,
+          limits: checkpoint.limits,
           signal: controller.signal,
         },
         controller,
@@ -1900,18 +2618,40 @@ export function createRuntime({
         advancing: false,
         checkpoint,
         leaseOwner: ownerId,
-        ...(resolution.type === 'approval'
+        ...(resolution?.type === 'approval'
           ? {
               approvedToolCallId:
                 run.pause?.type === 'approval' ? run.pause.approval.toolCallId : undefined,
             }
-          : {
-              approvedToolCallId: resolution.toolCallId,
-              ...(resolution.decision === 'retry'
-                ? { forcedRetryToolCallId: resolution.toolCallId }
-                : {}),
-            }),
+          : resolution?.type === 'tool_execution'
+            ? {
+                approvedToolCallId: resolution.toolCallId,
+                ...(resolution.decision === 'retry'
+                  ? { forcedRetryToolCallId: resolution.toolCallId }
+                  : {}),
+              }
+            : {}),
       };
+      if (!resolution) {
+        if (!recoveryActor?.id.trim()) {
+          throw new FevexRunError(
+            'RUN_NOT_RECOVERABLE',
+            'Recovery actor is required',
+            runId,
+          );
+        }
+        const recovered = createEvent(state, 'run.recovered', {
+          actorId: recoveryActor.id,
+        }) as AgentEvent;
+        await commit(state, { checkpoint, events: [recovered] });
+        state.initialEvents = [recovered];
+        activeRuns.set(runId, state);
+        activeSessions.add(session.id);
+        startLease(state, runStore);
+        if (waitForCompletion) await drainExecution(run.agentName, state, false);
+        else void drainExecution(run.agentName, state, false).catch(() => {});
+        return structuredClone(run) as AgentRun<TOutput>;
+      }
       if (!resolution.actor?.id?.trim()) {
         await runStore.releaseLease(runId, ownerId);
         throw new FevexRunError('APPROVAL_INVALID', 'Resolution actor is required', runId);
@@ -1944,6 +2684,7 @@ export function createRuntime({
             toolCallId,
             decision: 'reject',
             actorId: resolution.actor.id,
+            ...toolSourcePayload(tool),
           }) as AgentEvent;
           const cancelled = createEvent(state, 'run.cancelled', {
             reason: 'approval_rejected',
@@ -2004,6 +2745,7 @@ export function createRuntime({
         });
       }
       const approval = run.pause?.type === 'approval' ? run.pause.approval : undefined;
+      const approvalTool = approval ? tools.get(approval.toolName) : undefined;
       run.status = 'running';
       run.pause = undefined;
       const resumed = createEvent(state, 'run.resumed', undefined) as AgentEvent;
@@ -2015,6 +2757,7 @@ export function createRuntime({
             toolCallId: approval.toolCallId,
             decision: 'approve',
             actorId: resolution.actor.id,
+            ...(approvalTool === undefined ? {} : toolSourcePayload(approvalTool)),
           }) as AgentEvent,
         );
       }
@@ -2036,8 +2779,9 @@ export function createRuntime({
 
   const resumeWorkflow = async <TOutput>(
     runId: string,
-    resolution: ResumeRunResolution,
-  ): Promise<WorkflowRun<TOutput>> => {
+    resolution: ResumeRunResolution | undefined,
+    recoveryActor?: { id: string; type?: string },
+  ): Promise<CoordinatorRun<TOutput>> => {
     if (!isDurableRunStore(runStore)) {
       throw new FevexRunError(
         'DURABLE_STORE_REQUIRED',
@@ -2045,30 +2789,58 @@ export function createRuntime({
         runId,
       );
     }
-    const run = await runStore.getRun<WorkflowRun>(runId);
-    const checkpoint = await runStore.getCheckpoint<WorkflowCheckpoint>(runId);
+    const run = await runStore.getRun<CoordinatorRun>(runId);
+    const checkpoint = await runStore.getCheckpoint<CoordinatorCheckpoint>(runId);
     if (!run || !checkpoint) {
-      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+      throw new FevexRunError(
+        resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+        `Run "${runId}" cannot be ${resolution ? 'resumed' : 'recovered'}`,
+        runId,
+      );
     }
-    if (run.status !== 'paused' && run.status !== 'running') {
-      throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" is terminal`, runId);
+    if (checkpoint.version !== 2) {
+      throw new FevexRunError(
+        'CHECKPOINT_UNSUPPORTED',
+        `Checkpoint for run "${runId}" is unsupported`,
+        runId,
+      );
     }
-    const workflow = workflows.get(run.workflowName);
+    if (
+      (resolution && run.status !== 'paused' && run.status !== 'running') ||
+      (!resolution && run.status !== 'running')
+    ) {
+      throw new FevexRunError(
+        resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+        `Run "${runId}" is not ${resolution ? 'resumable' : 'recoverable'}`,
+        runId,
+      );
+    }
+    const name = coordinatorName(run);
+    const workflow = workflows.get(name);
+    const team = isTeamRun(run) ? teams.get(name) : undefined;
     if (!workflow) {
+      const owner = isTeamRun(run) ? 'Team' : 'Workflow';
       throw new FevexRunError(
         'RUN_DEFINITION_CHANGED',
-        `Workflow "${run.workflowName}" is unavailable`,
+        `${owner} "${name}" is unavailable`,
         runId,
       );
     }
-    if (checkpoint.definitionHash !== (await workflowDefinitionHash(run.workflowName, workflow))) {
+    const currentHash = isTeamRun(run)
+      ? team && await teamDefinitionHash(name, team)
+      : await workflowDefinitionHash(name, workflow);
+    if (!currentHash || checkpoint.definitionHash !== currentHash) {
       throw new FevexRunError(
         'RUN_DEFINITION_CHANGED',
-        `Definition for workflow "${run.workflowName}" changed`,
+        `Definition for ${isTeamRun(run) ? 'team' : 'workflow'} "${name}" changed`,
         runId,
       );
     }
-    if (run.pause?.type !== 'workflow_child') {
+    if (resolution && (
+      run.pause?.type !== 'workflow_child' &&
+      run.pause?.type !== 'workflow_timer' &&
+      run.pause?.type !== 'workflow_event'
+    )) {
       throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
     }
     const session = await runStore.getSession(run.sessionId);
@@ -2085,7 +2857,169 @@ export function createRuntime({
     if (!acquired) throw new FevexRunError('RUN_CONFLICT', `Run "${runId}" is leased`, runId);
 
     try {
-      const childRun = await resumeAgent(run.pause.childRunId, resolution, true);
+      if (!resolution) {
+        if (!recoveryActor?.id.trim()) {
+          throw new FevexRunError(
+            'RUN_NOT_RECOVERABLE',
+            'Recovery actor is required',
+            runId,
+          );
+        }
+        const controller = new AbortController();
+        const state: WorkflowExecutionState = {
+          run,
+          session,
+          request: {
+            input: checkpoint.input,
+            sessionId: session.id,
+            context: checkpoint.context,
+            limits: checkpoint.limits,
+            signal: controller.signal,
+          },
+          controller,
+          eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+          checkpoint,
+          advancing: false,
+          leaseOwner: ownerId,
+          commitQueue: Promise.resolve(),
+          recoveryActor,
+        };
+        const recovered = createCoordinatorEvent(
+          state,
+          'workflow.run.recovered',
+          { actorId: recoveryActor.id },
+          'team.run.recovered',
+        );
+        await commit(state, { checkpoint, events: [recovered] });
+        state.initialEvents = [recovered];
+        activeWorkflowRuns.set(runId, state);
+        activeSessions.add(session.id);
+        startLease(state, runStore);
+        void drainWorkflowExecution(name, state, false).catch(() => {});
+        return structuredClone(run) as CoordinatorRun<TOutput>;
+      }
+      const workflowPause = run.pause;
+      if (
+        !workflowPause ||
+        (
+          workflowPause.type !== 'workflow_child' &&
+          workflowPause.type !== 'workflow_timer' &&
+          workflowPause.type !== 'workflow_event'
+        )
+      ) {
+        throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+      }
+      if (workflowPause.type === 'workflow_timer' || workflowPause.type === 'workflow_event') {
+        const pause = workflowPause;
+        if (pause.type === 'workflow_timer') {
+          if (resolution.type !== 'timer') {
+            throw new FevexRunError('RUN_NOT_RESUMABLE', 'Timer resolution is required', runId);
+          }
+          if (Date.now() < Date.parse(pause.resumeAt)) {
+            throw new FevexRunError('RUN_NOT_RESUMABLE', 'Workflow timer has not elapsed', runId);
+          }
+        } else {
+          if (resolution.type !== 'event' || resolution.eventName !== pause.eventName) {
+            throw new FevexRunError('RUN_NOT_RESUMABLE', 'Workflow event does not match', runId);
+          }
+        }
+        const waiting = checkpoint.steps[pause.stepId];
+        if (waiting?.type !== 'wait' || waiting.status !== 'running') {
+          throw new FevexRunError('RUN_NOT_RESUMABLE', 'Workflow wait is unavailable', runId);
+        }
+        let eventPayload: JsonValue | undefined;
+        const receivedAt = new Date().toISOString();
+        if (resolution.type === 'event') {
+          const eventDefinition = workflow.events?.[resolution.eventName];
+          if (!eventDefinition) {
+            throw new FevexRunError(
+              'RUN_DEFINITION_CHANGED',
+              `Workflow event "${resolution.eventName}" is unavailable`,
+              runId,
+            );
+          }
+          if (waiting.wait.type !== 'event') {
+            throw new FevexRunError('RUN_NOT_RESUMABLE', 'Workflow wait is unavailable', runId);
+          }
+          if (waiting.wait.requireActor && !resolution.actor?.id?.trim()) {
+            throw new FevexRunError('APPROVAL_INVALID', 'Workflow event actor is required', runId);
+          }
+          const validatedPayload =
+            eventDefinition.payloadSchema === undefined
+              ? resolution.payload
+              : await validateSchema(
+                  eventDefinition.payloadSchema,
+                  resolution.payload,
+                  `Payload for workflow event "${resolution.eventName}" does not match payloadSchema`,
+                );
+          if (validatedPayload !== undefined) {
+            eventPayload = toJsonValue(
+              validatedPayload,
+              'Workflow event payload must be JSON-serializable',
+            );
+          }
+        }
+        const controller = new AbortController();
+        const state: WorkflowExecutionState = {
+          run,
+          session,
+          request: {
+            input: checkpoint.input,
+            sessionId: session.id,
+            context: checkpoint.context,
+            limits: checkpoint.limits,
+            signal: controller.signal,
+          },
+          controller,
+          eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+          checkpoint,
+          advancing: false,
+          leaseOwner: ownerId,
+          commitQueue: Promise.resolve(),
+        };
+        run.status = 'running';
+        run.pause = undefined;
+        const resumed = createCoordinatorEvent(
+          state,
+          'workflow.run.resumed',
+          undefined,
+          'team.run.resumed',
+        );
+        const completed = createEvent(state, 'workflow.wait.completed', {
+          stepId: pause.stepId,
+          kind: waiting.wait.type,
+          ...(eventPayload === undefined ? {} : { payload: eventPayload }),
+          ...(resolution.type === 'event' && resolution.actor
+            ? { actorId: resolution.actor.id }
+            : {}),
+          ...(resolution.type === 'event' ? { receivedAt } : {}),
+        }) as AgentEvent;
+        await commitWorkflow(
+          state,
+          () => {
+            state.checkpoint.steps[pause.stepId] = {
+              type: 'wait',
+              status: 'completed',
+              wait: waiting.wait,
+              ...(eventPayload === undefined ? {} : { payload: eventPayload }),
+              ...(resolution.type === 'event' && resolution.actor
+                ? { actor: resolution.actor }
+                : {}),
+              ...(resolution.type === 'event' ? { receivedAt } : {}),
+            };
+          },
+          [resumed, completed],
+        );
+        activeWorkflowRuns.set(runId, state);
+        activeSessions.add(session.id);
+        startLease(state, runStore);
+        void drainWorkflowExecution(name, state, false).catch(() => {});
+        return structuredClone(run) as CoordinatorRun<TOutput>;
+      }
+      if (resolution.type === 'timer' || resolution.type === 'event') {
+        throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
+      }
+      const childRun = await resumeAgent(workflowPause.childRunId, resolution, true);
       const controller = new AbortController();
       const state: WorkflowExecutionState = {
         run,
@@ -2093,8 +3027,9 @@ export function createRuntime({
         request: {
           input: checkpoint.input,
           sessionId: session.id,
-          context: checkpoint.context,
-          signal: controller.signal,
+            context: checkpoint.context,
+            limits: checkpoint.limits,
+            signal: controller.signal,
         },
         controller,
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
@@ -2107,22 +3042,32 @@ export function createRuntime({
         run.status = 'cancelled';
         run.pause = undefined;
         run.error = childRun.error ?? 'aborted';
-        const cancelled = createEvent(state, 'workflow.run.cancelled', {
-          reason: childRun.error === 'approval_rejected' ? 'approval_rejected' : 'aborted',
-        }) as AgentEvent;
+        const reason =
+          childRun.error === 'approval_rejected' ? 'approval_rejected' : 'aborted';
+        const cancelled = createCoordinatorEvent(
+          state,
+          'workflow.run.cancelled',
+          { reason },
+          'team.run.cancelled',
+        );
         await commit(state, { checkpoint: null, events: [cancelled] });
         await releaseWorkflowExecution(state);
-        return structuredClone(run) as WorkflowRun<TOutput>;
+        return structuredClone(run) as CoordinatorRun<TOutput>;
       }
       run.status = 'running';
       run.pause = undefined;
-      const resumed = createEvent(state, 'workflow.run.resumed', undefined) as AgentEvent;
+      const resumed = createCoordinatorEvent(
+        state,
+        'workflow.run.resumed',
+        undefined,
+        'team.run.resumed',
+      );
       await commit(state, { checkpoint, events: [resumed] });
       activeWorkflowRuns.set(runId, state);
       activeSessions.add(session.id);
       startLease(state, runStore);
-      void drainWorkflowExecution(run.workflowName, state, false).catch(() => {});
-      return structuredClone(run) as WorkflowRun<TOutput>;
+      void drainWorkflowExecution(name, state, false).catch(() => {});
+      return structuredClone(run) as CoordinatorRun<TOutput>;
     } catch (error) {
       await runStore.releaseLease(runId, ownerId).catch(() => {});
       throw error;
@@ -2134,8 +3079,85 @@ export function createRuntime({
     resolution: ResumeRunResolution,
   ): Promise<RunRecord<TOutput>> => {
     const run = await runStore.getRun<RunRecord>(runId);
-    if (run && isWorkflowRun(run)) return resumeWorkflow<TOutput>(runId, resolution);
+    if (run && isCoordinatorRun(run)) return resumeWorkflow<TOutput>(runId, resolution);
     return resumeAgent<TOutput>(runId, resolution);
+  };
+
+  const recoverRun = async <TOutput>(
+    runId: string,
+    actor: { id: string; type?: string },
+  ): Promise<RunRecord<TOutput>> => {
+    const run = await runStore.getRun<RunRecord>(runId);
+    if (!run) {
+      throw new FevexRunError(
+        'RUN_NOT_RECOVERABLE',
+        `Run "${runId}" cannot be recovered`,
+        runId,
+      );
+    }
+    if (isCoordinatorRun(run)) return resumeWorkflow<TOutput>(runId, undefined, actor);
+    return resumeAgent<TOutput>(runId, undefined, false, actor);
+  };
+
+  const cancelStoredAgent = async (runId: string): Promise<boolean> => {
+    const active = activeRuns.get(runId);
+    if (active && !active.request.signal.aborted) {
+      active.controller.abort(new DOMException('Run cancelled', 'AbortError'));
+      if (!active.advancing) {
+        await cancelExecution(active);
+        return true;
+      }
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const current = await runStore.getRun(runId);
+        if (
+          current?.status === 'cancelled'
+          || current?.status === 'completed'
+          || current?.status === 'failed'
+        ) {
+          return true;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+      return false;
+    }
+    if (!isDurableRunStore(runStore)) return false;
+    const run = await runStore.getRun<AgentRun>(runId);
+    if (!run) return false;
+    if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+      return true;
+    }
+    const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+    const acquired = await runStore.acquireLease({
+      runId,
+      ownerId,
+      expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+    });
+    if (!acquired) return false;
+    try {
+      const session = await runStore.getSession(run.sessionId);
+      if (!session) return false;
+      const controller = new AbortController();
+      const state: ExecutionState = {
+        run,
+        session,
+        request: { input: '', sessionId: session.id, signal: controller.signal },
+        controller,
+        eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+        advancing: false,
+        leaseOwner: ownerId,
+      };
+      run.status = 'cancelled';
+      run.pause = undefined;
+      run.error = 'aborted';
+      const cancelled = createEvent(state, 'run.cancelled', { reason: 'aborted' }) as AgentEvent;
+      await commit(state, { checkpoint: null, events: [cancelled] });
+      return true;
+    } catch (error) {
+      if (error instanceof FevexRunError && error.code === 'RUN_CONFLICT') return false;
+      throw error;
+    } finally {
+      await runStore.releaseLease(runId, ownerId).catch(() => {});
+    }
   };
 
   return {
@@ -2205,6 +3227,61 @@ export function createRuntime({
       const state = await prepareWorkflowExecution(name, request);
       return (await drainWorkflowExecution(name, state, true)) as RunResult<TOutput>;
     },
+    async startTeam<TInput = unknown, TOutput = unknown>(
+      name: string,
+      request: RunRequest<TInput, TOutput>,
+    ) {
+      const state = await prepareWorkflowExecution(name, request, 'team');
+      void drainWorkflowExecution(name, state, false).catch(() => {});
+      return structuredClone(state.run) as TeamRun<TOutput>;
+    },
+    async runTeam<TInput = unknown, TOutput = unknown>(
+      name: string,
+      request: RunRequest<TInput, TOutput>,
+    ) {
+      const state = await prepareWorkflowExecution(name, request, 'team');
+      return (await drainWorkflowExecution(name, state, true)) as RunResult<TOutput>;
+    },
+    streamTeam<TInput = unknown, TOutput = unknown>(
+      name: string,
+      request: RunRequest<TInput, TOutput>,
+    ) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          const state = await prepareWorkflowExecution(name, request, 'team');
+          const execution = executeWorkflow(name, state);
+          let finished = false;
+          try {
+            while (true) {
+              const next = await nextWorkflowEvent(state, execution);
+              if (next.done) {
+                finished = true;
+                return;
+              }
+              yield next.value;
+            }
+          } finally {
+            if (!finished && state.run.status === 'running') {
+              state.controller.abort(new DOMException('Stream abandoned', 'AbortError'));
+              try {
+                while (state.run.status === 'running') {
+                  const next = await nextWorkflowEvent(state, execution);
+                  if (next.done) break;
+                }
+              } catch {
+                // The coordinator persists its cancellation event.
+              }
+              if (state.run.status === 'running') await cancelWorkflowExecution(state);
+            }
+            await execution.return(undefined);
+          }
+        },
+      };
+    },
+    async getTeamRun<TOutput = unknown>(runId: string) {
+      const run = await runStore.getRun<RunRecord<TOutput>>(runId);
+      return run?.kind === 'team' ? run : undefined;
+    },
     getRun<TOutput = unknown>(runId: string) {
       return runStore.getRun<RunRecord<TOutput>>(runId);
     },
@@ -2225,28 +3302,59 @@ export function createRuntime({
         return true;
       }
       const run = await runStore.getRun<RunRecord>(runId);
-      if (run?.status !== 'paused') return false;
+      if (!run || (run.status !== 'paused' && run.status !== 'running')) return false;
       if (!isDurableRunStore(runStore)) return false;
       const session = await runStore.getSession(run.sessionId);
       if (!session) return false;
-      if (isWorkflowRun(run)) {
-        const checkpoint = await runStore.getCheckpoint<WorkflowCheckpoint>(runId);
+      if (isCoordinatorRun(run)) {
+        const checkpoint = await runStore.getCheckpoint<CoordinatorCheckpoint>(runId);
         if (!checkpoint) return false;
-        const state: WorkflowExecutionState = {
-          run,
-          session,
-          request: { input: checkpoint.input, sessionId: session.id, signal: new AbortController().signal },
-          controller: new AbortController(),
-          eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
-          checkpoint,
-          advancing: false,
-          commitQueue: Promise.resolve(),
-        };
-        run.status = 'cancelled';
-        run.pause = undefined;
-        run.error = 'aborted';
-        const cancelled = createEvent(state, 'workflow.run.cancelled', { reason: 'aborted' }) as AgentEvent;
+        const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+        const acquired = await runStore.acquireLease({
+          runId,
+          ownerId,
+          expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+        });
+        if (!acquired) return false;
         try {
+          const childRunIds = Object.values(checkpoint.steps)
+            .filter(
+              (record): record is Extract<
+                WorkflowStepRecord,
+                { type: 'agent'; status: 'running' }
+              > => record.type === 'agent' && record.status === 'running',
+            )
+            .map(({ childRunId }) => childRunId);
+          for (const childRunId of childRunIds) {
+            if (!(await cancelStoredAgent(childRunId))) return false;
+          }
+          const state: WorkflowExecutionState = {
+            run,
+            session,
+            request: {
+              input: checkpoint.input,
+              sessionId: session.id,
+              context: checkpoint.context,
+              limits: checkpoint.limits,
+              signal: new AbortController().signal,
+            },
+            controller: new AbortController(),
+            eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+            checkpoint,
+            advancing: false,
+            leaseOwner: ownerId,
+            commitQueue: Promise.resolve(),
+          };
+          run.status = 'cancelled';
+          run.pause = undefined;
+          run.error = 'aborted';
+          run.usage = checkpoint.budget?.usage;
+          const cancelled = createCoordinatorEvent(
+            state,
+            'workflow.run.cancelled',
+            { reason: 'aborted' },
+            'team.run.cancelled',
+          );
           await commit(state, { checkpoint: null, events: [cancelled] });
           return true;
         } catch (error) {
@@ -2257,35 +3365,20 @@ export function createRuntime({
           )
             return false;
           throw error;
+        } finally {
+          await runStore.releaseLease(runId, ownerId).catch(() => {});
         }
       }
-      const state: ExecutionState = {
-        run: run as AgentRun,
-        session,
-        request: { input: '', sessionId: session.id, signal: new AbortController().signal },
-        controller: new AbortController(),
-        eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
-        advancing: false,
-      };
-      run.status = 'cancelled';
-      run.pause = undefined;
-      run.error = 'aborted';
-      const cancelled = createEvent(state, 'run.cancelled', { reason: 'aborted' }) as AgentEvent;
-      try {
-        await commit(state, { checkpoint: null, events: [cancelled] });
-        return true;
-      } catch (error) {
-        if (
-          error instanceof FevexRunError &&
-          error.code === 'RUN_CONFLICT' &&
-          (await runStore.getRun(runId))?.status !== 'paused'
-        )
-          return false;
-        throw error;
-      }
+      return cancelStoredAgent(runId);
     },
     resumeRun<TOutput = unknown>(runId: string, resolution: ResumeRunResolution) {
       return resumeRun<TOutput>(runId, resolution);
+    },
+    recoverRun<TOutput = unknown>(
+      runId: string,
+      options: { actor: { id: string; type?: string } },
+    ) {
+      return recoverRun<TOutput>(runId, options.actor);
     },
     async compactSession(sessionId, summary) {
       if (typeof summary !== 'string' || !summary.trim()) {

@@ -5,7 +5,9 @@
     "moduleResolution": "Node",
     "baseUrl": "../..",
     "paths": {
-      "@fevex/core/http": ["packages/fevex/src/http/index.ts"]
+      "@fevex/core/http": ["packages/fevex/src/http/index.ts"],
+      "@fevex/core/runtime": ["packages/fevex/src/runtime/index.ts"],
+      "@fevex/core/testing": ["packages/fevex/src/testing/index.ts"]
     },
     "strict": true,
     "skipLibCheck": true,

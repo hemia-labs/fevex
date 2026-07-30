@@ -6,9 +6,13 @@ import {
   createFevex,
   defineAgent,
   defineTool,
+  defineTeam,
+  defineWorkflow,
   RunPausedError,
+  type JsonObject,
   type ModelGateway,
 } from '@fevex/core';
+import type { WorkflowCheckpoint } from '@fevex/core/runtime';
 import { testRunStore } from '@fevex/core/testing';
 import { createSQLiteRunStore, type SQLiteRunStore } from './index';
 
@@ -192,6 +196,141 @@ describe('SQLiteRunStore', () => {
         await waitForCompletion(secondStore, run.id);
         expect(executions).toBe(0);
         expect((await secondStore.getRun(run.id))?.output).toBe('done');
+      } finally {
+        await secondStore.close();
+      }
+    } finally {
+      await firstStore.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('persists workflow waits, compensation state and inherited budget across reopen', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'fevex-sqlite-'));
+    const filename = join(directory, 'runs.db');
+    const firstStore = createSQLiteRunStore({ filename });
+    const workflow = defineWorkflow({
+      name: 'durable-wait-flow',
+      limits: { maxOutputTokens: 5 },
+      events: { release: {} },
+      async run(step, input) {
+        await step.agent('write', 'writer', { input }, { compensate() {} });
+        const event = await step.waitForEvent<JsonObject>('release', 'release');
+        return (await step.agent('finish', 'finisher', { input: event.payload })).output;
+      },
+    });
+    const makeRuntime = (store: SQLiteRunStore) =>
+      createFevex({
+        models: {
+          default: {
+            stream: async function* (input) {
+              const output = input.messages[0]!.content;
+              yield { type: 'output.delta' as const, delta: output };
+              yield {
+                type: 'completed' as const,
+                result: { output, usage: { inputTokens: 1, outputTokens: 2 } },
+              };
+            },
+          },
+        },
+        agents: [
+          defineAgent({ name: 'writer', instructions: 'written' }),
+          defineAgent({ name: 'finisher', instructions: 'finished' }),
+        ],
+        workflows: [workflow],
+        runStore: store,
+      });
+
+    try {
+      let paused!: RunPausedError;
+      await makeRuntime(firstStore).runWorkflow('durable-wait-flow', { input: 'go' }).catch(
+        (error) => {
+          paused = error as RunPausedError;
+        },
+      );
+      expect(paused.pause).toMatchObject({ type: 'workflow_event', eventName: 'release' });
+      const checkpoint = (await firstStore.getCheckpoint<WorkflowCheckpoint>(paused.runId))!;
+      expect(checkpoint.steps.write).toMatchObject({
+        type: 'agent',
+        status: 'completed',
+        compensation: { status: 'pending' },
+      });
+      expect(checkpoint.steps.release).toMatchObject({
+        type: 'wait',
+        status: 'running',
+        wait: { type: 'event', eventName: 'release' },
+      });
+      expect(checkpoint.budget).toMatchObject({
+        usage: { inputTokens: 1, outputTokens: 2 },
+        steps: 1,
+      });
+      expect(await firstStore.getRun(paused.runId)).toMatchObject({
+        status: 'paused',
+        usage: { inputTokens: 1, outputTokens: 2 },
+      });
+      await firstStore.close();
+
+      const secondStore = createSQLiteRunStore({ filename });
+      try {
+        await makeRuntime(secondStore).resumeRun(paused.runId, {
+          type: 'event',
+          eventName: 'release',
+          payload: { ok: true },
+        });
+        await waitForCompletion(secondStore, paused.runId);
+        expect(await secondStore.getRun(paused.runId)).toMatchObject({
+          status: 'completed',
+          output: 'finished',
+        });
+      } finally {
+        await secondStore.close();
+      }
+    } finally {
+      await firstStore.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('persists team runs without a schema migration', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'fevex-sqlite-'));
+    const filename = join(directory, 'runs.db');
+    const firstStore = createSQLiteRunStore({ filename });
+    const team = defineTeam({
+      name: 'sqlite-team',
+      supervisor: 'worker',
+      members: [],
+      async run(step, input) {
+        return (await step.delegate('work', { agent: 'worker', task: input })).output;
+      },
+    });
+    try {
+      const runtime = createFevex({
+        models: {
+          default: {
+            async *stream() {
+              yield { type: 'output.delta' as const, delta: 'done' };
+              yield { type: 'completed' as const, result: { output: 'done' } };
+            },
+          },
+        },
+        agents: [defineAgent({ name: 'worker', instructions: 'Work.' })],
+        teams: [team],
+        runStore: firstStore,
+      });
+      const result = await runtime.runTeam('sqlite-team', { input: 'go' });
+      await firstStore.close();
+
+      const secondStore = createSQLiteRunStore({ filename });
+      try {
+        expect(await secondStore.getRun(result.runId)).toMatchObject({
+          kind: 'team',
+          teamName: 'sqlite-team',
+          status: 'completed',
+          output: 'done',
+        });
+        expect((await secondStore.listEvents(result.runId)).at(-1)?.type).toBe(
+          'team.run.completed',
+        );
       } finally {
         await secondStore.close();
       }

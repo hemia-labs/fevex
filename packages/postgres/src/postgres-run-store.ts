@@ -4,6 +4,7 @@ import type {
   AgentRun,
   DurableRunStore,
   ExecutionCommit,
+  ExecutionCreate,
   ListEventsOptions,
   RunRecord,
   RunCheckpoint,
@@ -135,6 +136,48 @@ class PgRunStore implements PostgresRunStore {
       [runId, toolCallId],
     );
     return result.rows[0] ? clone(result.rows[0].data) : undefined;
+  }
+
+  async createExecution(create: ExecutionCreate): Promise<boolean> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (create.session) await this.#upsertSession(client, create.session);
+      const run = { ...clone(create.run), revision: 1 };
+      const inserted = await client.query(
+        `INSERT INTO fevex.runs (id, session_id, revision, data)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+        [run.id, run.sessionId, run.revision, run],
+      );
+      if (inserted.rowCount !== 1) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      await client.query(
+        'INSERT INTO fevex.checkpoints (run_id, data) VALUES ($1, $2)',
+        [run.id, create.checkpoint],
+      );
+      for (const event of create.events) {
+        await client.query(
+          'INSERT INTO fevex.events (id, run_id, sequence, data) VALUES ($1, $2, $3, $4)',
+          [event.id, event.runId, event.sequence, event],
+        );
+      }
+      await client.query(
+        'INSERT INTO fevex.leases (run_id, owner_id, expires_at) VALUES ($1, $2, $3)',
+        [create.lease.runId, create.lease.ownerId, create.lease.expiresAt],
+      );
+      await client.query('COMMIT');
+      create.run.revision = 1;
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async commitExecution(commit: ExecutionCommit): Promise<boolean> {

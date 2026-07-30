@@ -61,6 +61,7 @@ describe('createMcpToolProvider', () => {
       },
     });
 
+    expect(provider.kind).toBe('mcp');
     await expect(testToolProvider(provider, {
       allowedTool: 'lookup',
       disallowedTool: 'delete',

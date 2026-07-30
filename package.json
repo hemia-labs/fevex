@@ -10,10 +10,11 @@
   ],
   "scripts": {
     "dev": "bun --filter @fevex/web dev",
+    "dev:mcp": "bun run --cwd examples/nest-mcp dev",
     "dev:nest": "bun run --cwd examples/nest-api dev",
     "dev:next": "bun run --cwd examples/next-playground dev",
     "build": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run build); fi; done",
-    "test": "set -e; for d in packages/*; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run test); fi; done; bun run --cwd examples/basic-agent start",
+    "test": "set -e; for d in packages/*; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run test); fi; done; bun run --cwd examples/nest-api test",
     "typecheck": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run typecheck); fi; done"
   },
   "devDependencies": {

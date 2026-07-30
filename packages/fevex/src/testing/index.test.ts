@@ -12,6 +12,7 @@ import {
   InMemoryMemoryStore,
   IntegrationError,
   RunPausedError,
+  type AgentEvent,
   validateFevexJsonSchemaProfile,
 } from '../index';
 import type { ModelGateway, ModelInput, ModelResult, ModelStreamEvent } from '../models';
@@ -667,7 +668,7 @@ describe('Fevex JSON Schema Profile V1', () => {
 describe('Connections', () => {
   test('runs a namespaced remote tool through the normal runtime', async () => {
     const calls: unknown[] = [];
-    const events: string[] = [];
+    const events: AgentEvent[] = [];
     const model = fakeModel(
       { toolCalls: [{ id: 'call-1', name: 'remote__lookup', input: { query: 'value' } }] },
       { output: 'done' },
@@ -687,6 +688,7 @@ describe('Connections', () => {
           name: 'remote',
           allowlist: ['lookup'],
           provider: {
+            kind: 'mcp',
             async listTools() {
               return [{
                 name: 'lookup',
@@ -702,7 +704,7 @@ describe('Connections', () => {
         }),
       ],
       onEvent(event) {
-        events.push(event.type);
+        events.push(event);
       },
     });
 
@@ -715,8 +717,25 @@ describe('Connections', () => {
       description: 'Lookup.',
       inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
     });
-    expect(events).toContain('tool.started');
-    expect(events).toContain('tool.completed');
+    expect(events.map(({ type }) => type)).toContain('tool.started');
+    expect(events.find(({ type }) => type === 'tool.started')?.payload).toMatchObject({
+      toolName: 'remote__lookup',
+      source: {
+        kind: 'connection',
+        provider: 'mcp',
+        connectionName: 'remote',
+        remoteToolName: 'lookup',
+      },
+    });
+    expect(events.find(({ type }) => type === 'tool.completed')?.payload).toMatchObject({
+      toolName: 'remote__lookup',
+      source: {
+        kind: 'connection',
+        provider: 'mcp',
+        connectionName: 'remote',
+        remoteToolName: 'lookup',
+      },
+    });
   });
 
   test('rejects connection tool collisions', () => {
@@ -752,7 +771,7 @@ describe('Connections', () => {
   });
 
   test('aborts remote tools with a safe timeout error', async () => {
-    const failed: string[] = [];
+    const failed: AgentEvent<'tool.failed'>[] = [];
     const app = createFevex({
       models: {
         test: fakeModel({
@@ -784,14 +803,74 @@ describe('Connections', () => {
         }),
       ],
       onEvent(event) {
-        if (event.type === 'tool.failed') failed.push(event.payload.error);
+        if (event.type === 'tool.failed') failed.push(event);
       },
     });
 
     await expect(app.runAgent('assistant', { input: 'hello' })).rejects.toThrow(
       'Connection tool call timed out',
     );
-    expect(failed).toEqual(['Connection tool call timed out']);
+    expect(failed.map(({ payload }) => payload.error)).toEqual(['Connection tool call timed out']);
+    expect(failed[0]?.payload).toMatchObject({
+      errorCode: 'CONNECTION_TIMEOUT',
+      retryable: true,
+      source: {
+        kind: 'connection',
+        provider: 'custom',
+        connectionName: 'remote',
+        remoteToolName: 'slow',
+      },
+    });
+  });
+
+  test('tags connection list failures before a tool starts', async () => {
+    const events: AgentEvent[] = [];
+    const app = createFevex({
+      models: { test: fakeModel({ output: 'unused' }) },
+      agents: [defineAgent({
+        name: 'assistant',
+        instructions: 'Help.',
+        model: 'test',
+        tools: ['remote__lookup'],
+      })],
+      connections: [
+        defineConnection({
+          name: 'remote',
+          allowlist: ['lookup'],
+          provider: {
+            kind: 'mcp',
+            async listTools() {
+              throw new IntegrationError(
+                'MCP_AUTH_REQUIRED',
+                'auth',
+                false,
+                'MCP server requires authentication',
+              );
+            },
+            async callTool() {
+              return null;
+            },
+          },
+        }),
+      ],
+    });
+
+    await expect((async () => {
+      for await (const event of app.streamAgent('assistant', { input: 'hello' })) {
+        events.push(event);
+      }
+    })()).rejects.toThrow('MCP server requires authentication');
+    expect(events.find(({ type }) => type === 'run.failed')?.payload).toMatchObject({
+      error: 'MCP server requires authentication',
+      errorCode: 'MCP_AUTH_REQUIRED',
+      retryable: false,
+      source: {
+        kind: 'connection',
+        provider: 'mcp',
+        connectionName: 'remote',
+        remoteToolName: 'lookup',
+      },
+    });
   });
 });
 

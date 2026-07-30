@@ -6,36 +6,65 @@ import {
   ChevronRight,
   Check,
   Circle,
+  CircleDashed,
+  CircleSlash2,
+  CircleX,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Plug,
   Sparkles,
   Square,
   Trash2,
-  User,
+  Wrench,
 } from 'lucide-react';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { AgentEvent, RunRecord } from '@fevex/core';
+import type { AgentEvent, JsonValue, RunRecord } from '@fevex/core';
 import { createFevexHttpClient } from '@fevex/core/http';
+import { Button } from '@/components/ui/button';
+import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
+import { Spinner } from '@/components/ui/spinner';
 
 type Message = {
   role: 'assistant' | 'user';
-  content: string;
+  content: JsonValue;
   tools?: ToolActivity[];
+  drafts?: DraftActivity[];
   startedAt?: number;
   completedAt?: number;
   runId?: string;
   sessionId?: string;
   usage?: Record<string, number>;
   events?: AgentEvent[];
-  status?: 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 };
 
 type ToolActivity = {
   id: string;
   name: string;
-  status: 'running' | 'done' | 'failed' | 'cancelled';
+  source?: string;
+  remoteName?: string;
+  kind?: string;
+  status: 'running' | 'paused' | 'done' | 'failed' | 'cancelled';
   startedAt: number;
   completedAt?: number;
+};
+
+type DraftActivity = {
+  id: string;
+  name: string;
+  content: string;
 };
 
 type RunnableSummary = {
@@ -48,12 +77,14 @@ type RunnableSummary = {
 const initialMessages: Message[] = [
   {
     role: 'assistant',
-    content: 'Loading agents and workflows from the Nest API.',
+    content: 'Connecting to the local Nest API...',
   },
 ];
 
 const apiUrl = (process.env.NEXT_PUBLIC_NEST_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 const client = createFevexHttpClient({ baseUrl: apiUrl });
+const minRightPanelWidth = 260;
+const collapseRightPanelWidth = 180;
 
 export default function Home() {
   const [runnables, setRunnables] = useState<RunnableSummary[]>([]);
@@ -63,21 +94,26 @@ export default function Home() {
   const [isLoadingRunnables, setIsLoadingRunnables] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [debug, setDebug] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
+  const [rightPanelWidth, setRightPanelWidth] = useState(300);
   const [sessionId, setSessionId] = useState<string>();
   const [activeRunId, setActiveRunId] = useState<string>();
   const [now, setNow] = useState(Date.now());
   const runControllerRef = useRef<AbortController>(null);
-  const conversationRef = useRef<HTMLElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLElement>(null);
+  const rightPanelRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const selectedRunnable = runnables.find((item) => runnableId(item) === selectedRunnableId);
   const AgentIcon = selectedRunnable?.kind === 'workflow' ? Sparkles : Circle;
-  const status = isLoadingRunnables ? 'Connecting' : runnables.length ? 'Connected' : 'Disconnected';
 
   useEffect(() => {
     if (!stickToBottomRef.current) return;
     const frame = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+      // el composer es sticky dentro del scroller, así que llegar al fondo deja
+      // el último mensaje justo encima de él
+      const scroller = scrollerRef.current;
+      if (scroller) scroller.scrollTop = scroller.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
   }, [messages]);
@@ -115,7 +151,7 @@ export default function Home() {
         setSelectedRunnableId(nextRunnables[0] ? runnableId(nextRunnables[0]) : '');
         setMessages([{
           role: 'assistant',
-          content: nextRunnables.length ? 'Ready.' : 'No agents or workflows are available.',
+          content: nextRunnables.length ? 'Ready when you are.' : 'No agents or workflows are available.',
         }]);
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -176,7 +212,17 @@ export default function Home() {
         recordAssistantEvent(agentEvent);
 
         if (agentEvent.type === 'model.output.delta') {
-          appendAssistantDelta(readPayloadText(agentEvent.payload, 'delta'));
+          const delta = readPayloadText(agentEvent.payload, 'delta');
+          const workflowStepId = readPayloadText(agentEvent.payload, 'workflowStepId');
+          if (workflowStepId && isResearchStep(selectedRunnable.name, workflowStepId)) {
+            appendAssistantDraftDelta(
+              workflowStepId,
+              workflowDraftName(agentEvent.payload),
+              delta,
+            );
+          } else {
+            appendAssistantDelta(delta);
+          }
         }
         if (agentEvent.type === 'tool.started') {
           setAssistantTool(
@@ -184,6 +230,7 @@ export default function Home() {
             readPayloadText(agentEvent.payload, 'toolName'),
             'running',
             eventTime(agentEvent),
+            toolSourceInfo(agentEvent.payload),
           );
         }
         if (agentEvent.type === 'tool.completed') {
@@ -192,6 +239,7 @@ export default function Home() {
             readPayloadText(agentEvent.payload, 'toolName'),
             'done',
             eventTime(agentEvent),
+            toolSourceInfo(agentEvent.payload),
           );
         }
         if (agentEvent.type === 'tool.failed') {
@@ -200,6 +248,7 @@ export default function Home() {
             readPayloadText(agentEvent.payload, 'toolName'),
             'failed',
             eventTime(agentEvent),
+            toolSourceInfo(agentEvent.payload),
           );
         }
         if (agentEvent.type === 'workflow.step.started') {
@@ -208,6 +257,7 @@ export default function Home() {
             workflowStepName(agentEvent.payload),
             'running',
             eventTime(agentEvent),
+            { label: 'Workflow', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
         }
         if (agentEvent.type === 'workflow.step.completed') {
@@ -216,6 +266,7 @@ export default function Home() {
             workflowStepName(agentEvent.payload),
             'done',
             eventTime(agentEvent),
+            { label: 'Workflow', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
         }
         if (agentEvent.type === 'workflow.step.failed') {
@@ -224,7 +275,17 @@ export default function Home() {
             workflowStepName(agentEvent.payload),
             'failed',
             eventTime(agentEvent),
+            { label: 'Workflow', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
+        }
+        if (agentEvent.type === 'approval.requested') {
+          appendAssistantDelta(
+            `\n\nApproval required (\`${readPayloadText(agentEvent.payload, 'approvalId')}\`). Resume this run through the HTTP API.`,
+          );
+        }
+        if (agentEvent.type === 'run.paused' || agentEvent.type === 'workflow.run.paused') {
+          terminal = true;
+          completeAssistant('paused', eventTime(agentEvent));
         }
         if (agentEvent.type === 'run.failed' || agentEvent.type === 'workflow.run.failed') {
           terminal = true;
@@ -237,7 +298,7 @@ export default function Home() {
         }
         if (agentEvent.type === 'run.completed' || agentEvent.type === 'workflow.run.completed') {
           terminal = true;
-          setAssistantAnswer(readCompletedAnswer(agentEvent.payload));
+          setAssistantAnswer(agentEvent.payload.output);
           completeAssistant(
             'completed',
             eventTime(agentEvent),
@@ -272,10 +333,34 @@ export default function Home() {
       const next = [...current];
       const last = next[next.length - 1];
       if (last?.role === 'assistant') {
-        next[next.length - 1] = { ...last, content: last.content + delta };
+        next[next.length - 1] = {
+          ...last,
+          content: typeof last.content === 'string' ? last.content + delta : delta,
+        };
       } else {
         next.push({ role: 'assistant', content: delta });
       }
+      return next;
+    });
+  }
+
+  function appendAssistantDraftDelta(id: string, name: string, delta: string) {
+    if (!id || !delta) return;
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      const drafts = [...(last.drafts ?? [])];
+      const index = drafts.findIndex((draft) => draft.id === id);
+      const previous = drafts[index];
+      const draft = {
+        id,
+        name,
+        content: `${previous?.content ?? ''}${delta}`,
+      };
+      if (index === -1) drafts.push(draft);
+      else drafts[index] = draft;
+      next[next.length - 1] = { ...last, drafts };
       return next;
     });
   }
@@ -286,8 +371,9 @@ export default function Home() {
       const next = [...current];
       const last = next[next.length - 1];
       if (last?.role !== 'assistant') return current;
-      const separator = last.content.trim() ? '\n\n' : '';
-      next[next.length - 1] = { ...last, content: `${last.content}${separator}${error}` };
+      const content = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+      const separator = content.trim() ? '\n\n' : '';
+      next[next.length - 1] = { ...last, content: `${content}${separator}${error}` };
       return next;
     });
   }
@@ -323,13 +409,11 @@ export default function Home() {
     });
   }
 
-  function setAssistantAnswer(content: string) {
-    if (!content) return;
+  function setAssistantAnswer(content: JsonValue) {
     setMessages((current) => {
       const next = [...current];
       const last = next[next.length - 1];
       if (last?.role !== 'assistant') return current;
-      if (last.content.trim() && readJsonAnswer(last.content) !== content) return current;
       next[next.length - 1] = { ...last, content };
       return next;
     });
@@ -340,6 +424,7 @@ export default function Home() {
     name: string,
     status: ToolActivity['status'],
     time: number,
+    source?: { label: string; remoteName: string; kind?: string },
   ) {
     if (!id || !name) return;
     setMessages((current) => {
@@ -352,6 +437,9 @@ export default function Home() {
       const tool = {
         id,
         name,
+        source: source?.label || previous?.source,
+        remoteName: source?.remoteName || previous?.remoteName,
+        kind: source?.kind || previous?.kind || 'tool',
         status,
         startedAt: previous?.startedAt ?? time,
         ...(status === 'running' ? {} : { completedAt: time }),
@@ -374,7 +462,13 @@ export default function Home() {
       if (last?.role !== 'assistant' || last.completedAt) return current;
       const completedAt = time;
       const unfinishedToolStatus =
-        status === 'completed' ? 'done' : status === 'cancelled' ? 'cancelled' : 'failed';
+        status === 'completed'
+          ? 'done'
+          : status === 'paused'
+            ? 'paused'
+            : status === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
       next[next.length - 1] = {
         ...last,
         status,
@@ -391,61 +485,94 @@ export default function Home() {
   }
 
   function updateStickToBottom() {
-    const conversation = conversationRef.current;
-    if (!conversation) return;
-    const distance = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     stickToBottomRef.current = distance < 64;
   }
 
   function resetConversation() {
-    setMessages([{ role: 'assistant', content: 'Ready.' }]);
+    setMessages([{ role: 'assistant', content: 'Ready when you are.' }]);
     setSessionId(undefined);
     setInput('');
   }
 
-  return (
-    <div className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-icon">
-            <Sparkles size={15} />
-          </span>
-          <div>
-            <strong>Fevex Playground</strong>
-            <span>Local environment</span>
-          </div>
-        </div>
-        <div className="toolbar">
-          <button
-            aria-label={`${debug ? 'Disable' : 'Enable'} debug mode`}
-            aria-pressed={debug}
-            className={`icon-button ${debug ? 'active' : ''}`}
-            onClick={() => setDebug((value) => !value)}
-            title={`${debug ? 'Disable' : 'Enable'} debug mode`}
-            type="button"
-          >
-            <Bug size={16} />
-          </button>
-          <button
-            aria-label="Clear conversation"
-            className="icon-button"
-            disabled={isRunning || (messages.length === 1 && !sessionId)}
-            onClick={resetConversation}
-            title="Clear conversation"
-            type="button"
-          >
-            <Trash2 size={16} />
-          </button>
-          <div className={`status ${status.toLowerCase()}`}>
-            <Circle fill="currentColor" size={8} strokeWidth={0} />
-            {status}
-          </div>
-        </div>
-      </header>
+  function toggleRightPanel() {
+    if (rightPanelCollapsed) {
+      setRightPanelWidth(defaultRightPanelWidth());
+      setRightPanelCollapsed(false);
+    } else {
+      setRightPanelCollapsed(true);
+    }
+  }
 
-      <div className="workspace">
-        <aside className="sidebar">
-          <p className="sidebar-title">Agents & workflows</p>
+  function startRightPanelResize(event: PointerEvent<HTMLDivElement>) {
+    const panel = rightPanelRef.current;
+    if (!panel) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panel.getBoundingClientRect().width;
+    let frame = 0;
+    let nextWidth = startWidth;
+    let rawWidth = startWidth;
+
+    const applyWidth = () => {
+      frame = 0;
+      panel.style.width = `${nextWidth}px`;
+    };
+    const resize = (moveEvent: globalThis.PointerEvent) => {
+      rawWidth = startWidth + startX - moveEvent.clientX;
+      nextWidth = clamp(rawWidth, minRightPanelWidth, maxRightPanelWidth());
+      if (!frame) frame = requestAnimationFrame(applyWidth);
+    };
+    const stop = () => {
+      if (frame) cancelAnimationFrame(frame);
+      document.body.classList.remove('resizing-right-panel');
+      if (rawWidth < collapseRightPanelWidth) {
+        panel.style.width = '';
+        setRightPanelCollapsed(true);
+      } else {
+        setRightPanelWidth(nextWidth);
+      }
+      window.removeEventListener('pointermove', resize);
+      window.removeEventListener('pointerup', stop);
+    };
+
+    document.body.classList.add('resizing-right-panel');
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', stop, { once: true });
+  }
+
+  function resizeRightPanelWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    setRightPanelWidth((width) =>
+      clamp(width + (event.key === 'ArrowLeft' ? 24 : -24), minRightPanelWidth, maxRightPanelWidth()),
+    );
+  }
+
+  return (
+    <div
+      className="shell"
+      data-right-panel-collapsed={rightPanelCollapsed}
+      data-sidebar-collapsed={sidebarCollapsed}
+    >
+        <aside className="sidebar" data-collapsed={sidebarCollapsed}>
+          <div className="sidebar-header">
+            <p className="sidebar-title">Examples</p>
+            <Button
+              aria-label={sidebarCollapsed ? 'Expand examples sidebar' : 'Collapse examples sidebar'}
+              aria-pressed={sidebarCollapsed}
+              className="sidebar-toggle"
+              size="icon"
+              variant="ghost"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+              title={sidebarCollapsed ? 'Expand examples sidebar' : 'Collapse examples sidebar'}
+              type="button"
+            >
+              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </Button>
+          </div>
           <nav className="agent-list" aria-label="Agents and workflows">
             {!runnables.length && (
               <p className="empty-state">{isLoadingRunnables ? 'Loading...' : 'No demos'}</p>
@@ -464,6 +591,7 @@ export default function Home() {
                     setSelectedRunnableId(id);
                     resetConversation();
                   }}
+                  title={`${item.label} - ${item.description}`}
                   type="button"
                 >
                   <span className="sidebar-icon">
@@ -471,7 +599,7 @@ export default function Home() {
                   </span>
                   <span>
                     <strong>{item.label}</strong>
-                    <small>{item.kind === 'workflow' ? 'Workflow' : 'Agent'} · {item.description}</small>
+                    <small>{item.kind === 'workflow' ? 'Workflow' : 'Agent'} / {item.description}</small>
                   </span>
                   <Check className="agent-check" size={14} />
                 </button>
@@ -480,32 +608,78 @@ export default function Home() {
           </nav>
         </aside>
 
-        <main className="playground">
-          <section
-            className="conversation"
-            aria-label="Run conversation"
-            aria-live="polite"
-            onScroll={updateStickToBottom}
-            ref={conversationRef}
-          >
+      <div className="app-frame">
+        <header className="topbar">
+          <div className="brand">
+            <span className="brand-icon">
+              <Sparkles size={15} />
+            </span>
+            <div>
+              <strong>Fevex</strong>
+              <span>Examples playground</span>
+            </div>
+          </div>
+          <div className="toolbar">
+            <Button
+              aria-label={`${debug ? 'Disable' : 'Enable'} debug mode`}
+              aria-pressed={debug}
+              className={`icon-button ${debug ? 'active' : ''}`}
+              size="icon"
+              variant="ghost"
+              onClick={() => setDebug((value) => !value)}
+              title={`${debug ? 'Disable' : 'Enable'} debug mode`}
+              type="button"
+            >
+              <Bug size={16} />
+            </Button>
+            <Button
+              aria-label="Clear conversation"
+              className="icon-button"
+              disabled={isRunning || (messages.length === 1 && !sessionId)}
+              size="icon"
+              variant="ghost"
+              onClick={resetConversation}
+              title="Clear conversation"
+              type="button"
+            >
+              <Trash2 size={16} />
+            </Button>
+            <Button
+              aria-label={rightPanelCollapsed ? 'Open environment panel' : 'Close environment panel'}
+              aria-pressed={!rightPanelCollapsed}
+              className={`icon-button ${rightPanelCollapsed ? '' : 'active'}`}
+              size="icon"
+              variant="ghost"
+              onClick={toggleRightPanel}
+              title={rightPanelCollapsed ? 'Open environment panel' : 'Close environment panel'}
+              type="button"
+            >
+              {rightPanelCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
+            </Button>
+          </div>
+        </header>
+
+        <main className="playground" onScroll={updateStickToBottom} ref={scrollerRef}>
+          <section className="conversation" aria-label="Run conversation" aria-live="polite">
             <div className="agent">
               <span className="avatar">
                 <AgentIcon size={17} />
               </span>
               <div>
                 <strong>{selectedRunnable?.label ?? 'No demo selected'}</strong>
-                <span>{selectedRunnable?.description ?? 'Start the Nest API to load demos.'}</span>
+                <span>{selectedRunnable?.description ?? 'Start the Nest API to load examples.'}</span>
               </div>
             </div>
 
             <div className="messages">
               {messages.map((message, index) => (
                 <article className={`message ${message.role}`} key={index}>
-                  <span className="avatar">
-                    {message.role === 'user' ? <User size={16} /> : <AgentIcon size={16} />}
-                  </span>
+                  {message.role === 'assistant' && (
+                    <span className="avatar">
+                      <AgentIcon size={16} />
+                    </span>
+                  )}
                   <div>
-                    <strong>{message.role === 'user' ? 'You' : selectedRunnable?.label ?? 'Agent'}</strong>
                     {message.role === 'assistant' && (
                       <RunActivityPanel debug={debug} message={message} now={now} />
                     )}
@@ -513,46 +687,85 @@ export default function Home() {
                   </div>
                 </article>
               ))}
-              <div ref={messagesEndRef} />
             </div>
           </section>
 
-          <form className="composer" onSubmit={submit}>
-            <label htmlFor="prompt">Prompt</label>
-            <textarea
-              id="prompt"
-              maxLength={4000}
-              disabled={isRunning}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder="Ask the selected demo anything..."
-              rows={2}
-              value={input}
-            />
-            <div className="composer-footer">
-              <span>
-                <AgentIcon size={14} />
-                {selectedRunnable?.name ?? 'none'}
-              </span>
-              <button
-                aria-label={isRunning ? 'Cancel run' : 'Run selected demo'}
-                className={isRunning ? 'cancel' : ''}
-                disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable}
-                onClick={isRunning ? () => void cancelActiveRun() : undefined}
-                title={isRunning ? 'Cancel run' : 'Run selected demo'}
-                type={isRunning ? 'button' : 'submit'}
-              >
-                {isRunning ? <Square fill="currentColor" size={14} /> : <ArrowUp size={17} />}
-              </button>
-            </div>
-          </form>
+          <div className="composer-dock">
+            <form className="composer" onSubmit={submit}>
+              <label htmlFor="prompt">Prompt</label>
+              <textarea
+                id="prompt"
+                maxLength={4000}
+                disabled={isRunning}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder="Message the selected example..."
+                rows={2}
+                value={input}
+              />
+              <div className="composer-footer">
+                <span>
+                  <AgentIcon size={14} />
+                  {selectedRunnable?.name ?? 'none'}
+                </span>
+                <Button
+                  aria-label={isRunning ? 'Cancel run' : 'Run selected demo'}
+                  className={isRunning ? 'cancel' : ''}
+                  disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable}
+                  size="icon"
+                  onClick={isRunning ? () => void cancelActiveRun() : undefined}
+                  title={isRunning ? 'Cancel run' : 'Run selected demo'}
+                  type={isRunning ? 'button' : 'submit'}
+                >
+                  {isRunning ? <Square fill="currentColor" size={14} /> : <ArrowUp size={17} />}
+                </Button>
+              </div>
+            </form>
+          </div>
         </main>
       </div>
+
+      <aside
+        className="right-panel"
+        data-collapsed={rightPanelCollapsed}
+        ref={rightPanelRef}
+        style={rightPanelCollapsed ? undefined : { width: rightPanelWidth }}
+      >
+        <div
+          aria-label="Resize environment panel"
+          aria-orientation="vertical"
+          className="right-panel-resize-handle"
+          onKeyDown={resizeRightPanelWithKeyboard}
+          onPointerDown={startRightPanelResize}
+          role="separator"
+          tabIndex={0}
+        />
+        <div className="right-panel-header">
+          <p>Entorno</p>
+        </div>
+        <div className="right-panel-list">
+          <EnvironmentRow icon={<Circle size={14} />} label="API" value={apiUrl} />
+          <EnvironmentRow icon={<AgentIcon size={14} />} label="Seleccionado" value={selectedRunnable?.label ?? 'Ninguno'} />
+          <EnvironmentRow icon={<Sparkles size={14} />} label="Tipo" value={selectedRunnable?.kind ?? '-'} />
+          <EnvironmentRow icon={<Bug size={14} />} label="Debug" value={debug ? 'Activo' : 'Inactivo'} />
+          <EnvironmentRow icon={<Check size={14} />} label="Run" value={activeRunId ?? 'Sin run activo'} />
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function EnvironmentRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="right-panel-row">
+      <span>{icon}</span>
+      <strong>{label}</strong>
+      <small>{value}</small>
     </div>
   );
 }
@@ -569,43 +782,161 @@ function RunActivityPanel({
   if (!message.startedAt) return null;
   const running = !message.completedAt;
   const elapsedMs = (message.completedAt ?? now) - message.startedAt;
-  const stage = running
-    ? currentStage(message)
-    : message.status === 'cancelled'
-      ? 'Cancelado'
-      : message.status === 'failed'
-        ? 'Falló'
-        : 'Procesado';
+  const tools = message.tools ?? [];
+  const drafts = message.drafts?.filter((draft) => draft.content.trim()) ?? [];
+  const hasDetails = tools.length > 0 || drafts.length > 0 || debug;
+
+  const header = (
+    <>
+      <MarkerIcon>
+        <RunStatusIcon running={running} status={message.status} />
+      </MarkerIcon>
+      <MarkerContent className={running ? 'shimmer' : undefined}>
+        {activitySummary(message, running, elapsedMs)}
+      </MarkerContent>
+      {hasDetails && !running && (
+        <ChevronRight
+          className="shrink-0 transition-transform group-open/activity:rotate-90"
+          size={13}
+        />
+      )}
+    </>
+  );
+
+  if (!hasDetails) {
+    return (
+      <Marker className="mt-2" role="status" variant="border">
+        {header}
+      </Marker>
+    );
+  }
+
+  const body = (
+    <div className="mt-3 flex flex-col gap-2.5">
+      {tools.length > 0 && (
+        <ToolTimeline now={now} tools={tools} />
+      )}
+      {drafts.length > 0 && (
+        <>
+          <Marker variant="separator">
+            <MarkerContent>Research</MarkerContent>
+          </Marker>
+          <div className="draft-list">
+            {drafts.map((draft) => (
+              <details className="draft" key={draft.id}>
+                <summary>{draft.name}</summary>
+                <MessageContent content={draft.content} />
+              </details>
+            ))}
+          </div>
+        </>
+      )}
+      {debug && <DebugPanel message={message} elapsedMs={elapsedMs} />}
+    </div>
+  );
+
+  if (running) {
+    return (
+      <div className="mt-2" role="status">
+        <Marker variant="border">
+          {header}
+        </Marker>
+      </div>
+    );
+  }
 
   return (
-    <details className={`run-activity ${running ? 'running' : message.status ?? 'completed'}`}>
-      <summary>
-        <span className={`activity-dot ${activityKind(stage)}`} />
-        <span>{stage} durante {formatDuration(elapsedMs)}</span>
-        <ChevronRight size={13} />
-      </summary>
-      <div className="tool-activity-list">
-        {message.tools?.length ? (
-          <>
-            <p>Se usaron las tools</p>
-            <ul>
-              {message.tools.map((tool) => (
-                <li className={`tool-activity ${tool.status}`} key={tool.id}>
-                  <code>{tool.name}</code>
-                  <small>{toolStatusText(tool)} · {formatToolDuration((tool.completedAt ?? now) - tool.startedAt)}</small>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : (
-          <span className={`tool-activity ${running ? 'running' : message.status ?? 'done'}`}>
-            {running ? 'Respondiendo' : 'Sin tools'}
-          </span>
-        )}
-        {debug && <DebugPanel message={message} elapsedMs={elapsedMs} />}
-      </div>
+    <details className="group/activity mt-2">
+      <Marker
+        className="cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+        render={<summary />}
+        role="status"
+        variant="border"
+      >
+        {header}
+      </Marker>
+      {body}
     </details>
   );
+}
+
+const thinkingDelays = Array.from({ length: 9 }, (_, index) => {
+  const row = Math.floor(index / 3);
+  const column = index % 3;
+  return (column + Math.abs(row - 1)) * 90;
+});
+
+function PixelGridLoader() {
+  return (
+    <span aria-hidden className="pixel-loader">
+      {thinkingDelays.map((delay, index) => (
+        <span
+          className="pixel-loader-cell"
+          key={index}
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function ToolTimeline({ now, tools }: { now: number; tools: ToolActivity[] }) {
+  const finalStatus = tools.some((tool) => tool.status === 'failed')
+    ? 'failed'
+    : tools.some((tool) => tool.status === 'cancelled')
+      ? 'cancelled'
+      : tools.some((tool) => tool.status === 'paused')
+        ? 'paused'
+        : 'done';
+
+  return (
+    <div className="tool-timeline">
+      {tools.map((tool) => (
+        <Marker className="tool-timeline-row" key={tool.id} role="status">
+          <MarkerIcon className={`tool-timeline-icon ${tool.status}`}>
+            <ToolTypeIcon kind={tool.kind} />
+          </MarkerIcon>
+          <MarkerContent className={tool.status === 'running' ? 'shimmer' : undefined}>
+            {tool.source && <span className="text-muted-foreground">{tool.source} · </span>}
+            <span className="font-mono">{tool.remoteName ?? tool.name}</span>
+            {toolStatusText(tool) ? ` · ${toolStatusText(tool)}` : ''}
+            {' · '}
+            {formatToolDuration((tool.completedAt ?? now) - tool.startedAt)}
+          </MarkerContent>
+        </Marker>
+      ))}
+      <Marker className="tool-timeline-row" role="status">
+        <MarkerIcon className={`tool-timeline-icon ${finalStatus}`}>
+          <ToolStatusIcon status={finalStatus} />
+        </MarkerIcon>
+        <MarkerContent>Listo</MarkerContent>
+      </Marker>
+    </div>
+  );
+}
+
+// finishing a run is the expected outcome, so it stays muted; only the states
+// that need attention get colour.
+function RunStatusIcon({ running, status }: { running: boolean; status?: Message['status'] }) {
+  if (running) return <PixelGridLoader />;
+  if (status === 'failed') return <CircleX className="text-destructive" />;
+  if (status === 'cancelled') return <CircleSlash2 />;
+  if (status === 'paused') return <CircleDashed className="text-yellow-500" />;
+  return <Check />;
+}
+
+function ToolStatusIcon({ status }: { status: ToolActivity['status'] }) {
+  if (status === 'running') return <Spinner />;
+  if (status === 'failed') return <CircleX className="text-destructive" />;
+  if (status === 'cancelled') return <CircleSlash2 />;
+  if (status === 'paused') return <CircleDashed className="text-yellow-500" />;
+  return <Check />;
+}
+
+function ToolTypeIcon({ kind }: { kind?: string }) {
+  if (kind === 'mcp' || kind === 'openapi') return <Plug />;
+  if (kind === 'workflow') return <Sparkles />;
+  return <Wrench />;
 }
 
 function DebugPanel({ message, elapsedMs }: { message: Message; elapsedMs: number }) {
@@ -625,12 +956,18 @@ function DebugPanel({ message, elapsedMs }: { message: Message; elapsedMs: numbe
   );
 }
 
-function MessageContent({ content }: { content: string }) {
+function MessageContent({ content }: { content: JsonValue }) {
+  if (typeof content !== 'string') {
+    return (
+      <div className="message-content">
+        <pre><code>{JSON.stringify(content, null, 2)}</code></pre>
+      </div>
+    );
+  }
+
   return (
     <div className="message-content">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {formatMarkdown(content)}
-      </ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 }
@@ -639,10 +976,36 @@ function runnableId(item: RunnableSummary) {
   return `${item.kind}:${item.name}`;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function maxRightPanelWidth() {
+  if (typeof window === 'undefined') return 560;
+  return Math.max(minRightPanelWidth, Math.floor(window.innerWidth * 0.8));
+}
+
+function defaultRightPanelWidth() {
+  if (typeof window === 'undefined') return 300;
+  return clamp(Math.floor(window.innerWidth * 0.2), minRightPanelWidth, maxRightPanelWidth());
+}
+
 function workflowStepName(payload: unknown) {
   const stepId = readPayloadText(payload, 'stepId');
   const agentName = readPayloadText(payload, 'agentName');
   return agentName ? `${stepId}:${agentName}` : stepId;
+}
+
+function workflowDraftName(payload: unknown) {
+  const stepId = readPayloadText(payload, 'workflowStepId');
+  const agentName = readPayloadText(payload, 'workflowAgentName');
+  return agentName ? `${stepId}:${agentName}` : stepId;
+}
+
+function isResearchStep(workflowName: string, stepId: string) {
+  if (workflowName === 'incident-workflow') return stepId !== 'merge';
+  if (workflowName === 'review-workflow') return stepId !== 'final';
+  return false;
 }
 
 function readPayloadText(payload: unknown, key: string) {
@@ -651,9 +1014,45 @@ function readPayloadText(payload: unknown, key: string) {
   return typeof value === 'string' ? value : '';
 }
 
+function toolSourceInfo(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const source = (payload as Record<string, unknown>).source;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return undefined;
+  const record = source as Record<string, unknown>;
+  const provider = typeof record.provider === 'string' ? record.provider : '';
+  const connectionName = typeof record.connectionName === 'string' ? record.connectionName : '';
+  const remoteToolName = typeof record.remoteToolName === 'string' ? record.remoteToolName : '';
+  if (!provider || !connectionName || !remoteToolName) return undefined;
+  const providerName = provider === 'mcp'
+    ? 'MCP'
+    : provider === 'openapi'
+      ? 'OpenAPI'
+      : provider;
+  return {
+    label: `Usando ${providerName} ${connectionName}`,
+    remoteName: remoteToolName,
+    kind: provider,
+  };
+}
+
 function eventTime(event: AgentEvent) {
   const time = event.timestamp ? Date.parse(event.timestamp) : NaN;
   return Number.isFinite(time) ? time : Date.now();
+}
+
+function runStageLabel(message: Message, running: boolean, elapsedMs: number) {
+  const elapsed = formatDuration(elapsedMs);
+  // "durante" solo donde el tiempo se pasó haciendo algo; los estados de corte
+  // marcan el momento en que se interrumpió.
+  if (running) return `${currentStage(message)} durante ${elapsed}`;
+  if (message.status === 'paused') return `En espera de aprobación después de ${elapsed}`;
+  if (message.status === 'failed') return `Falló después de ${elapsed}`;
+  if (message.status === 'cancelled') return `Cancelado después de ${elapsed}`;
+  return `Procesado durante ${elapsed}`;
+}
+
+function activitySummary(message: Message, running: boolean, elapsedMs: number) {
+  return runStageLabel(message, running, elapsedMs);
 }
 
 function currentStage(message: Message) {
@@ -661,21 +1060,16 @@ function currentStage(message: Message) {
   if (runningTool?.name.includes('tickets')) return 'Buscando';
   if (runningTool?.name.includes('metrics') || runningTool?.name.includes('incidents')) return 'Investigando';
   if (runningTool) return 'Ejecutando';
-  return message.content ? 'Respondiendo' : 'Pensando';
+  return message.content === '' ? 'Pensando' : 'Respondiendo';
 }
 
-function activityKind(stage: string) {
-  if (stage === 'Buscando') return 'searching';
-  if (stage === 'Investigando') return 'investigating';
-  if (stage === 'Respondiendo') return 'responding';
-  return 'running';
-}
-
+// a finished tool needs no adjective, its duration already says it ran
 function toolStatusText(tool: ToolActivity) {
-  if (tool.status === 'failed') return 'Falló';
-  if (tool.status === 'cancelled') return 'Cancelada';
-  if (tool.status === 'running') return tool.name === 'tickets_recent' ? 'Buscando' : 'Usando';
-  return 'Usó';
+  if (tool.status === 'failed') return 'falló';
+  if (tool.status === 'cancelled') return 'cancelada';
+  if (tool.status === 'paused') return 'en espera';
+  if (tool.status === 'running') return 'ejecutando';
+  return '';
 }
 
 function formatDuration(ms: number) {
@@ -689,15 +1083,6 @@ function formatToolDuration(ms: number) {
   const safeMs = Math.max(0, Math.round(ms));
   if (safeMs < 1000) return `${safeMs}ms`;
   return `${(safeMs / 1000).toFixed(1)}s`;
-}
-
-function readCompletedAnswer(payload: unknown) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
-  const output = (payload as Record<string, unknown>).output;
-  if (typeof output === 'string') return output;
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return '';
-  const answer = (output as Record<string, unknown>).answer;
-  return typeof answer === 'string' ? answer : '';
 }
 
 function readUsage(payload: unknown) {
@@ -715,24 +1100,6 @@ function formatUsage(usage: Record<string, number> | undefined) {
   return Object.entries(usage)
     .map(([key, value]) => `${key}: ${value}`)
     .join(', ');
-}
-
-function readJsonAnswer(content: string) {
-  try {
-    const value = JSON.parse(content) as unknown;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
-    const answer = (value as Record<string, unknown>).answer;
-    return typeof answer === 'string' ? answer : '';
-  } catch {
-    return '';
-  }
-}
-
-function formatMarkdown(content: string) {
-  return content
-    .replace(/([^\n])(\#{1,6}\s+)/g, '$1\n\n$2')
-    .replace(/\s+([-*]\s+)/g, '\n$1')
-    .replace(/(\|[^\n]*\|)\n\s*\n(?=\|)/g, '$1\n');
 }
 
 function toErrorMessage(error: unknown) {

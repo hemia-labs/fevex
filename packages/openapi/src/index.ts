@@ -66,6 +66,8 @@ export function createOpenApiToolProvider(options: OpenApiToolProviderOptions): 
   const maxResponseBytes = options.limits?.maxResponseBytes ?? DEFAULT_RESPONSE_LIMIT;
 
   return {
+    kind: 'openapi',
+
     async listTools() {
       return operations.map((operation): ToolProviderTool => ({
         name: operation.id,

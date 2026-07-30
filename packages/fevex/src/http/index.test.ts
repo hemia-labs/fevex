@@ -5,6 +5,7 @@ import { createFevex, type Fevex } from '../fevex';
 import { fakeModel } from '../testing';
 import type { AgentRun, ResumeRunResolution } from '../runtime';
 import { defineWorkflow } from '../workflows';
+import { defineTeam } from '../teams';
 import {
   createFevexHttpClient,
   createFevexHttpHandler,
@@ -12,7 +13,7 @@ import {
   FEVEX_HTTP_PROTOCOL_VERSION,
 } from './index';
 
-describe('Fevex HTTP v1', () => {
+describe('Fevex HTTP v3', () => {
   test('starts, observes, reconnects and continues one session without duplicate execution', async () => {
     const model = fakeModel({ output: 'first' }, { output: 'second' });
     const app = createFevex({
@@ -90,14 +91,54 @@ describe('Fevex HTTP v1', () => {
     expect(events.map(({ type }) => type)).toEqual([
       'workflow.run.started',
       'workflow.step.started',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
       'workflow.step.completed',
       'workflow.run.completed',
     ]);
+    expect(events.find(({ type }) => type === 'model.output.delta')).toMatchObject({
+      payload: {
+        workflowStepId: 'answer',
+        workflowAgentName: 'assistant',
+      },
+    });
     expect(await client.getRun<string>(run.id)).toMatchObject({
       kind: 'workflow',
       status: 'completed',
       output: 'done',
     });
+  });
+
+  test('starts and observes team runs', async () => {
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'done' }) },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Answer.' })],
+      teams: [
+        defineTeam({
+          name: 'team',
+          supervisor: 'assistant',
+          members: [],
+          async run(team, input) {
+            return (await team.delegate('answer', { agent: 'assistant', task: input })).output;
+          },
+        }),
+      ],
+    });
+    const client = clientFor(app);
+
+    const run = await client.startTeam('team', { input: 'hello' });
+    expect(run).toMatchObject({ kind: 'team', teamName: 'team' });
+    const events = await collect(client.observeRun(run.id));
+    expect(events.map(({ type }) => type)).toEqual([
+      'team.run.started',
+      'team.agent.assigned',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
+      'team.task.completed',
+      'team.run.completed',
+    ]);
   });
 
   test('injects the hosting actor when resuming', async () => {
@@ -156,6 +197,69 @@ describe('Fevex HTTP v1', () => {
       actor: { id: 'trusted' },
       output: { ok: true },
     });
+
+    await handler(
+      new Request('http://local/v1/runs/run-1/resume', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'timer' }),
+      }),
+      { context: { actor: { id: 'trusted' } } },
+    );
+    expect(resolution).toMatchObject({ type: 'timer', actor: { id: 'trusted' } });
+
+    await handler(
+      new Request('http://local/v1/runs/run-1/resume', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'event', eventName: 'release', payload: { ok: true } }),
+      }),
+      { context: { actor: { id: 'trusted' } } },
+    );
+    expect(resolution).toMatchObject({
+      type: 'event',
+      eventName: 'release',
+      payload: { ok: true },
+      actor: { id: 'trusted' },
+    });
+  });
+
+  test('recovers only with the hosting actor', async () => {
+    let recoveryActor: { id: string; type?: string } | undefined;
+    const running = {
+      id: 'run-recovery',
+      sessionId: 'session-recovery',
+      agentName: 'assistant',
+      status: 'running',
+      revision: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies AgentRun;
+    const app = {
+      async getRun() {
+        return running;
+      },
+      async recoverRun(_runId: string, options: { actor: { id: string; type?: string } }) {
+        recoveryActor = options.actor;
+        return running;
+      },
+    } as unknown as Fevex;
+    const handler = createFevexHttpHandler({ fevex: app });
+    const unauthorized = await handler(
+      new Request('http://local/v1/runs/run-recovery/recover', { method: 'POST' }),
+    );
+    expect(unauthorized.status).toBe(401);
+    expect(await unauthorized.json()).toMatchObject({ code: 'ACTOR_REQUIRED' });
+
+    const response = await handler(
+      new Request('http://local/v1/runs/run-recovery/recover', {
+        method: 'POST',
+        headers: { 'x-actor-id': 'spoofed' },
+      }),
+      { context: { actor: { id: 'trusted-worker', type: 'service' } } },
+    );
+    expect(response.status).toBe(202);
+    expect(recoveryActor).toEqual({ id: 'trusted-worker', type: 'service' });
   });
 
   test('rejects unknown sessions, active-session conflicts and invalid cursors', async () => {
@@ -207,6 +311,16 @@ describe('Fevex HTTP v1', () => {
     expect(problem).toMatchObject({ code: 'AGENT_NOT_FOUND', status: 404 });
     expect(JSON.stringify(problem)).not.toContain('stack');
 
+    const missingWorkflow = await handler(
+      new Request('http://local/v1/workflows/missing/runs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"input":"hello"}',
+      }),
+    );
+    expect(missingWorkflow.status).toBe(404);
+    expect(await missingWorkflow.json()).toMatchObject({ code: 'WORKFLOW_NOT_FOUND' });
+
     const malformed = await handler(new Request('http://local/v1/agents/assistant/runs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -243,7 +357,7 @@ describe('Fevex HTTP v1', () => {
       fetch: async () => new Response(stream, {
         headers: {
           'content-type': 'text/event-stream',
-          'fevex-protocol-version': '1',
+          'fevex-protocol-version': '3',
         },
       }),
     });
@@ -261,7 +375,7 @@ describe('Fevex HTTP v1', () => {
         status: 404,
         headers: {
           'content-type': 'application/problem+json',
-          'fevex-protocol-version': '1',
+          'fevex-protocol-version': '3',
         },
       }),
     });
@@ -276,12 +390,12 @@ describe('Fevex HTTP v1', () => {
       fetch: async () => new Response('{}', {
         headers: {
           'content-type': 'application/json',
-          'fevex-protocol-version': '2',
+          'fevex-protocol-version': '1',
         },
       }),
     });
     await expect(incompatible.getRun('run-1')).rejects.toThrow(
-      'Unsupported Fevex HTTP protocol version "2"',
+      'Unsupported Fevex HTTP protocol version "1"',
     );
   });
 });

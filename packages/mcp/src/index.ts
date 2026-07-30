@@ -65,6 +65,8 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   let initializing: Promise<McpState> | undefined;
 
   const provider: ToolProvider = {
+    kind: 'mcp',
+
     async listTools(context) {
       await ensureInitialized(context);
       const tools: ToolProviderTool[] = [];

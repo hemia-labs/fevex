@@ -1,6 +1,6 @@
 import type { AgentDefinition } from '../agents';
 import { FevexConfigurationError, type FevexConfigurationErrorCode } from '../configuration-error';
-import type { JsonObject, JsonValue } from '../core';
+import type { JsonObject, JsonValue, ToolEventSource } from '../core';
 import type { FevexConfig } from '../fevex';
 import {
   InMemoryMemoryStore,
@@ -10,6 +10,12 @@ import {
 import type { ModelGateway, ReasoningEffort } from '../models';
 import type { ObservabilityOptions } from '../observability';
 import type { PolicyDefinition } from '../policies';
+import type { Sandbox, SandboxCapabilities } from '../sandbox';
+import {
+  type TeamDefinition,
+  type TeamMember,
+} from '../teams';
+import { teamAsWorkflow } from '../teams/team';
 import { InMemoryRunStore, type RunStore } from '../runtime';
 import {
   IntegrationError,
@@ -37,11 +43,13 @@ export interface FevexComposition {
   models: Map<string, ModelGateway>;
   agents: Map<string, AgentDefinition>;
   workflows: Map<string, WorkflowDefinition>;
+  teams: Map<string, TeamDefinition>;
   tools: Map<string, ToolDefinition>;
   contextProviders: Map<string, ContextProvider>;
   memoryStore: MemoryStore | undefined;
   runStore: RunStore;
   credentialStore: FevexConfig['credentialStore'];
+  sandbox: Sandbox | undefined;
   policies: PolicyDefinition[];
   onEvent: FevexConfig['onEvent'];
   observability: ObservabilityOptions | undefined;
@@ -80,6 +88,10 @@ function isRunStore(value: unknown): value is RunStore {
       (method) => typeof (value as Record<string, unknown>)[method] === 'function',
     )
   );
+}
+
+function isSandbox(value: unknown): value is Sandbox {
+  return isRecord(value) && typeof value.run === 'function';
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -153,15 +165,21 @@ function timeoutSignal(parent: AbortSignal | undefined, timeoutMs: number) {
   };
 }
 
-function connectionError(error: unknown): IntegrationError {
-  if (error instanceof IntegrationError) return error;
+function connectionError(error: unknown, source?: ToolEventSource): IntegrationError {
+  if (error instanceof IntegrationError) {
+    if (!source || error.source) return error;
+    return new IntegrationError(error.code, error.category, error.retryable, error.safeMessage, {
+      cause: error,
+      source,
+    });
+  }
   if (error instanceof DOMException && error.name === 'AbortError') {
     return new IntegrationError(
       'CONNECTION_TIMEOUT',
       'timeout',
       true,
       'Connection tool call timed out',
-      { cause: error },
+      { cause: error, source },
     );
   }
   return new IntegrationError(
@@ -169,7 +187,7 @@ function connectionError(error: unknown): IntegrationError {
     'remote',
     false,
     'Connection tool call failed',
-    { cause: error },
+    { cause: error, source },
   );
 }
 
@@ -233,6 +251,15 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
     seen.add(remoteName);
 
     const policy = connectionMetadata(connection, remoteName);
+    const source: ToolEventSource = {
+      kind: 'connection',
+      provider:
+        typeof connection.provider.kind === 'string' && connection.provider.kind.trim()
+          ? connection.provider.kind
+          : 'custom',
+      connectionName: connection.name,
+      remoteToolName: remoteName,
+    };
     assertConfiguration(
       policy?.inputSchema === undefined || isJsonObject(policy.inputSchema),
       'INVALID_TOOL',
@@ -254,8 +281,13 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
       ...(policy?.idempotency === undefined ? {} : { idempotency: policy.idempotency }),
       ...(policy?.retry === undefined ? {} : { retry: policy.retry }),
       ...(policy?.credentials === undefined ? {} : { credentials: policy.credentials }),
+      source,
       async resolve(context) {
-        return (await listRemoteTools(context)).get(remoteName);
+        try {
+          return (await listRemoteTools(context)).get(remoteName);
+        } catch (error) {
+          throw connectionError(error, source);
+        }
       },
       async execute(input: JsonValue, context) {
         const timeout = timeoutSignal(context.signal, connection.timeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS);
@@ -276,7 +308,7 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
             }),
           ]);
         } catch (error) {
-          throw connectionError(error);
+          throw connectionError(error, source);
         } finally {
           timeout.dispose();
         }
@@ -289,17 +321,157 @@ function assertLimit(
   value: unknown,
   name: string,
   minimum: number,
-  agentName: string,
+  ownerName: string,
   allowFalse = false,
+  owner = 'Agent',
+  code: Parameters<typeof configurationError>[0] = 'INVALID_AGENT',
 ): void {
   if (value === undefined || (allowFalse && value === false)) return;
 
   if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum) {
     throw configurationError(
-      'INVALID_AGENT',
-      `Agent "${agentName}" limit "${name}" must be ${minimum === 0 ? 'a non-negative' : 'a positive'} integer${allowFalse ? ' or false' : ''}`,
+      code,
+      `${owner} "${ownerName}" limit "${name}" must be ${minimum === 0 ? 'a non-negative' : 'a positive'} integer${allowFalse ? ' or false' : ''}`,
     );
   }
+}
+
+function assertStringArray(
+  value: unknown,
+  code: Parameters<typeof configurationError>[0],
+  message: string,
+): void {
+  assertConfiguration(
+    value === undefined ||
+      (Array.isArray(value) && value.every((item) => typeof item === 'string' && item.trim())),
+    code,
+    message,
+  );
+}
+
+function assertPositiveInteger(
+  value: unknown,
+  code: Parameters<typeof configurationError>[0],
+  message: string,
+): void {
+  assertConfiguration(
+    value === undefined || (Number.isInteger(value) && (value as number) > 0),
+    code,
+    message,
+  );
+}
+
+function assertSandboxCapabilities(
+  value: unknown,
+  ownerName: string,
+): asserts value is SandboxCapabilities | undefined {
+  if (value === undefined) return;
+  assertConfiguration(isRecord(value), 'INVALID_TOOL', `Tool "${ownerName}" sandbox must be an object`);
+  const capabilities = value as Record<string, unknown>;
+  const process = capabilities.process;
+  if (process !== undefined) {
+    assertConfiguration(isRecord(process), 'INVALID_TOOL', `Tool "${ownerName}" sandbox.process must be an object`);
+    assertStringArray(
+      process.commands,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.process.commands must contain non-empty strings`,
+    );
+    assertPositiveInteger(
+      process.timeoutMs,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.process.timeoutMs must be a positive integer`,
+    );
+  }
+  const filesystem = capabilities.filesystem;
+  if (filesystem !== undefined) {
+    assertConfiguration(
+      isRecord(filesystem),
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.filesystem must be an object`,
+    );
+    assertConfiguration(
+      filesystem.cwd === undefined || typeof filesystem.cwd === 'string',
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.filesystem.cwd must be a string`,
+    );
+    assertStringArray(
+      filesystem.read,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.filesystem.read must contain non-empty strings`,
+    );
+    assertStringArray(
+      filesystem.write,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.filesystem.write must contain non-empty strings`,
+    );
+  }
+  const network = capabilities.network;
+  if (network !== undefined && network !== false) {
+    assertConfiguration(isRecord(network), 'INVALID_TOOL', `Tool "${ownerName}" sandbox.network must be false or an object`);
+    assertStringArray(
+      network.allow,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.network.allow must contain non-empty strings`,
+    );
+  }
+  const resources = capabilities.resources;
+  if (resources !== undefined) {
+    assertConfiguration(
+      isRecord(resources),
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.resources must be an object`,
+    );
+    assertPositiveInteger(
+      resources.timeoutMs,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.resources.timeoutMs must be a positive integer`,
+    );
+    assertPositiveInteger(
+      resources.maxOutputBytes,
+      'INVALID_TOOL',
+      `Tool "${ownerName}" sandbox.resources.maxOutputBytes must be a positive integer`,
+    );
+  }
+}
+
+function copySandboxCapabilities(value: SandboxCapabilities | undefined): SandboxCapabilities | undefined {
+  if (!value) return undefined;
+  return {
+    ...(value.process === undefined
+      ? {}
+      : {
+          process: {
+            ...(value.process.commands === undefined
+              ? {}
+              : { commands: [...value.process.commands] }),
+            ...(value.process.timeoutMs === undefined ? {} : { timeoutMs: value.process.timeoutMs }),
+          },
+        }),
+    ...(value.filesystem === undefined
+      ? {}
+      : {
+          filesystem: {
+            ...(value.filesystem.cwd === undefined ? {} : { cwd: value.filesystem.cwd }),
+            ...(value.filesystem.read === undefined ? {} : { read: [...value.filesystem.read] }),
+            ...(value.filesystem.write === undefined
+              ? {}
+              : { write: [...value.filesystem.write] }),
+          },
+        }),
+    ...(value.network === undefined
+      ? {}
+      : { network: value.network === false ? false : { allow: [...(value.network.allow ?? [])] } }),
+    ...(value.resources === undefined
+      ? {}
+      : {
+          resources: {
+            ...(value.resources.timeoutMs === undefined ? {} : { timeoutMs: value.resources.timeoutMs }),
+            ...(value.resources.maxOutputBytes === undefined
+              ? {}
+              : { maxOutputBytes: value.resources.maxOutputBytes }),
+          },
+        }),
+  };
 }
 
 export function createComposition(config: FevexConfig): FevexComposition {
@@ -318,6 +490,11 @@ export function createComposition(config: FevexConfig): FevexComposition {
     config.workflows === undefined || Array.isArray(config.workflows),
     'INVALID_CONFIG',
     'Fevex config "workflows" must be an array',
+  );
+  assertConfiguration(
+    config.teams === undefined || Array.isArray(config.teams),
+    'INVALID_CONFIG',
+    'Fevex config "teams" must be an array',
   );
   assertConfiguration(
     config.tools === undefined || Array.isArray(config.tools),
@@ -353,6 +530,11 @@ export function createComposition(config: FevexConfig): FevexComposition {
     config.credentialStore === undefined || typeof config.credentialStore?.resolve === 'function',
     'INVALID_CONFIG',
     'Fevex config "credentialStore" must implement resolve',
+  );
+  assertConfiguration(
+    config.sandbox === undefined || isSandbox(config.sandbox),
+    'INVALID_CONFIG',
+    'Fevex config "sandbox" must implement Sandbox',
   );
   assertConfiguration(
     config.policies === undefined || Array.isArray(config.policies),
@@ -397,6 +579,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
   const models = new Map<string, ModelGateway>();
   const agents = new Map<string, AgentDefinition>();
   const workflows = new Map<string, WorkflowDefinition>();
+  const teams = new Map<string, TeamDefinition>();
   const tools = new Map<string, ToolDefinition>();
   const contextProviders = new Map<string, ContextProvider>();
 
@@ -494,6 +677,12 @@ export function createComposition(config: FevexConfig): FevexComposition {
       'INVALID_TOOL',
       `Tool "${name}" credentials must be non-empty strings`,
     );
+    assertSandboxCapabilities(definition.sandbox, name);
+    assertConfiguration(
+      definition.sandbox === undefined || config.sandbox !== undefined,
+      'INVALID_TOOL',
+      `Tool "${name}" requires Fevex config "sandbox"`,
+    );
     if (definition.retry !== undefined) {
       assertConfiguration(
         isRecord(definition.retry) &&
@@ -513,6 +702,13 @@ export function createComposition(config: FevexConfig): FevexComposition {
         isStandardSchema(definition.inputSchema),
         'INVALID_TOOL',
         `Input schema for tool "${name}" must implement Standard Schema`,
+      );
+    }
+    if (definition.inputSchema !== undefined) {
+      assertConfiguration(
+        isStandardSchema(definition.inputSchema),
+        'INVALID_AGENT',
+        `Input schema for agent "${name}" must implement Standard Schema`,
       );
     }
     if (definition.outputSchema !== undefined) {
@@ -553,6 +749,10 @@ export function createComposition(config: FevexConfig): FevexComposition {
       ...(definition.idempotency === undefined ? {} : { idempotency: definition.idempotency }),
       ...(definition.retry === undefined ? {} : { retry: { ...definition.retry } }),
       ...(definition.credentials === undefined ? {} : { credentials: [...definition.credentials] }),
+      ...(definition.sandbox === undefined
+        ? {}
+        : { sandbox: copySandboxCapabilities(definition.sandbox) }),
+      ...(definition.source === undefined ? {} : { source: { ...definition.source } }),
       ...(definition.resolve === undefined ? {} : { resolve: definition.resolve }),
       execute: definition.execute as ToolDefinition['execute'],
     });
@@ -767,6 +967,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
       ...(definition.modelOptions === undefined
         ? {}
         : { modelOptions: { ...definition.modelOptions } }),
+      ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
       ...(rawLimits === undefined
         ? {}
@@ -845,6 +1046,88 @@ export function createComposition(config: FevexConfig): FevexComposition {
       `Workflow "${name}" version must be a non-empty string`,
     );
     assertConfiguration(
+      definition.limits === undefined || isRecord(definition.limits),
+      'INVALID_WORKFLOW',
+      `Workflow "${name}" limits must be an object`,
+    );
+    if (definition.inputSchema !== undefined) {
+      assertConfiguration(
+        isStandardSchema(definition.inputSchema),
+        'INVALID_WORKFLOW',
+        `Input schema for workflow "${name}" must implement Standard Schema`,
+      );
+    }
+    if (definition.outputSchema !== undefined) {
+      assertConfiguration(
+        isStandardSchema(definition.outputSchema),
+        'INVALID_WORKFLOW',
+        `Output schema for workflow "${name}" must implement Standard Schema`,
+      );
+    }
+    assertConfiguration(
+      definition.events === undefined || isRecord(definition.events),
+      'INVALID_WORKFLOW',
+      `Workflow "${name}" events must be an object`,
+    );
+    const workflowEvents: NonNullable<WorkflowDefinition['events']> = {};
+    for (const [eventName, rawEvent] of Object.entries(definition.events ?? {})) {
+      assertConfiguration(
+        Boolean(eventName.trim()) && isRecord(rawEvent),
+        'INVALID_WORKFLOW',
+        `Workflow "${name}" event definitions must be named objects`,
+      );
+      assertConfiguration(
+        rawEvent.requireActor === undefined || typeof rawEvent.requireActor === 'boolean',
+        'INVALID_WORKFLOW',
+        `Workflow "${name}" event "${eventName}" requireActor must be a boolean`,
+      );
+      assertConfiguration(
+        rawEvent.payloadSchema === undefined || isStandardSchema(rawEvent.payloadSchema),
+        'INVALID_WORKFLOW',
+        `Payload schema for workflow "${name}" event "${eventName}" must implement Standard Schema`,
+      );
+      workflowEvents[eventName] = {
+        ...(rawEvent.payloadSchema === undefined
+          ? {}
+          : {
+              payloadSchema:
+                rawEvent.payloadSchema as NonNullable<
+                  WorkflowDefinition['events']
+                >[string]['payloadSchema'],
+            }),
+        ...(rawEvent.requireActor === undefined ? {} : { requireActor: rawEvent.requireActor }),
+      };
+    }
+    const rawLimits = definition.limits;
+    assertLimit(rawLimits?.maxSteps, 'maxSteps', 1, name, false, 'Workflow', 'INVALID_WORKFLOW');
+    assertLimit(
+      rawLimits?.maxToolCalls,
+      'maxToolCalls',
+      0,
+      name,
+      false,
+      'Workflow',
+      'INVALID_WORKFLOW',
+    );
+    assertLimit(
+      rawLimits?.maxInputTokens,
+      'maxInputTokens',
+      1,
+      name,
+      true,
+      'Workflow',
+      'INVALID_WORKFLOW',
+    );
+    assertLimit(
+      rawLimits?.maxOutputTokens,
+      'maxOutputTokens',
+      1,
+      name,
+      true,
+      'Workflow',
+      'INVALID_WORKFLOW',
+    );
+    assertConfiguration(
       !workflows.has(name),
       'DUPLICATE_WORKFLOW',
       `Workflow "${name}" is duplicated`,
@@ -852,8 +1135,197 @@ export function createComposition(config: FevexConfig): FevexComposition {
     workflows.set(name, {
       name,
       version: (definition.version as string | undefined) ?? '1',
+      ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
+      ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
+      ...(definition.events === undefined ? {} : { events: workflowEvents }),
+      ...(rawLimits === undefined
+        ? {}
+        : {
+            limits: {
+              ...(rawLimits.maxSteps === undefined
+                ? {}
+                : { maxSteps: rawLimits.maxSteps as number }),
+              ...(rawLimits.maxToolCalls === undefined
+                ? {}
+                : { maxToolCalls: rawLimits.maxToolCalls as number }),
+              ...(rawLimits.maxInputTokens === undefined
+                ? {}
+                : { maxInputTokens: rawLimits.maxInputTokens as number | false }),
+              ...(rawLimits.maxOutputTokens === undefined
+                ? {}
+                : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
+            },
+          }),
       run: definition.run as WorkflowDefinition['run'],
     });
+  }
+
+  for (const [index, definition] of (config.teams ?? []).entries()) {
+    assertConfiguration(
+      isRecord(definition),
+      'INVALID_TEAM',
+      `Team at index ${index} must be an object`,
+    );
+    assertConfiguration(
+      typeof definition.name === 'string',
+      'INVALID_TEAM',
+      'Team name must be a string',
+    );
+    const name = definition.name;
+    assertConfiguration(name.trim(), 'INVALID_TEAM', 'Team name cannot be empty');
+    assertConfiguration(
+      typeof definition.supervisor === 'string' && Boolean(definition.supervisor.trim()),
+      'INVALID_TEAM',
+      `Team "${name}" supervisor must be a non-empty string`,
+    );
+    assertConfiguration(
+      typeof definition.run === 'function',
+      'INVALID_TEAM',
+      `Team "${name}" must implement run`,
+    );
+    assertConfiguration(
+      definition.version === undefined
+        || (typeof definition.version === 'string' && Boolean(definition.version.trim())),
+      'INVALID_TEAM',
+      `Team "${name}" version must be a non-empty string`,
+    );
+    assertConfiguration(
+      Array.isArray(definition.members),
+      'INVALID_TEAM',
+      `Team "${name}" members must be an array`,
+    );
+    const members: TeamMember[] = [];
+    const memberNames = new Set<string>();
+    for (const [memberIndex, rawMember] of definition.members.entries()) {
+      assertConfiguration(
+        isRecord(rawMember)
+          && typeof rawMember.agent === 'string'
+          && Boolean(rawMember.agent.trim())
+          && typeof rawMember.role === 'string'
+          && Boolean(rawMember.role.trim())
+          && (rawMember.description === undefined
+            || typeof rawMember.description === 'string'),
+        'INVALID_TEAM',
+        `Team "${name}" member at index ${memberIndex} is invalid`,
+      );
+      assertConfiguration(
+        !memberNames.has(rawMember.agent),
+        'INVALID_TEAM',
+        `Team "${name}" member "${rawMember.agent}" is duplicated`,
+      );
+      memberNames.add(rawMember.agent);
+      members.push({
+        agent: rawMember.agent,
+        role: rawMember.role,
+        ...(rawMember.description === undefined
+          ? {}
+          : { description: rawMember.description }),
+      });
+    }
+    const supervisor = definition.supervisor;
+    assertConfiguration(
+      agents.has(supervisor),
+      'INVALID_TEAM',
+      `Supervisor "${supervisor}" required by team "${name}" is not registered`,
+    );
+    for (const member of members) {
+      assertConfiguration(
+        agents.has(member.agent),
+        'INVALID_TEAM',
+        `Agent "${member.agent}" required by team "${name}" is not registered`,
+      );
+    }
+    if (definition.inputSchema !== undefined) {
+      assertConfiguration(
+        isStandardSchema(definition.inputSchema),
+        'INVALID_TEAM',
+        `Input schema for team "${name}" must implement Standard Schema`,
+      );
+    }
+    if (definition.outputSchema !== undefined) {
+      assertConfiguration(
+        isStandardSchema(definition.outputSchema),
+        'INVALID_TEAM',
+        `Output schema for team "${name}" must implement Standard Schema`,
+      );
+    }
+    assertConfiguration(
+      definition.limits === undefined || isRecord(definition.limits),
+      'INVALID_TEAM',
+      `Team "${name}" limits must be an object`,
+    );
+    const rawLimits = definition.limits;
+    assertLimit(rawLimits?.maxDelegations, 'maxDelegations', 1, name, false, 'Team', 'INVALID_TEAM');
+    assertLimit(rawLimits?.maxParallel, 'maxParallel', 1, name, false, 'Team', 'INVALID_TEAM');
+    assertLimit(rawLimits?.maxSteps, 'maxSteps', 1, name, false, 'Team', 'INVALID_TEAM');
+    assertLimit(rawLimits?.maxToolCalls, 'maxToolCalls', 0, name, false, 'Team', 'INVALID_TEAM');
+    assertLimit(
+      rawLimits?.maxInputTokens,
+      'maxInputTokens',
+      1,
+      name,
+      true,
+      'Team',
+      'INVALID_TEAM',
+    );
+    assertLimit(
+      rawLimits?.maxOutputTokens,
+      'maxOutputTokens',
+      1,
+      name,
+      true,
+      'Team',
+      'INVALID_TEAM',
+    );
+    assertConfiguration(
+      !teams.has(name),
+      'DUPLICATE_TEAM',
+      `Team "${name}" is duplicated`,
+    );
+    assertConfiguration(
+      !workflows.has(name),
+      'INVALID_TEAM',
+      `Team "${name}" conflicts with a workflow of the same name`,
+    );
+    const team: TeamDefinition = {
+      name,
+      version: (definition.version as string | undefined) ?? '1',
+      supervisor,
+      members,
+      ...(definition.inputSchema === undefined
+        ? {}
+        : { inputSchema: definition.inputSchema as TeamDefinition['inputSchema'] }),
+      ...(definition.outputSchema === undefined
+        ? {}
+        : { outputSchema: definition.outputSchema as TeamDefinition['outputSchema'] }),
+      ...(rawLimits === undefined
+        ? {}
+        : {
+            limits: {
+              ...(rawLimits.maxDelegations === undefined
+                ? {}
+                : { maxDelegations: rawLimits.maxDelegations as number }),
+              ...(rawLimits.maxParallel === undefined
+                ? {}
+                : { maxParallel: rawLimits.maxParallel as number }),
+              ...(rawLimits.maxSteps === undefined
+                ? {}
+                : { maxSteps: rawLimits.maxSteps as number }),
+              ...(rawLimits.maxToolCalls === undefined
+                ? {}
+                : { maxToolCalls: rawLimits.maxToolCalls as number }),
+              ...(rawLimits.maxInputTokens === undefined
+                ? {}
+                : { maxInputTokens: rawLimits.maxInputTokens as number | false }),
+              ...(rawLimits.maxOutputTokens === undefined
+                ? {}
+                : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
+            },
+          }),
+      run: definition.run as TeamDefinition['run'],
+    };
+    teams.set(name, team);
+    workflows.set(name, teamAsWorkflow(team));
   }
 
   const usesMemory = [...agents.values()].some(
@@ -864,11 +1336,13 @@ export function createComposition(config: FevexConfig): FevexComposition {
     models,
     agents,
     workflows,
+    teams,
     tools,
     contextProviders,
     memoryStore: config.memoryStore ?? (usesMemory ? new InMemoryMemoryStore() : undefined),
     runStore: config.runStore ?? new InMemoryRunStore(),
     credentialStore: config.credentialStore,
+    sandbox: config.sandbox,
     policies,
     onEvent: config.onEvent,
     observability:

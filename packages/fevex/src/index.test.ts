@@ -15,13 +15,17 @@ import {
   createFevex,
   defineAgent,
   defineTool,
+  defineTeam,
   defineWorkflow,
   FevexConfigurationError,
   FevexRunError,
   InMemoryRunStore,
   RunPausedError,
+  SandboxError,
   type FevexConfig,
   type FevexConfigurationErrorCode,
+  type RunCheckpoint,
+  type StoredRunCheckpoint,
   type WorkflowDefinition,
 } from './index';
 
@@ -111,7 +115,6 @@ describe('createFevex', () => {
 
   test('runs the default model and forwards agent options', async () => {
     const calls: ModelInput[] = [];
-    const agentSchema = passthroughSchema<string>({ type: 'string' });
     const requestSchemaJson = {
       type: 'object',
       properties: { answer: { type: 'string' } },
@@ -126,6 +129,10 @@ describe('createFevex', () => {
     const toolInputSchema = passthroughSchema<{ query: string }>(toolInputSchemaJson);
     const signal = new AbortController().signal;
     const model: ModelGateway = {
+      stateCodec: {
+        serialize: (state) => structuredClone(state) as JsonObject,
+        restore: (state) => structuredClone(state),
+      },
       stream: streamFrom(async (input) => {
         calls.push(input);
         return {
@@ -149,7 +156,7 @@ describe('createFevex', () => {
           tools: ['lookup'],
           reasoning: 'low',
           modelOptions: { temperature: 0 },
-          outputSchema: agentSchema,
+          outputSchema: requestSchema,
         }),
       ],
       tools: [lookup],
@@ -157,7 +164,6 @@ describe('createFevex', () => {
 
     const result = await app.runAgent<{ question: string }, { answer: string }>('assistant', {
       input: { question: 'Ready?' },
-      outputSchema: requestSchema,
       signal,
     });
 
@@ -201,7 +207,7 @@ describe('createFevex', () => {
 
     await app.runAgent('assistant', { input: 'hello' });
     expect(calls[1]?.messages[1]?.content).toBe('hello');
-    expect(calls[1]?.outputSchema).toEqual({ type: 'string' });
+    expect(calls[1]?.outputSchema).toEqual(requestSchemaJson);
   });
 
   test('executes one tool and sends its result back to the model', async () => {
@@ -217,6 +223,10 @@ describe('createFevex', () => {
     const providerState = { private: 'state' };
     let execution: { input: unknown; context: ToolExecutionContext } | undefined;
     const model: ModelGateway = {
+      stateCodec: {
+        serialize: (state) => structuredClone(state) as JsonObject,
+        restore: (state) => structuredClone(state),
+      },
       stream: streamFrom(async (input) => {
         calls.push(input);
         if (calls.length === 1) {
@@ -248,6 +258,7 @@ describe('createFevex', () => {
           tools: ['lookup'],
           reasoning: 'low',
           modelOptions: { temperature: 0 },
+          outputSchema,
         }),
       ],
       tools: [lookup],
@@ -256,7 +267,6 @@ describe('createFevex', () => {
     const result = await app.runAgent<unknown, { answer: string }>('assistant', {
       input: 'Find it.',
       context,
-      outputSchema,
       signal,
     });
     const runId = result.events![0]!.runId;
@@ -320,9 +330,107 @@ describe('createFevex', () => {
     expect(new Set(result.events?.map((event) => event.runId))).toEqual(new Set([runId]));
   });
 
+  test('passes a scoped sandbox only to tools that declare sandbox capabilities', async () => {
+    const sandboxRequests: unknown[] = [];
+    const sandbox = {
+      async run(request: unknown) {
+        sandboxRequests.push(request);
+        return { exitCode: 0, stdout: 'sandboxed', stderr: '', durationMs: 1, timedOut: false };
+      },
+    };
+    const model: ModelGateway = {
+      stream: streamFrom(async (input) => {
+        const toolMessages = input.messages.filter(({ role }) => role === 'tool');
+        if (!toolMessages.length) {
+          return {
+            toolCalls: [
+              { id: 'sandbox-call', name: 'code', input: {} },
+              { id: 'plain-call', name: 'plain', input: {} },
+            ],
+          };
+        }
+        return { output: toolMessages.map(({ content }) => content).join('/') };
+      }),
+    };
+    const app = createFevex({
+      models: { default: model },
+      agents: [agent('assistant', { tools: ['code', 'plain'] })],
+      sandbox,
+      tools: [
+        defineTool({
+          name: 'code',
+          sandbox: { process: { commands: ['node'] }, resources: { timeoutMs: 1000 } },
+          async execute(_input, context) {
+            expect(context.sandbox).toBeDefined();
+            const result = await context.sandbox!.run({ command: 'node', args: ['-e', ''] });
+            return result.stdout;
+          },
+        }),
+        defineTool({
+          name: 'plain',
+          execute(_input, context) {
+            expect(context.sandbox).toBeUndefined();
+            return 'plain';
+          },
+        }),
+      ],
+    });
+
+    await expect(app.runAgent('assistant', { input: 'run' })).resolves.toMatchObject({
+      output: 'sandboxed/plain',
+    });
+    expect(sandboxRequests).toEqual([
+      expect.objectContaining({
+        command: 'node',
+        toolCallId: 'sandbox-call',
+        capabilities: { process: { commands: ['node'] }, resources: { timeoutMs: 1000 } },
+      }),
+    ]);
+  });
+
+  test('reports sandbox failures through normal tool failure events', async () => {
+    const events: AgentEvent[] = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async () => ({
+            toolCalls: [{ id: 'sandbox-call', name: 'code', input: {} }],
+          })),
+        },
+      },
+      agents: [agent('assistant', { tools: ['code'] })],
+      sandbox: {
+        async run() {
+          throw new SandboxError('SANDBOX_DENIED', 'sandbox denied');
+        },
+      },
+      tools: [
+        defineTool({
+          name: 'code',
+          sandbox: { process: { commands: ['node'] } },
+          async execute(_input, context) {
+            return await context.sandbox!.run({ command: 'node' });
+          },
+        }),
+      ],
+      onEvent(event) {
+        events.push(event);
+      },
+    });
+
+    await expect(app.runAgent('assistant', { input: 'run' })).rejects.toThrow('sandbox denied');
+    expect(events.find(({ type }) => type === 'tool.failed')).toMatchObject({
+      payload: { toolCallId: 'sandbox-call', toolName: 'code', error: 'sandbox denied' },
+    });
+  });
+
   test('keeps providerState isolated between concurrent runs', async () => {
     const continuedStates: unknown[] = [];
     const model: ModelGateway = {
+      stateCodec: {
+        serialize: (state) => structuredClone(state) as JsonObject,
+        restore: (state) => structuredClone(state),
+      },
       stream: streamFrom(async (input) => {
         if (input.providerState !== undefined) {
           continuedStates.push(input.providerState);
@@ -583,7 +691,6 @@ describe('createFevex', () => {
 
   test('validates and transforms every schema boundary', async () => {
     const calls: ModelInput[] = [];
-    let agentSchemaCalls = 0;
     let toolInput: unknown;
     const inputSchemaJson = {
       type: 'object',
@@ -604,10 +711,6 @@ describe('createFevex', () => {
     const toolOutputSchema = schema<{ found: string }>(async (value) => ({
       value: { found: (value as { found: string }).found.toUpperCase() },
     }));
-    const agentOutputSchema = schema<{ answer: string }>(() => {
-      agentSchemaCalls += 1;
-      return { issues: [{ message: 'agent schema should not run' }] };
-    });
     const requestOutputSchema = schema<{ answer: string }>(
       (value) => ({
         value: { answer: (value as { answer: string }).answer.toUpperCase() },
@@ -625,7 +728,7 @@ describe('createFevex', () => {
       agents: [
         agent('assistant', {
           tools: ['lookup'],
-          outputSchema: agentOutputSchema,
+          outputSchema: requestOutputSchema,
         }),
       ],
       tools: [
@@ -643,7 +746,6 @@ describe('createFevex', () => {
 
     const result = await app.runAgent<unknown, { answer: string }>('assistant', {
       input: 'hello',
-      outputSchema: requestOutputSchema,
     });
 
     expect(toolInput).toEqual({ query: 'VALUE' });
@@ -651,7 +753,6 @@ describe('createFevex', () => {
     expect(calls[0]?.outputSchema).toEqual(requestOutputSchemaJson);
     expect(calls[1]?.messages[3]?.content).toBe('{"found":"YES"}');
     expect(result.output).toEqual({ answer: 'DONE' });
-    expect(agentSchemaCalls).toBe(0);
   });
 
   test('emits observable failures for tool and output schema issues', async () => {
@@ -1096,6 +1197,11 @@ describe('createFevex', () => {
         'INVALID_CONFIG',
         'Fevex config "runStore" must implement RunStore',
       ],
+      [
+        { ...validRoot, sandbox: {} },
+        'INVALID_CONFIG',
+        'Fevex config "sandbox" must implement Sandbox',
+      ],
       [{ ...validRoot, tools: [null] }, 'INVALID_TOOL', 'Tool at index 0 must be an object'],
       [
         { ...validRoot, tools: [{ name: 1, execute() {} }] },
@@ -1106,6 +1212,35 @@ describe('createFevex', () => {
         { ...validRoot, tools: [{ name: 'lookup', description: 1, execute() {} }] },
         'INVALID_TOOL',
         'Tool "lookup" description must be a string',
+      ],
+      [
+        {
+          ...validRoot,
+          tools: [
+            {
+              name: 'code',
+              sandbox: { process: { commands: ['node'] } },
+              execute() {},
+            },
+          ],
+        },
+        'INVALID_TOOL',
+        'Tool "code" requires Fevex config "sandbox"',
+      ],
+      [
+        {
+          ...validRoot,
+          sandbox: { run: async () => ({ exitCode: 0, stdout: '', stderr: '', durationMs: 0, timedOut: false }) },
+          tools: [
+            {
+              name: 'code',
+              sandbox: { process: { commands: [1] } },
+              execute() {},
+            },
+          ],
+        },
+        'INVALID_TOOL',
+        'Tool "code" sandbox.process.commands must contain non-empty strings',
       ],
       [{ ...validRoot, agents: [null] }, 'INVALID_AGENT', 'Agent at index 0 must be an object'],
       [
@@ -1342,23 +1477,28 @@ describe('createFevex', () => {
 
   test('rejects incomplete model results', async () => {
     let noFinalCalls = 0;
+    const noOutputModel = {
+      stream: streamFrom(async () => {
+        return {};
+      }),
+    };
+    const noFinalOutputModel = {
+      stream: streamFrom(async () => {
+        noFinalCalls += 1;
+        return noFinalCalls === 1 ? { toolCalls: [lookupCall] } : {};
+      }),
+    };
     const app = createFevex({
-      models: {},
+      models: {
+        'no-output': noOutputModel,
+        'no-final-output': noFinalOutputModel,
+      },
       agents: [
         agent('no-output', {
-          model: {
-            stream: streamFrom(async () => {
-              return {};
-            }),
-          },
+          model: 'no-output',
         }),
         agent('no-final-output', {
-          model: {
-            stream: streamFrom(async () => {
-              noFinalCalls += 1;
-              return noFinalCalls === 1 ? { toolCalls: [lookupCall] } : {};
-            }),
-          },
+          model: 'no-final-output',
           tools: ['lookup'],
         }),
       ],
@@ -2006,6 +2146,15 @@ describe('createFevex', () => {
     let appendedEvents = 0;
     let commits = 0;
     class TrackingRunStore extends InMemoryRunStore {
+      creates = 0;
+
+      override async createExecution(
+        ...args: Parameters<InMemoryRunStore['createExecution']>
+      ): Promise<boolean> {
+        this.creates += 1;
+        return super.createExecution(...args);
+      }
+
       override async saveRun(...args: Parameters<InMemoryRunStore['saveRun']>): Promise<void> {
         savedRuns += 1;
         await super.saveRun(...args);
@@ -2040,10 +2189,11 @@ describe('createFevex', () => {
     });
 
     const result = await app.runAgent('assistant', { input: 'hello' });
-    expect(savedRuns).toBe(1);
-    expect(savedSessions).toBe(1);
-    expect(appendedEvents).toBe(4);
-    expect(commits).toBe(1);
+    expect(runStore.creates).toBe(1);
+    expect(savedRuns).toBe(0);
+    expect(savedSessions).toBe(0);
+    expect(appendedEvents).toBe(0);
+    expect(commits).toBe(4);
 
     const snapshot = await runStore.getRun(result.runId);
     snapshot!.status = 'failed';
@@ -2158,7 +2308,7 @@ describe('createFevex', () => {
         'Output schema for agent "assistant" is not transportable: schema does not implement Standard JSON Schema',
     });
     expect(modelCalls).toBe(0);
-    expect(events.map(({ type }) => type)).toEqual(['run.started', 'run.failed']);
+    expect(events).toEqual([]);
   });
 
   test('fails before the model when schema conversion throws or returns invalid JSON Schema', async () => {
@@ -2795,6 +2945,395 @@ describe('createFevex', () => {
     expect((await second.getRun(run.id))?.status).toBe('completed');
   });
 
+  test('runs a durable team with parallel delegations and a traced handoff', async () => {
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => {
+            const role = input.messages[0]!.content;
+            if (role === 'planner') return { output: 'plan' };
+            if (role === 'researcher') return { output: 'research' };
+            if (role === 'coder') return { output: 'code' };
+            return { output: 'approved' };
+          }),
+        },
+      },
+      agents: [
+        agent('planner', { instructions: 'planner' }),
+        agent('researcher', { instructions: 'researcher' }),
+        agent('coder', { instructions: 'coder' }),
+        agent('reviewer', { instructions: 'reviewer' }),
+      ],
+      teams: [
+        defineTeam({
+          name: 'software-team',
+          supervisor: 'planner',
+          members: [
+            { agent: 'researcher', role: 'research' },
+            { agent: 'coder', role: 'implementation' },
+            { agent: 'reviewer', role: 'review' },
+          ],
+          limits: { maxDelegations: 4, maxParallel: 2 },
+          async run(team, input) {
+            const plan = await team.delegate<string, string>('plan', {
+              agent: 'planner',
+              task: input as string,
+              expectedOutput: 'Implementation plan',
+            });
+            const work = await team.parallel('work', {
+              research: () =>
+                team.delegate<string, string>('research', {
+                  agent: 'researcher',
+                  task: plan.output,
+                }),
+              implementation: () =>
+                team.delegate<string, string>('implementation', {
+                  agent: 'coder',
+                  task: plan.output,
+                }),
+            });
+            return (
+              await team.handoff<
+                { research: string; implementation: string },
+                string
+              >('review', {
+                from: 'coder',
+                to: 'reviewer',
+                reason: 'Final review',
+                task: {
+                  research: work.research.output,
+                  implementation: work.implementation.output,
+                },
+              })
+            ).output;
+          },
+        }),
+      ],
+    });
+
+    const result = await app.runTeam<string, string>('software-team', {
+      input: 'Build it',
+    });
+    expect(result.output).toBe('approved');
+    expect(await app.getTeamRun(result.runId)).toMatchObject({
+      kind: 'team',
+      teamName: 'software-team',
+      status: 'completed',
+    });
+
+    const events = await app.listEvents(result.runId);
+    expect(events.some(({ type }) => type.startsWith('workflow.'))).toBe(false);
+    expect(events.map(({ type }) => type)).toContain('team.merge.completed');
+    expect(events.filter(({ type }) => type === 'team.agent.assigned')).toHaveLength(4);
+    expect(events.find(({ type }) => type === 'team.handoff.created')).toMatchObject({
+      payload: {
+        delegationId: 'review',
+        from: 'coder',
+        to: 'reviewer',
+        reason: 'Final review',
+      },
+    });
+    expect(events.find(({ type }) => type === 'model.output.delta')).toMatchObject({
+      payload: {
+        teamDelegationId: 'plan',
+        teamAgentName: 'planner',
+      },
+    });
+  });
+
+  test('validates team membership and operational limits', async () => {
+    expect(
+      getConfigurationError({
+        models: { default: modelWithOutput('ok') },
+        agents: [agent('planner')],
+        teams: [
+          defineTeam({
+            name: 'invalid-team',
+            supervisor: 'missing',
+            members: [],
+            run() {},
+          }),
+        ],
+      }).code,
+    ).toBe('INVALID_TEAM');
+
+    const app = createFevex({
+      models: { default: modelWithOutput('ok') },
+      agents: [agent('planner'), agent('worker')],
+      teams: [
+        defineTeam({
+          name: 'limited-team',
+          supervisor: 'planner',
+          members: [{ agent: 'worker', role: 'work' }],
+          limits: { maxDelegations: 1, maxParallel: 1 },
+          async run(team, input) {
+            await team.delegate('first', { agent: 'worker', task: input });
+            return team.delegate('second', { agent: 'worker', task: input });
+          },
+        }),
+      ],
+    });
+
+    await expect(app.runTeam('limited-team', { input: 'work' })).rejects.toThrow(
+      'exceeded maxDelegations limit of 1',
+    );
+  });
+
+  test('resumes supervisor, parallel work and review without repeating delegations', async () => {
+    const store = new InMemoryRunStore();
+    const modelCalls = new Map<string, number>();
+    let toolExecutions = 0;
+    const team = defineTeam({
+      name: 'approval-team',
+      supervisor: 'planner',
+      members: [
+        { agent: 'researcher', role: 'research' },
+        { agent: 'coder', role: 'implementation' },
+        { agent: 'reviewer', role: 'review' },
+      ],
+      limits: { maxDelegations: 4, maxParallel: 2 },
+      async run(step, input) {
+        const plan = await step.delegate<string, string>('plan', {
+          agent: 'planner',
+          task: input as string,
+        });
+        const work = await step.parallel('work', {
+          research: () =>
+            step.delegate<string, string>('research', {
+              agent: 'researcher',
+              task: plan.output,
+            }),
+          implementation: () =>
+            step.delegate<string, string>('implementation', {
+              agent: 'coder',
+              task: plan.output,
+            }),
+        });
+        return (
+          await step.handoff('review', {
+            from: 'coder',
+            to: 'reviewer',
+            reason: 'Final review',
+            task: {
+              research: work.research.output,
+              implementation: work.implementation.output,
+            },
+          })
+        ).output;
+      },
+    });
+    const makeApp = (onEvent?: (event: AgentEvent) => void) =>
+      createFevex({
+        models: {
+          default: {
+            stateCodec: {
+              serialize(state) {
+                return structuredClone(state) as JsonObject;
+              },
+              restore(state) {
+                return structuredClone(state);
+              },
+            },
+            stream: streamFrom(async (input) => {
+              const role = input.messages[0]!.content;
+              modelCalls.set(role, (modelCalls.get(role) ?? 0) + 1);
+              if (role !== 'reviewer') return { output: `${role}-done` };
+              return input.providerState === undefined
+                ? { toolCalls: [lookupCall], providerState: { turn: 1 } }
+                : { output: 'approved' };
+            }),
+          },
+        },
+        agents: [
+          agent('planner', { instructions: 'planner' }),
+          agent('researcher', { instructions: 'researcher' }),
+          agent('coder', { instructions: 'coder' }),
+          agent('reviewer', { instructions: 'reviewer', tools: ['lookup'] }),
+        ],
+        tools: [
+          defineTool({
+            name: 'lookup',
+            approval: 'required',
+            risk: 'write',
+            execute() {
+              toolExecutions += 1;
+              return 'ok';
+            },
+          }),
+        ],
+        teams: [team],
+        runStore: store,
+        ...(onEvent ? { onEvent } : {}),
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runTeam('approval-team', { input: 'build' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    expect(paused.pause.type).toBe('workflow_child');
+    const childPause = paused.pause.type === 'workflow_child' ? paused.pause.childPause : undefined;
+    const approvalId = childPause?.type === 'approval' ? childPause.approval.id : '';
+
+    let finish!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await makeApp((event) => {
+      if (event.runId === paused.runId && event.type === 'team.run.completed') finish();
+    }).resumeRun(paused.runId, {
+      type: 'approval',
+      approvalId,
+      decision: 'approve',
+      actor: { id: 'operator' },
+    });
+    await completed;
+
+    expect(Object.fromEntries(modelCalls)).toEqual({
+      planner: 1,
+      researcher: 1,
+      coder: 1,
+      reviewer: 2,
+    });
+    expect(toolExecutions).toBe(1);
+    const events = await store.listEvents(paused.runId);
+    expect(events.filter(({ type }) => type === 'team.agent.assigned')).toHaveLength(4);
+    expect(events.filter(({ type }) => type === 'team.task.completed')).toHaveLength(4);
+    expect(events.filter(({ type }) => type === 'team.merge.completed')).toHaveLength(1);
+    expect(events.filter(({ type }) => type === 'team.handoff.created')).toHaveLength(1);
+    expect(events.map(({ type }) => type)).toContain('team.run.resumed');
+    expect(await store.getRun(paused.runId)).toMatchObject({
+      kind: 'team',
+      status: 'completed',
+      output: 'approved',
+    });
+  });
+
+  test('streams and cancels team runs through the shared runtime controls', async () => {
+    const team = defineTeam({
+      name: 'single-team',
+      supervisor: 'worker',
+      members: [],
+      async run(step, input) {
+        return (await step.delegate('work', { agent: 'worker', task: input })).output;
+      },
+    });
+    const completedApp = createFevex({
+      models: { default: modelWithOutput('done') },
+      agents: [agent('worker')],
+      teams: [team],
+    });
+    const streamed: AgentEvent[] = [];
+    for await (const event of completedApp.streamTeam('single-team', { input: 'go' })) {
+      streamed.push(event);
+    }
+    expect(streamed.at(0)?.type).toBe('team.run.started');
+    expect(streamed.at(-1)?.type).toBe('team.run.completed');
+
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const runningApp = createFevex({
+      models: {
+        default: {
+          async *stream(input) {
+            markStarted();
+            await new Promise<void>((resolve) => {
+              input.signal?.addEventListener('abort', () => resolve(), { once: true });
+            });
+          },
+        },
+      },
+      agents: [agent('worker')],
+      teams: [team],
+    });
+    const run = await runningApp.startTeam('single-team', { input: 'wait' });
+    await started;
+    expect(await runningApp.cancelRun(run.id)).toBe(true);
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if ((await runningApp.getTeamRun(run.id))?.status !== 'running') break;
+      await Bun.sleep(2);
+    }
+    expect(await runningApp.getTeamRun(run.id)).toMatchObject({ status: 'cancelled' });
+    expect((await runningApp.listEvents(run.id)).at(-1)?.type).toBe(
+      'team.run.cancelled',
+    );
+  });
+
+  test('recovers a running team child without repeating its delegation', async () => {
+    class CrashableStore extends InMemoryRunStore {
+      readonly leaseOwners = new Map<string, string>();
+
+      override async createExecution(
+        input: Parameters<InMemoryRunStore['createExecution']>[0],
+      ): Promise<boolean> {
+        this.leaseOwners.set(input.run.id, input.lease.ownerId);
+        return super.createExecution(input);
+      }
+    }
+    const store = new CrashableStore();
+    let releaseCrashedChild!: () => void;
+    let markChildStarted!: () => void;
+    const childStarted = new Promise<void>((resolve) => {
+      markChildStarted = resolve;
+    });
+    const team = defineTeam({
+      name: 'recover-team',
+      version: '1',
+      supervisor: 'worker',
+      members: [],
+      async run(step, input) {
+        return (await step.delegate('only-child', { agent: 'worker', task: input })).output;
+      },
+    });
+    const crashedRuntime = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async () => {
+            markChildStarted();
+            await new Promise<void>((resolve) => {
+              releaseCrashedChild = resolve;
+            });
+            return { output: 'stale' };
+          }),
+        },
+      },
+      agents: [agent('worker')],
+      teams: [team],
+      runStore: store,
+    });
+    const parent = await crashedRuntime.startTeam('recover-team', { input: 'go' });
+    await childStarted;
+    const checkpoint = await store.getCheckpoint<any>(parent.id);
+    const childRunId = checkpoint?.steps['only-child'].childRunId as string;
+    await store.releaseLease(parent.id, store.leaseOwners.get(parent.id)!);
+    await store.releaseLease(childRunId, store.leaseOwners.get(childRunId)!);
+
+    const recoveredRuntime = createFevex({
+      models: { default: modelWithOutput('recovered') },
+      agents: [agent('worker')],
+      teams: [team],
+      runStore: store,
+    });
+    await recoveredRuntime.recoverRun(parent.id, { actor: { id: 'team-worker' } });
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if ((await store.getRun(parent.id))?.status !== 'running') break;
+      await Bun.sleep(2);
+    }
+
+    expect(await store.getRun(parent.id)).toMatchObject({
+      kind: 'team',
+      status: 'completed',
+      output: 'recovered',
+    });
+    const events = await store.listEvents(parent.id);
+    expect(events.filter(({ type }) => type === 'team.agent.assigned')).toHaveLength(1);
+    expect(events.filter(({ type }) => type === 'team.task.completed')).toHaveLength(1);
+    expect(events.map(({ type }) => type)).toContain('team.run.recovered');
+    releaseCrashedChild();
+    await Bun.sleep(2);
+  });
+
   test('runs workflows with conditional agent steps and parallel fan-out', async () => {
     const calls: string[] = [];
     const app = createFevex({
@@ -2858,14 +3397,26 @@ describe('createFevex', () => {
     expect((await app.listEvents(result.runId)).map(({ type }) => type)).toEqual([
       'workflow.run.started',
       'workflow.step.started',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
       'workflow.step.completed',
       'workflow.step.started',
       'workflow.step.started',
       'workflow.step.started',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
       'workflow.step.completed',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
       'workflow.step.completed',
       'workflow.step.completed',
       'workflow.step.started',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
       'workflow.step.completed',
       'workflow.run.completed',
     ]);
@@ -2958,11 +3509,942 @@ describe('createFevex', () => {
     expect((await second.listEvents(paused.runId)).map(({ type }) => type)).toEqual([
       'workflow.run.started',
       'workflow.step.started',
+      'model.started',
+      'model.completed',
+      'approval.requested',
       'workflow.run.paused',
       'workflow.run.resumed',
       'workflow.step.completed',
       'workflow.run.completed',
     ]);
+  });
+
+  test('cancels a paused workflow child before cancelling its parent', async () => {
+    const store = new InMemoryRunStore();
+    const workflow = defineWorkflow({
+      name: 'cancel-child-flow',
+      async run(step, input) {
+        return (await step.agent('approval', 'assistant', { input })).output;
+      },
+    });
+    const makeApp = () =>
+      createFevex({
+        models: {
+          default: {
+            stateCodec: {
+              serialize: (state) => state as JsonObject,
+              restore: (state) => state,
+            },
+            stream: streamFrom(async (input) =>
+              input.providerState
+                ? { output: 'done' }
+                : { toolCalls: [lookupCall], providerState: { turn: 1 } },
+            ),
+          },
+        },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [
+          defineTool({
+            name: 'lookup',
+            risk: 'write',
+            approval: 'required',
+            idempotency: 'keyed',
+            execute: () => 'done',
+          }),
+        ],
+        workflows: [workflow],
+        runStore: store,
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runWorkflow('cancel-child-flow', { input: 'go' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    const checkpoint = await store.getCheckpoint<any>(paused.runId);
+    const childRunId = checkpoint?.steps.approval.childRunId as string;
+
+    expect(await makeApp().cancelRun(paused.runId)).toBe(true);
+    expect(await store.getRun(childRunId)).toMatchObject({ status: 'cancelled' });
+    expect(await store.getRun(paused.runId)).toMatchObject({ status: 'cancelled' });
+    expect((await store.listEvents(childRunId)).at(-1)?.type).toBe('run.cancelled');
+    expect((await store.listEvents(paused.runId)).at(-1)?.type).toBe(
+      'workflow.run.cancelled',
+    );
+  });
+
+  test('settles parallel work and reports multiple failures in declaration order', async () => {
+    const settled: string[] = [];
+    const app = createFevex({
+      models: { default: modelWithOutput('unused') },
+      agents: [agent('assistant')],
+      workflows: [
+        defineWorkflow({
+          name: 'parallel-failures',
+          async run(step) {
+            await step.parallel('fanout', {
+              first: async () => {
+                await Bun.sleep(4);
+                settled.push('first');
+                throw new Error('first failed');
+              },
+              second: async () => {
+                settled.push('second');
+                throw new Error('second failed');
+              },
+            });
+            return 'unreachable';
+          },
+        }),
+      ],
+    });
+
+    let failure!: AggregateError;
+    await app.runWorkflow('parallel-failures', { input: 'go' }).catch((error) => {
+      failure = error as AggregateError;
+    });
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.message).toBe('Workflow parallel step "fanout" failed');
+    expect(failure.errors.map((error) => (error as Error).message)).toEqual([
+      'first failed',
+      'second failed',
+    ]);
+    expect(settled).toEqual(['second', 'first']);
+  });
+
+  test('compensates completed workflow steps in reverse order when a workflow fails', async () => {
+    const compensated: string[] = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => ({ output: input.messages[0]!.content })),
+        },
+      },
+      agents: [agent('first', { instructions: 'first' }), agent('second', { instructions: 'second' })],
+      workflows: [
+        defineWorkflow({
+          name: 'compensating-flow',
+          async run(step, input) {
+            await step.agent('first', 'first', { input }, {
+              compensate(result) {
+                compensated.push(`first:${result.output}`);
+              },
+            });
+            await step.agent('second', 'second', { input }, {
+              compensate(result) {
+                compensated.push(`second:${result.output}`);
+              },
+            });
+            throw new Error('workflow failed');
+          },
+        }),
+      ],
+    });
+
+    await expect(app.runWorkflow('compensating-flow', { input: 'go' })).rejects.toThrow(
+      'workflow failed',
+    );
+
+    expect(compensated).toEqual(['second:second', 'first:first']);
+  });
+
+  test('does not repeat compensated steps after replaying a paused workflow', async () => {
+    const store = new InMemoryRunStore();
+    const executions: string[] = [];
+    const workflow = defineWorkflow({
+      name: 'replay-compensation-flow',
+      events: { release: {} },
+      async run(step, input) {
+        await step.agent('write', 'writer', { input }, {
+          compensate(result) {
+            executions.push(`compensate:${result.output}`);
+          },
+        });
+        await step.waitForEvent('release', 'release');
+        throw new Error('after replay');
+      },
+    });
+    const makeApp = () =>
+      createFevex({
+        models: {
+          default: {
+            stream: streamFrom(async () => {
+              executions.push('write');
+              return { output: 'written' };
+            }),
+          },
+        },
+        agents: [agent('writer')],
+        workflows: [workflow],
+        runStore: store,
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runWorkflow('replay-compensation-flow', { input: 'go' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    expect(paused).toBeInstanceOf(RunPausedError);
+
+    await makeApp().resumeRun(paused.runId, { type: 'event', eventName: 'release' });
+    await Bun.sleep(5);
+
+    expect(executions).toEqual(['write', 'compensate:written']);
+    expect(await store.getRun(paused.runId)).toMatchObject({ status: 'failed' });
+  });
+
+  test('marks workflow failed when compensation fails', async () => {
+    const store = new InMemoryRunStore();
+    const events: AgentEvent[] = [];
+    const app = createFevex({
+      models: { default: modelWithOutput('done') },
+      agents: [agent('writer')],
+      workflows: [
+        defineWorkflow({
+          name: 'failed-compensation-flow',
+          async run(step, input) {
+            await step.agent('write', 'writer', { input }, {
+              compensate() {
+                throw new Error('undo failed');
+              },
+            });
+            throw new Error('main failed');
+          },
+        }),
+      ],
+      runStore: store,
+      onEvent(event) {
+        events.push(event);
+      },
+    });
+
+    await expect(app.runWorkflow('failed-compensation-flow', { input: 'go' })).rejects.toThrow(
+      'Workflow failed: main failed; compensation failed: undo failed',
+    );
+
+    const failed = events.find(({ type }) => type === 'workflow.run.failed')!;
+    expect(await store.getRun(failed.runId)).toMatchObject({
+      status: 'failed',
+      error: 'Workflow failed: main failed; compensation failed: undo failed',
+    });
+    expect(events.map(({ type }) => type)).toContain('workflow.compensation.failed');
+  });
+
+  test('pauses a workflow until a timer is explicitly resumed after it elapses', async () => {
+    const store = new InMemoryRunStore();
+    const resumeAt = new Date(Date.now() + 20).toISOString();
+    const workflow = defineWorkflow({
+      name: 'timer-flow',
+      async run(step) {
+        await step.waitUntil('timer', resumeAt);
+        return 'ready';
+      },
+    });
+    const makeApp = (onEvent?: (event: AgentEvent) => void) =>
+      createFevex({
+        models: { default: modelWithOutput('unused') },
+        agents: [agent('assistant')],
+        workflows: [workflow],
+        runStore: store,
+        ...(onEvent ? { onEvent } : {}),
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runWorkflow('timer-flow', { input: 'go' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    expect(paused.pause).toMatchObject({ type: 'workflow_timer', resumeAt });
+    await expect(makeApp().resumeRun(paused.runId, { type: 'timer' })).rejects.toMatchObject({
+      code: 'RUN_NOT_RESUMABLE',
+    });
+
+    let complete!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    await Bun.sleep(25);
+    await makeApp((event) => {
+      if (event.type === 'workflow.run.completed') complete();
+    }).resumeRun(paused.runId, { type: 'timer' });
+    await completed;
+
+    expect(await store.getRun(paused.runId)).toMatchObject({ status: 'completed', output: 'ready' });
+  });
+
+  test('pauses a workflow until the matching external event is resumed', async () => {
+    const store = new InMemoryRunStore();
+    const workflow = defineWorkflow({
+      name: 'event-flow',
+      events: { approved: {} },
+      async run(step) {
+        const event = await step.waitForEvent<JsonObject>('approval-event', 'approved');
+        return event.payload;
+      },
+    });
+    const makeApp = (onEvent?: (event: AgentEvent) => void) =>
+      createFevex({
+        models: { default: modelWithOutput('unused') },
+        agents: [agent('assistant')],
+        workflows: [workflow],
+        runStore: store,
+        ...(onEvent ? { onEvent } : {}),
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runWorkflow('event-flow', { input: 'go' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    expect(paused.pause).toMatchObject({ type: 'workflow_event', eventName: 'approved' });
+    await expect(
+      makeApp().resumeRun(paused.runId, { type: 'event', eventName: 'wrong' }),
+    ).rejects.toMatchObject({ code: 'RUN_NOT_RESUMABLE' });
+
+    let complete!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    await makeApp((event) => {
+      if (event.type === 'workflow.run.completed') complete();
+    }).resumeRun(paused.runId, {
+      type: 'event',
+      eventName: 'approved',
+      payload: { approved: true },
+    });
+    await completed;
+
+    expect(await store.getRun(paused.runId)).toMatchObject({
+      status: 'completed',
+      output: { approved: true },
+    });
+  });
+
+  test('transforms workflow input and persists an audited, schema-validated event', async () => {
+    const store = new InMemoryRunStore();
+    const inputSchema = schema<{ value: string }>(
+      (value) => ({ value: { value: String(value).trim().toUpperCase() } }),
+      { type: 'string' },
+    );
+    const eventSchema = schema<{ approved: true }>(
+      (value) =>
+        (value as { decision?: unknown })?.decision === 'yes'
+          ? { value: { approved: true as const } }
+          : { issues: [{ message: 'decision must be yes' }] },
+      {
+        type: 'object',
+        properties: { decision: { const: 'yes' } },
+        required: ['decision'],
+      },
+    );
+    const outputSchema = schema<string>(
+      (value) => {
+        const result = value as {
+          input: { value: string };
+          event: { payload?: { approved: true }; actor?: { id: string }; receivedAt: string };
+        };
+        return {
+          value:
+            `${result.input.value}:${result.event.payload?.approved}:` +
+            `${result.event.actor?.id}:${result.event.receivedAt}`,
+        };
+      },
+      { type: 'string' },
+    );
+    const workflow = defineWorkflow({
+      name: 'audited-event-flow',
+      inputSchema,
+      outputSchema,
+      events: {
+        approved: { payloadSchema: eventSchema, requireActor: true },
+      },
+      async run(step, input: { value: string }) {
+        const event = await step.waitForEvent<{ approved: true }>('approval', 'approved');
+        return { input, event };
+      },
+    });
+    const makeApp = () =>
+      createFevex({
+        models: { default: modelWithOutput('unused') },
+        agents: [agent('assistant')],
+        workflows: [workflow],
+        runStore: store,
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runWorkflow('audited-event-flow', { input: '  hello  ' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    expect((await store.getCheckpoint<any>(paused.runId))?.input).toEqual({ value: 'HELLO' });
+
+    await expect(
+      makeApp().resumeRun(paused.runId, {
+        type: 'event',
+        eventName: 'approved',
+        payload: { decision: 'yes' },
+      }),
+    ).rejects.toMatchObject({ code: 'APPROVAL_INVALID' });
+    await expect(
+      makeApp().resumeRun(paused.runId, {
+        type: 'event',
+        eventName: 'approved',
+        payload: { decision: 'no' },
+        actor: { id: 'reviewer' },
+      }),
+    ).rejects.toThrow('decision must be yes');
+    expect(await store.getRun(paused.runId)).toMatchObject({ status: 'paused' });
+
+    await makeApp().resumeRun(paused.runId, {
+      type: 'event',
+      eventName: 'approved',
+      payload: { decision: 'yes' },
+      actor: { id: 'reviewer' },
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if ((await store.getRun(paused.runId))?.status !== 'running') break;
+      await Bun.sleep(2);
+    }
+    const completed = await store.getRun(paused.runId);
+    expect(completed).toMatchObject({ status: 'completed' });
+    expect(String(completed?.output)).toStartWith('HELLO:true:reviewer:');
+    expect(
+      (await store.listEvents(paused.runId)).find(
+        ({ type }) => type === 'workflow.wait.completed',
+      )?.payload,
+    ).toMatchObject({
+      payload: { approved: true },
+      actorId: 'reviewer',
+    });
+  });
+
+  test('fails a resumed workflow when its definition output schema rejects the result', async () => {
+    const store = new InMemoryRunStore();
+    const workflow = defineWorkflow({
+      name: 'invalid-resumed-output',
+      outputSchema: schema(
+        () => ({ issues: [{ message: 'final output is invalid' }] }),
+        { type: 'string' },
+      ),
+      events: { release: {} },
+      async run(step) {
+        await step.waitForEvent('release', 'release');
+        return 'invalid';
+      },
+    });
+    const makeApp = () =>
+      createFevex({
+        models: { default: modelWithOutput('unused') },
+        agents: [agent('assistant')],
+        workflows: [workflow],
+        runStore: store,
+      });
+    let paused!: RunPausedError;
+    await makeApp().runWorkflow('invalid-resumed-output', { input: 'go' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    await makeApp().resumeRun(paused.runId, { type: 'event', eventName: 'release' });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if ((await store.getRun(paused.runId))?.status !== 'running') break;
+      await Bun.sleep(2);
+    }
+    expect(await store.getRun(paused.runId)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('final output is invalid'),
+    });
+  });
+
+  test('inherits workflow context while preventing child actor impersonation', async () => {
+    const seen: Array<{ source: string; context: unknown }> = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) =>
+            input.messages.some(({ role }) => role === 'tool')
+              ? { output: 'done' }
+              : { toolCalls: [{ id: 'context-call', name: 'inspect', input: {} }] },
+          ),
+        },
+      },
+      contextProviders: [
+        {
+          name: 'tenant',
+          async read(input) {
+            seen.push({ source: 'provider', context: input.context });
+            return [];
+          },
+        },
+      ],
+      policies: [
+        {
+          name: 'context-policy',
+          authorize(input) {
+            seen.push({ source: 'policy', context: input.context });
+            return 'allow';
+          },
+        },
+      ],
+      tools: [
+        defineTool({
+          name: 'inspect',
+          execute(_input, input) {
+            seen.push({ source: 'tool', context: input.context });
+            return 'ok';
+          },
+        }),
+      ],
+      agents: [agent('worker', { context: ['tenant'], tools: ['inspect'] })],
+      workflows: [
+        defineWorkflow({
+          name: 'context-flow',
+          async run(step, input) {
+            return (
+              await step.agent('inspect', 'worker', {
+                input,
+                context: {
+                  namespace: 'child',
+                  actor: { id: 'impersonator' },
+                  attributes: { child: true, shared: 'child' },
+                  prompt: { child: true },
+                },
+              })
+            ).output;
+          },
+        }),
+      ],
+    });
+
+    await app.runWorkflow('context-flow', {
+      input: 'go',
+      context: {
+        namespace: 'parent',
+        actor: { id: 'authenticated' },
+        attributes: { parent: true, shared: 'parent' },
+        prompt: { parent: true },
+      },
+    });
+    expect(seen.map(({ source }) => source)).toEqual(['provider', 'policy', 'tool']);
+    for (const item of seen) {
+      expect(item.context).toEqual({
+        namespace: 'child',
+        actor: { id: 'authenticated' },
+        attributes: { parent: true, shared: 'child', child: true },
+        prompt: { parent: true, child: true },
+      });
+    }
+  });
+
+  test('recovers an orphaned agent checkpoint with persisted limits and usage', async () => {
+    class CrashableStore extends InMemoryRunStore {
+      leaseOwner?: string;
+
+      override async createExecution(
+        input: Parameters<InMemoryRunStore['createExecution']>[0],
+      ): Promise<boolean> {
+        this.leaseOwner = input.lease.ownerId;
+        return super.createExecution(input);
+      }
+    }
+    const store = new CrashableStore();
+    let releaseCrashedModel!: () => void;
+    let markCrashedModelStarted!: () => void;
+    const crashedModelStarted = new Promise<void>((resolve) => {
+      markCrashedModelStarted = resolve;
+    });
+    const crashedRuntime = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async () => {
+            markCrashedModelStarted();
+            await new Promise<void>((resolve) => {
+              releaseCrashedModel = resolve;
+            });
+            return { output: 'stale' };
+          }),
+        },
+      },
+      agents: [agent('recoverable')],
+      runStore: store,
+    });
+    const run = await crashedRuntime.startAgent('recoverable', {
+      input: 'go',
+      limits: { maxOutputTokens: 3 },
+    });
+    await crashedModelStarted;
+    await store.releaseLease(run.id, store.leaseOwner!);
+
+    let recoveredLimit: number | undefined;
+    const recoveredRuntime = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => {
+            recoveredLimit = input.maxOutputTokens;
+            return {
+              output: 'recovered',
+              usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+            };
+          }),
+        },
+      },
+      agents: [agent('recoverable')],
+      runStore: store,
+    });
+    await recoveredRuntime.recoverRun(run.id, { actor: { id: 'worker-2' } });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if ((await store.getRun(run.id))?.status !== 'running') break;
+      await Bun.sleep(2);
+    }
+    releaseCrashedModel();
+    await Bun.sleep(2);
+
+    expect(recoveredLimit).toBe(3);
+    expect(await store.getRun(run.id)).toMatchObject({
+      status: 'completed',
+      output: 'recovered',
+      usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+    });
+    expect((await store.listEvents(run.id)).map(({ type }) => type)).toEqual([
+      'run.started',
+      'model.started',
+      'run.recovered',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
+      'run.completed',
+    ]);
+    await expect(
+      recoveredRuntime.recoverRun(run.id, { actor: { id: 'worker-3' } }),
+    ).rejects.toMatchObject({ code: 'RUN_NOT_RECOVERABLE' });
+  });
+
+  test('recovers keyed tools with the same key and pauses uncertain non-keyed tools', async () => {
+    class CrashableStore extends InMemoryRunStore {
+      leaseOwner?: string;
+
+      override async createExecution(
+        input: Parameters<InMemoryRunStore['createExecution']>[0],
+      ): Promise<boolean> {
+        this.leaseOwner = input.lease.ownerId;
+        return super.createExecution(input);
+      }
+    }
+    const exercise = async (idempotency: 'keyed' | 'none') => {
+      const store = new CrashableStore();
+      const keys: string[] = [];
+      let executions = 0;
+      let releaseFirst!: () => void;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const model: ModelGateway = {
+        stream: streamFrom(async (input) =>
+          input.messages.some(({ role }) => role === 'tool')
+            ? { output: 'done' }
+            : { toolCalls: [{ id: 'crash-tool', name: 'effect', input: {} }] },
+        ),
+      };
+      const tool = () =>
+        defineTool({
+          name: 'effect',
+          idempotency,
+          async execute(_input, context) {
+            executions += 1;
+            keys.push(context.idempotencyKey);
+            if (executions === 1) {
+              markStarted();
+              await new Promise<void>((resolve) => {
+                releaseFirst = resolve;
+              });
+            }
+            return 'effect';
+          },
+        });
+      const first = createFevex({
+        models: { default: model },
+        agents: [agent('tool-recovery', { tools: ['effect'] })],
+        tools: [tool()],
+        runStore: store,
+      });
+      const run = await first.startAgent('tool-recovery', { input: 'go' });
+      await started;
+      await store.releaseLease(run.id, store.leaseOwner!);
+
+      const second = createFevex({
+        models: { default: model },
+        agents: [agent('tool-recovery', { tools: ['effect'] })],
+        tools: [tool()],
+        runStore: store,
+      });
+      await second.recoverRun(run.id, { actor: { id: 'recovery-worker' } });
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if ((await store.getRun(run.id))?.status !== 'running') break;
+        await Bun.sleep(2);
+      }
+
+      if (idempotency === 'none') {
+        const unknown = await store.getRun(run.id);
+        expect(unknown).toMatchObject({
+          status: 'paused',
+          pause: { type: 'tool_execution_unknown', toolCallId: 'crash-tool' },
+        });
+        expect(executions).toBe(1);
+        await second.resumeRun(run.id, {
+          type: 'tool_execution',
+          toolCallId: 'crash-tool',
+          decision: 'retry',
+          actor: { id: 'operator' },
+        });
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          if ((await store.getRun(run.id))?.status !== 'running') break;
+          await Bun.sleep(2);
+        }
+      }
+
+      expect(await store.getRun(run.id)).toMatchObject({
+        status: 'completed',
+        output: 'done',
+      });
+      expect(executions).toBe(2);
+      expect(new Set(keys).size).toBe(1);
+      releaseFirst();
+      await Bun.sleep(2);
+    };
+
+    await exercise('keyed');
+    await exercise('none');
+  });
+
+  test('recovers a running workflow child without replacing or repeating its step', async () => {
+    class CrashableStore extends InMemoryRunStore {
+      readonly leaseOwners = new Map<string, string>();
+
+      override async createExecution(
+        input: Parameters<InMemoryRunStore['createExecution']>[0],
+      ): Promise<boolean> {
+        this.leaseOwners.set(input.run.id, input.lease.ownerId);
+        return super.createExecution(input);
+      }
+    }
+    const store = new CrashableStore();
+    let releaseCrashedChild!: () => void;
+    let markChildStarted!: () => void;
+    const childStarted = new Promise<void>((resolve) => {
+      markChildStarted = resolve;
+    });
+    const workflow = defineWorkflow({
+      name: 'recover-child-flow',
+      version: '1',
+      async run(step, input) {
+        return (await step.agent('only-child', 'worker', { input })).output;
+      },
+    });
+    const crashedRuntime = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async () => {
+            markChildStarted();
+            await new Promise<void>((resolve) => {
+              releaseCrashedChild = resolve;
+            });
+            return { output: 'stale' };
+          }),
+        },
+      },
+      agents: [agent('worker')],
+      workflows: [workflow],
+      runStore: store,
+    });
+    const parent = await crashedRuntime.startWorkflow('recover-child-flow', { input: 'go' });
+    await childStarted;
+    const checkpoint = await store.getCheckpoint<any>(parent.id);
+    const childRunId = checkpoint?.steps['only-child'].childRunId as string;
+    await store.releaseLease(parent.id, store.leaseOwners.get(parent.id)!);
+    await store.releaseLease(childRunId, store.leaseOwners.get(childRunId)!);
+
+    const recoveredRuntime = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async () => ({
+            output: 'recovered-child',
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+          })),
+        },
+      },
+      agents: [agent('worker')],
+      workflows: [workflow],
+      runStore: store,
+    });
+    await recoveredRuntime.recoverRun(parent.id, { actor: { id: 'workflow-worker' } });
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if ((await store.getRun(parent.id))?.status !== 'running') break;
+      await Bun.sleep(2);
+    }
+    expect(await store.getRun(parent.id)).toMatchObject({
+      status: 'completed',
+      output: 'recovered-child',
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    });
+    expect(await store.getRun(childRunId)).toMatchObject({
+      status: 'completed',
+      output: 'recovered-child',
+    });
+    const parentEvents = await store.listEvents(parent.id);
+    expect(parentEvents.filter(({ type }) => type === 'workflow.step.started')).toHaveLength(1);
+    expect(parentEvents.filter(({ type }) => type === 'workflow.step.completed')).toHaveLength(1);
+    expect(parentEvents.filter(({ type }) => type === 'workflow.run.completed')).toHaveLength(1);
+    expect(parentEvents.map(({ type }) => type)).toContain('workflow.run.recovered');
+    releaseCrashedChild();
+    await Bun.sleep(2);
+  });
+
+  test('rejects legacy checkpoints without inferring missing v2 contracts', async () => {
+    class LegacyCheckpointStore extends InMemoryRunStore {
+      legacy = false;
+
+      override async getCheckpoint<
+        TCheckpoint extends StoredRunCheckpoint = RunCheckpoint,
+      >(runId: string): Promise<TCheckpoint | undefined> {
+        const checkpoint = await super.getCheckpoint<TCheckpoint>(runId);
+        return this.legacy && checkpoint
+          ? ({ ...checkpoint, version: 1 } as unknown as TCheckpoint)
+          : checkpoint;
+      }
+    }
+    const store = new LegacyCheckpointStore();
+    const workflow = defineWorkflow({
+      name: 'legacy-flow',
+      events: { release: {} },
+      async run(step) {
+        await step.waitForEvent('release', 'release');
+        return 'done';
+      },
+    });
+    const app = createFevex({
+      models: { default: modelWithOutput('unused') },
+      agents: [agent('assistant')],
+      workflows: [workflow],
+      runStore: store,
+    });
+    let paused!: RunPausedError;
+    await app.runWorkflow('legacy-flow', { input: 'go' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    store.legacy = true;
+
+    await expect(
+      app.resumeRun(paused.runId, { type: 'event', eventName: 'release' }),
+    ).rejects.toMatchObject({ code: 'CHECKPOINT_UNSUPPORTED' });
+    expect(await store.getRun(paused.runId)).toMatchObject({ status: 'paused' });
+  });
+
+  test('inherits workflow token budget into child agents', async () => {
+    const requestedOutputLimits: Array<number | undefined> = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => {
+            requestedOutputLimits.push(input.maxOutputTokens);
+            return { output: 'ok', usage: { inputTokens: 1, outputTokens: 3 } };
+          }),
+        },
+      },
+      agents: [agent('worker')],
+      workflows: [
+        defineWorkflow({
+          name: 'token-budget-flow',
+          limits: { maxOutputTokens: 5 },
+          async run(step, input) {
+            await step.agent('first', 'worker', { input });
+            await step.agent('second', 'worker', { input });
+            return 'done';
+          },
+        }),
+      ],
+    });
+
+    await expect(app.runWorkflow('token-budget-flow', { input: 'go' })).rejects.toThrow(
+      'exceeded maxOutputTokens limit of 2',
+    );
+    expect(requestedOutputLimits).toEqual([5, 2]);
+  });
+
+  test('inherits workflow step and tool-call budgets into child agents', async () => {
+    const stepBudgetApp = createFevex({
+      models: { default: modelWithOutput('ok') },
+      agents: [agent('worker')],
+      workflows: [
+        defineWorkflow({
+          name: 'step-budget-flow',
+          limits: { maxSteps: 1 },
+          async run(step, input) {
+            await step.agent('first', 'worker', { input });
+            await step.agent('second', 'worker', { input });
+            return 'done';
+          },
+        }),
+      ],
+    });
+
+    await expect(stepBudgetApp.runWorkflow('step-budget-flow', { input: 'go' })).rejects.toThrow(
+      'reached maxSteps limit of 0',
+    );
+
+    const toolCall = { id: 'tool-1', name: 'lookup', input: {} };
+    const toolBudgetApp = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) =>
+            input.messages.some(({ role }) => role === 'tool')
+              ? { output: 'done' }
+              : { toolCalls: [toolCall] },
+          ),
+        },
+      },
+      agents: [agent('worker', { tools: ['lookup'] })],
+      tools: [defineTool({ name: 'lookup', execute: () => 'ok' })],
+      workflows: [
+        defineWorkflow({
+          name: 'tool-budget-flow',
+          limits: { maxSteps: 10, maxToolCalls: 1 },
+          async run(step, input) {
+            await step.agent('first', 'worker', { input });
+            await step.agent('second', 'worker', { input });
+            return 'done';
+          },
+        }),
+      ],
+    });
+
+    await expect(toolBudgetApp.runWorkflow('tool-budget-flow', { input: 'go' })).rejects.toThrow(
+      'reached maxToolCalls limit of 0',
+    );
+  });
+
+  test('adds parallel child usage back into the shared workflow budget', async () => {
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async () => ({
+            output: 'ok',
+            usage: { inputTokens: 1, outputTokens: 3 },
+          })),
+        },
+      },
+      agents: [agent('worker')],
+      workflows: [
+        defineWorkflow({
+          name: 'parallel-budget-flow',
+          limits: { maxOutputTokens: 5 },
+          async run(step, input) {
+            await step.parallel('parallel', {
+              left: () => step.agent('left', 'worker', { input }),
+              right: () => step.agent('right', 'worker', { input }),
+            });
+            return 'done';
+          },
+        }),
+      ],
+    });
+
+    await expect(app.runWorkflow('parallel-budget-flow', { input: 'go' })).rejects.toThrow(
+      'exceeded maxOutputTokens limit of 5',
+    );
   });
 
   describe('definition guard', () => {
@@ -3117,6 +4599,50 @@ describe('createFevex', () => {
         message: 'Definition for agent "assistant" changed',
       });
       expect(await second.getRun(paused.runId)).toMatchObject({ status: 'paused' });
+    });
+
+    test('refuses to resume an agent after sandbox capabilities change', async () => {
+      const store = new InMemoryRunStore();
+      const sandbox = {
+        async run() {
+          return { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 0, timedOut: false };
+        },
+      };
+      const sandboxedTool = (command: string) =>
+        defineTool({
+          name: 'lookup',
+          approval: 'required',
+          idempotency: 'keyed',
+          sandbox: { process: { commands: [command] } },
+          execute: () => 'found',
+        });
+      const first = createFevex({
+        models: { default: approvalModel() },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [sandboxedTool('node')],
+        sandbox,
+        runStore: store,
+      });
+      let paused!: RunPausedError;
+      await first.runAgent('assistant', { input: 'hello' }).catch((error) => {
+        paused = error as RunPausedError;
+      });
+      expect(paused).toBeInstanceOf(RunPausedError);
+
+      const second = createFevex({
+        models: { default: approvalModel() },
+        agents: [agent('assistant', { tools: ['lookup'] })],
+        tools: [sandboxedTool('bun')],
+        sandbox,
+        runStore: store,
+      });
+
+      await expect(
+        second.resumeRun(paused.runId, approve(approvalIdOf(paused))),
+      ).rejects.toMatchObject({
+        code: 'RUN_DEFINITION_CHANGED',
+        message: 'Definition for agent "assistant" changed',
+      });
     });
   });
 });

@@ -3,6 +3,7 @@ import type {
   AgentRun,
   DurableRunStore,
   ExecutionCommit,
+  ExecutionCreate,
   ListEventsOptions,
   RunRecord,
   RunCheckpoint,
@@ -115,6 +116,35 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
       'SELECT data FROM tool_executions WHERE run_id = ? AND tool_call_id = ?',
     ).get(runId, toolCallId) as { data: string } | undefined;
     return row ? parse(row.data) : undefined;
+  }
+
+  async createExecution(create: ExecutionCreate): Promise<boolean> {
+    const created = immediateTransaction(this.#database, () => {
+      const existing = this.#database.prepare(
+        'SELECT 1 FROM runs WHERE id = ?',
+      ).get(create.run.id);
+      if (existing) return false;
+      if (create.session) this.#saveSession(create.session);
+      const run = { ...create.run, revision: 1 };
+      this.#database.prepare(
+        'INSERT INTO runs (id, session_id, revision, data) VALUES (?, ?, ?, ?)',
+      ).run(run.id, run.sessionId, run.revision, json(run));
+      this.#database.prepare(
+        'INSERT INTO checkpoints (run_id, data) VALUES (?, ?)',
+      ).run(run.id, json(create.checkpoint));
+      const insertEvent = this.#database.prepare(
+        'INSERT INTO events (id, run_id, sequence, data) VALUES (?, ?, ?, ?)',
+      );
+      for (const event of create.events) {
+        insertEvent.run(event.id, event.runId, event.sequence, json(event));
+      }
+      this.#database.prepare(
+        'INSERT INTO leases (run_id, owner_id, expires_at) VALUES (?, ?, ?)',
+      ).run(create.lease.runId, create.lease.ownerId, create.lease.expiresAt);
+      return true;
+    });
+    if (created) create.run.revision = 1;
+    return created;
   }
 
   async commitExecution(commit: ExecutionCommit): Promise<boolean> {
