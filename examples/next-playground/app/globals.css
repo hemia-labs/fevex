@@ -479,7 +479,8 @@
 }
 
 .conversation > *,
-.composer {
+.composer,
+.composer-examples {
   width: min(100%, 820px);
   margin-inline: auto;
 }
@@ -514,7 +515,60 @@
 
 .agent > div {
   display: grid;
-  gap: 3px;
+  gap: 5px;
+}
+
+.agent-instructions {
+  max-width: 720px;
+  margin: 4px 0 0;
+  color: #a1a1aa;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.composer-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.composer-examples button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #d4d4d8;
+  background: rgb(63 63 70 / 52%);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 12%);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.composer-examples button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-examples button svg {
+  flex: 0 0 auto;
+  color: #a1a1aa;
+}
+
+.composer-examples button:hover:not(:disabled) {
+  border-color: rgb(255 255 255 / 14%);
+  color: #f4f4f5;
+  background: rgb(82 82 91 / 72%);
+}
+
+.composer-examples button:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
 }
 
 .messages {
@@ -537,6 +591,239 @@
 
 .message > div {
   min-width: 0;
+}
+
+.approval-card {
+  display: grid;
+  gap: 0;
+  width: min(100%, 360px);
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  background: #101113;
+  box-shadow: 0 16px 44px rgb(0 0 0 / 28%);
+}
+
+.approval-card-body {
+  padding: 14px;
+}
+
+.approval-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #f4f4f5;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.approval-card-header > span {
+  display: grid;
+  gap: 3px;
+}
+
+.approval-card-header em {
+  color: #a1a1aa;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.approval-icon-button,
+.approval-card-footer button,
+.approval-option,
+.approval-reopen {
+  border: 0;
+  font: inherit;
+}
+
+.approval-icon-button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  color: #a1a1aa;
+  background: transparent;
+  cursor: pointer;
+}
+
+.approval-icon-button:hover:not(:disabled),
+.approval-card-footer button:hover:not(:disabled),
+.approval-reopen:hover:not(:disabled) {
+  color: #f4f4f5;
+  background: rgb(255 255 255 / 8%);
+}
+
+.approval-options {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  width: 100%;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #d4d4d8;
+  background: rgb(255 255 255 / 3%);
+  cursor: pointer;
+  text-align: left;
+}
+
+.approval-option:hover:not(:disabled),
+.approval-option[aria-pressed="true"] {
+  border-color: rgb(255 255 255 / 18%);
+  background: rgb(63 63 70 / 48%);
+  color: #f4f4f5;
+}
+
+.approval-option-mark {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 1px solid #71717a;
+  color: #0a0a0b;
+  background: transparent;
+}
+
+.approval-option-mark[data-kind="radio"] {
+  border-radius: 999px;
+}
+
+.approval-option-mark[data-kind="check"] {
+  border-radius: 4px;
+}
+
+.approval-option-mark[data-selected="true"] {
+  border-color: #d4d4d8;
+  background: #d4d4d8;
+}
+
+.approval-custom {
+  display: grid;
+  gap: 6px;
+  color: #a1a1aa;
+  font-size: 11px;
+}
+
+.approval-custom.inline {
+  margin-top: 2px;
+}
+
+.approval-custom input {
+  min-height: 36px;
+  width: 100%;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #f4f4f5;
+  background: rgb(5 5 6 / 82%);
+  outline: none;
+}
+
+.approval-custom input:focus {
+  border-color: rgb(255 255 255 / 22%);
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 7%);
+}
+
+.approval-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 3%);
+}
+
+.approval-pager {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.approval-card-footer button,
+.approval-reopen {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: #a1a1aa;
+  background: transparent;
+  cursor: pointer;
+}
+
+.approval-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 999px !important;
+  background: rgb(255 255 255 / 16%) !important;
+}
+
+.approval-dot[data-active="true"] {
+  background: #d4d4d8 !important;
+}
+
+.approval-dot[data-done="true"] {
+  background: rgb(212 212 216 / 46%) !important;
+}
+
+.approval-send {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 999px !important;
+  color: #ffffff !important;
+  background: var(--ruby) !important;
+}
+
+.approval-send[data-ready="false"] {
+  color: #71717a !important;
+  background: rgb(255 255 255 / 8%) !important;
+}
+
+.approval-sent {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px;
+  color: #f4f4f5;
+  font-size: 13px;
+}
+
+.approval-sent span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: #0a0a0b;
+  background: #22c55e;
+}
+
+.approval-reopen {
+  width: auto;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  color: #f4f4f5;
+  background: rgb(63 63 70 / 42%);
+}
+
+.approval-card button:disabled,
+.approval-card input:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 /* the run-activity / tool list UI now lives in components/ui/marker.tsx + Tailwind utilities */
@@ -814,9 +1101,9 @@
 }
 
 .composer {
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--pg-border);
-  border-radius: 8px;
+  border-radius: 18px;
   background: rgb(14 15 19 / 92%);
   box-shadow: 0 18px 50px rgb(0 0 0 / 34%);
   backdrop-filter: blur(16px);
@@ -832,13 +1119,15 @@
 
 .composer textarea {
   width: 100%;
+  min-height: 28px;
+  max-height: 96px;
   resize: none;
   border: 0;
   outline: 0;
-  padding: 4px;
+  padding: 2px 8px;
   color: #f4f4f5;
   background: transparent;
-  line-height: 1.5;
+  line-height: 1.35;
 }
 
 .composer textarea::placeholder {
@@ -854,21 +1143,14 @@
 }
 
 .composer-footer {
-  justify-content: space-between;
-  margin-top: 8px;
-}
-
-.composer-footer > span {
-  gap: 6px;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--pg-border);
-  border-radius: 6px;
-  color: var(--pg-muted);
-  font: 11px/1 ui-monospace, monospace;
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 
 .composer button {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
   border-color: var(--ruby);
   color: #ffffff;
   background: var(--ruby);

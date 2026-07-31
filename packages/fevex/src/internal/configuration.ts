@@ -38,6 +38,7 @@ const REASONING_EFFORTS = new Set<ReasoningEffort>([
 ]);
 
 const DEFAULT_CONNECTION_TIMEOUT_MS = 30_000;
+const INTERNAL_TOOL_PREFIX = 'fevex__';
 
 export interface FevexComposition {
   models: Map<string, ModelGateway>;
@@ -639,6 +640,11 @@ export function createComposition(config: FevexConfig): FevexComposition {
     );
     const name = definition.name;
     assertConfiguration(name.trim(), 'INVALID_TOOL', 'Tool name cannot be empty');
+    assertConfiguration(
+      !name.startsWith(INTERNAL_TOOL_PREFIX),
+      'INVALID_TOOL',
+      `Tool "${name}" uses reserved prefix "${INTERNAL_TOOL_PREFIX}"`,
+    );
     assertConfiguration(!tools.has(name), 'DUPLICATE_TOOL', `Tool "${name}" is duplicated`);
     assertConfiguration(
       definition.description === undefined || typeof definition.description === 'string',
@@ -923,6 +929,31 @@ export function createComposition(config: FevexConfig): FevexComposition {
       `Agent "${name}" modelOptions must be an object`,
     );
     assertConfiguration(
+      definition.elicitation === undefined ||
+        definition.elicitation === 'pause' ||
+        definition.elicitation === 'forbid',
+      'INVALID_AGENT',
+      `Agent "${name}" elicitation is invalid`,
+    );
+    assertConfiguration(
+      definition.approvalMode === undefined ||
+        definition.approvalMode === 'pause' ||
+        definition.approvalMode === 'deny',
+      'INVALID_AGENT',
+      `Agent "${name}" approvalMode is invalid`,
+    );
+    assertConfiguration(
+      definition.toolChoice === undefined ||
+        definition.toolChoice === 'auto' ||
+        definition.toolChoice === 'required' ||
+        definition.toolChoice === 'none' ||
+        (isRecord(definition.toolChoice) &&
+          typeof definition.toolChoice.name === 'string' &&
+          Boolean(definition.toolChoice.name.trim())),
+      'INVALID_AGENT',
+      `Agent "${name}" toolChoice is invalid`,
+    );
+    assertConfiguration(
       definition.limits === undefined || isRecord(definition.limits),
       'INVALID_AGENT',
       `Agent "${name}" limits must be an object`,
@@ -967,6 +998,18 @@ export function createComposition(config: FevexConfig): FevexComposition {
       ...(definition.modelOptions === undefined
         ? {}
         : { modelOptions: { ...definition.modelOptions } }),
+      ...(definition.toolChoice === undefined
+        ? {}
+        : {
+            toolChoice:
+              typeof definition.toolChoice === 'string'
+                ? definition.toolChoice
+                : { name: definition.toolChoice.name },
+          }),
+      ...(definition.elicitation === undefined ? {} : { elicitation: definition.elicitation }),
+      ...(definition.approvalMode === undefined
+        ? {}
+        : { approvalMode: definition.approvalMode }),
       ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
       ...(rawLimits === undefined
@@ -1010,6 +1053,15 @@ export function createComposition(config: FevexConfig): FevexComposition {
           `Tool "${toolName}" required by agent "${agent.name}" is not registered`,
         );
       }
+    }
+    if (
+      typeof agent.toolChoice === 'object' &&
+      !agent.tools?.includes(agent.toolChoice.name)
+    ) {
+      throw configurationError(
+        'MISSING_TOOL',
+        `Tool "${agent.toolChoice.name}" required by agent "${agent.name}" toolChoice is not registered`,
+      );
     }
     for (const providerName of [...(agent.context ?? []), ...(agent.skills ?? [])]) {
       if (!contextProviders.has(providerName)) {

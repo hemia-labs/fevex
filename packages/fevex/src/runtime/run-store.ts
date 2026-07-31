@@ -7,6 +7,7 @@ import type {
   RunId,
 } from '../core';
 import type { ModelUsage } from '../models';
+import type { ToolChoice } from '../models';
 import type { AgentLimits } from '../agents';
 
 /** Stable identifier for conversation history shared across runs. */
@@ -22,7 +23,20 @@ export interface ApprovalRequest {
   requestedAt: string;
 }
 
+export type ElicitationMode = 'pause' | 'forbid';
+export type ApprovalMode = 'pause' | 'deny';
+
+export interface ElicitationRequest {
+  id: string;
+  toolCallId: string;
+  prompt: string;
+  responseSchema: JsonObject;
+  requestedAt: string;
+  expiresAt?: string;
+}
+
 export type AgentRunPause =
+  | { type: 'elicitation'; request: ElicitationRequest }
   | { type: 'approval'; approval: ApprovalRequest }
   | {
       type: 'tool_execution_unknown';
@@ -39,6 +53,14 @@ export type RunPause =
       childPause: AgentRunPause;
     }
   | {
+      type: 'workflow_children';
+      children: Array<{
+        stepId: string;
+        childRunId: RunId;
+        childPause: AgentRunPause;
+      }>;
+    }
+  | {
       type: 'workflow_timer';
       stepId: string;
       resumeAt: string;
@@ -53,6 +75,13 @@ export interface ApprovalResolution {
   type: 'approval';
   approvalId: string;
   decision: 'approve' | 'reject';
+  actor: { id: string; type?: string };
+}
+
+export interface ElicitationResolution {
+  type: 'elicitation';
+  requestId: string;
+  value: JsonValue;
   actor: { id: string; type?: string };
 }
 
@@ -84,6 +113,7 @@ export type EventResolution = {
 };
 
 export type ResumeRunResolution =
+  | ElicitationResolution
   | ApprovalResolution
   | ToolExecutionResolution
   | TimerResolution
@@ -194,6 +224,9 @@ export interface RunCheckpoint {
   seenToolCallIds: string[];
   pendingTools: PendingToolExecution[];
   pendingIndex: number;
+  effectiveElicitationMode?: ElicitationMode;
+  effectiveApprovalMode?: ApprovalMode;
+  effectiveToolChoice?: ToolChoice;
 }
 
 export type WorkflowStepRecord =
@@ -344,6 +377,9 @@ export interface RunRequest<TInput = unknown, TOutput = unknown> {
   input: TInput;
   context?: ExecutionContext;
   limits?: AgentLimits;
+  elicitation?: ElicitationMode;
+  approvalMode?: ApprovalMode;
+  toolChoice?: ToolChoice;
   sessionId?: SessionId;
   signal?: AbortSignal;
 }

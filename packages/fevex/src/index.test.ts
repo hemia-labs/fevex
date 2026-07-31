@@ -2636,6 +2636,198 @@ describe('createFevex', () => {
     ]);
   });
 
+  test('pauses for elicitation and resumes from another runtime', async () => {
+    const store = new InMemoryRunStore();
+    const calls: ModelInput[] = [];
+    const elicitationCall: ToolCall = {
+      id: 'elicit-1',
+      name: 'fevex__elicit',
+      input: {
+        prompt: 'Which account should I use?',
+        responseSchema: {
+          type: 'object',
+          properties: { accountId: { type: 'string' } },
+          required: ['accountId'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const configuredModel = (): ModelGateway => ({
+      stream: streamFrom(async (input) => {
+        calls.push(input);
+        return input.messages.some(
+          (message) => message.role === 'tool' && message.toolCallId === 'elicit-1',
+        )
+          ? { output: 'using account-42' }
+          : { toolCalls: [elicitationCall] };
+      }),
+    });
+    const makeApp = () =>
+      createFevex({
+        models: { default: configuredModel() },
+        agents: [agent('assistant', { elicitation: 'pause' })],
+        runStore: store,
+      });
+
+    let paused!: RunPausedError;
+    await makeApp().runAgent('assistant', { input: 'hello' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+
+    expect(paused).toBeInstanceOf(RunPausedError);
+    expect(paused.pause).toMatchObject({
+      type: 'elicitation',
+      request: {
+        toolCallId: 'elicit-1',
+        prompt: 'Which account should I use?',
+      },
+    });
+    expect(calls[0]?.tools?.map(({ name }) => name)).toContain('fevex__elicit');
+
+    const second = makeApp();
+    await second.resumeRun(paused.runId, {
+      type: 'elicitation',
+      requestId: paused.pause.type === 'elicitation' ? paused.pause.request.id : '',
+      value: { accountId: 'account-42' },
+      actor: { id: 'user-1', type: 'user' },
+    });
+    await Bun.sleep(5);
+
+    expect(await second.getRun(paused.runId)).toMatchObject({
+      status: 'completed',
+      output: 'using account-42',
+    });
+    expect(calls[1]?.messages.at(-1)).toEqual({
+      role: 'tool',
+      name: 'fevex__elicit',
+      toolCallId: 'elicit-1',
+      content: '{"accountId":"account-42"}',
+    });
+    expect((await second.listEvents(paused.runId)).map(({ type }) => type)).toEqual([
+      'run.started',
+      'model.started',
+      'model.completed',
+      'elicitation.requested',
+      'run.paused',
+      'elicitation.resolved',
+      'run.resumed',
+      'model.started',
+      'model.output.delta',
+      'model.completed',
+      'run.completed',
+    ]);
+  });
+
+  test('forbids elicitation by default', async () => {
+    const calls: ModelInput[] = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => {
+            calls.push(input);
+            return { output: 'done' };
+          }),
+        },
+      },
+      agents: [agent('assistant')],
+    });
+
+    await app.runAgent('assistant', { input: 'hello' });
+
+    expect(calls[0]?.tools?.some(({ name }) => name === 'fevex__elicit') ?? false).toBe(false);
+  });
+
+  test('rejects invalid elicitation resolutions without resuming', async () => {
+    const store = new InMemoryRunStore();
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) =>
+            input.messages.some(({ role }) => role === 'tool')
+              ? { output: 'done' }
+              : {
+                  toolCalls: [{
+                    id: 'elicit-1',
+                    name: 'fevex__elicit',
+                    input: {
+                      prompt: 'Account?',
+                      responseSchema: {
+                        type: 'object',
+                        properties: { accountId: { type: 'string' } },
+                        required: ['accountId'],
+                        additionalProperties: false,
+                      },
+                    },
+                  }],
+                },
+          ),
+        },
+      },
+      agents: [agent('assistant', { elicitation: 'pause' })],
+      runStore: store,
+    });
+
+    let paused!: RunPausedError;
+    await app.runAgent('assistant', { input: 'hello' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    const requestId = paused.pause.type === 'elicitation' ? paused.pause.request.id : '';
+
+    await expect(
+      app.resumeRun(paused.runId, {
+        type: 'elicitation',
+        requestId,
+        value: { accountId: 42 },
+        actor: { id: 'user-1' },
+      }),
+    ).rejects.toMatchObject({ code: 'ELICITATION_INVALID' });
+    await expect(
+      app.resumeRun(paused.runId, {
+        type: 'elicitation',
+        requestId: 'wrong',
+        value: { accountId: 'account-42' },
+        actor: { id: 'user-1' },
+      }),
+    ).rejects.toMatchObject({ code: 'ELICITATION_INVALID' });
+    expect(await app.getRun(paused.runId)).toMatchObject({ status: 'paused' });
+  });
+
+  test('passes toolChoice and denies approvals in autonomous mode', async () => {
+    const calls: ModelInput[] = [];
+    const app = createFevex({
+      models: {
+        default: {
+          stream: streamFrom(async (input) => {
+            calls.push(input);
+            return { toolCalls: [lookupCall] };
+          }),
+        },
+      },
+      agents: [
+        agent('assistant', {
+          tools: ['lookup'],
+          toolChoice: 'required',
+          approvalMode: 'deny',
+        }),
+      ],
+      tools: [
+        defineTool({
+          name: 'lookup',
+          approval: 'required',
+          execute() {
+            throw new Error('must not execute');
+          },
+        }),
+      ],
+    });
+
+    await expect(app.runAgent('assistant', { input: 'hello' })).rejects.toMatchObject({
+      code: 'POLICY_DENIED',
+      message: 'Tool "lookup" requires approval but approvalMode is "deny"',
+    });
+    expect(calls[0]?.toolChoice).toBe('required');
+  });
+
   test('pauses for approval and resumes from another runtime', async () => {
     const store = new InMemoryRunStore();
     let executions = 0;
@@ -3517,6 +3709,72 @@ describe('createFevex', () => {
       'workflow.step.completed',
       'workflow.run.completed',
     ]);
+  });
+
+  test('aggregates parallel child elicitations and resumes the matching child', async () => {
+    const store = new InMemoryRunStore();
+    const model = (): ModelGateway => ({
+      stream: streamFrom(async (input) => {
+        const user = [...input.messages].reverse().find((message) => message.role === 'user')?.content ?? 'x';
+        return input.messages.some(({ role }) => role === 'tool')
+          ? { output: `done-${user}` }
+          : {
+              toolCalls: [{
+                id: `elicit-${user}`,
+                name: 'fevex__elicit',
+                input: {
+                  prompt: `Need ${user}`,
+                  responseSchema: {
+                    type: 'object',
+                    properties: { value: { type: 'string' } },
+                    required: ['value'],
+                    additionalProperties: false,
+                  },
+                },
+              }],
+            };
+      }),
+    });
+    const workflow = defineWorkflow({
+      name: 'parallel-elicit',
+      async run(step) {
+        return step.parallel('batch', {
+          a: () => step.agent('a', 'asker', { input: 'a' }),
+          b: () => step.agent('b', 'asker', { input: 'b' }),
+        });
+      },
+    });
+    const app = createFevex({
+      models: { default: model() },
+      agents: [agent('asker', { elicitation: 'pause' })],
+      workflows: [workflow],
+      runStore: store,
+    });
+
+    let paused!: RunPausedError;
+    await app.runWorkflow('parallel-elicit', { input: 'start' }).catch((error) => {
+      paused = error as RunPausedError;
+    });
+    expect(paused.pause.type).toBe('workflow_children');
+    const children = paused.pause.type === 'workflow_children' ? paused.pause.children : [];
+    expect(children.map(({ stepId }) => stepId).sort()).toEqual(['a', 'b']);
+    const childB = children.find(({ stepId }) => stepId === 'b')!;
+    expect(childB.childPause.type).toBe('elicitation');
+
+    await app.resumeRun(paused.runId, {
+      type: 'elicitation',
+      requestId: childB.childPause.type === 'elicitation' ? childB.childPause.request.id : '',
+      value: { value: 'b-value' },
+      actor: { id: 'user-1' },
+    });
+    await Bun.sleep(5);
+
+    const parent = await app.getRun(paused.runId);
+    expect(parent).toMatchObject({ status: 'paused' });
+    expect(parent?.pause).toMatchObject({
+      type: 'workflow_child',
+      childRunId: children.find(({ stepId }) => stepId === 'a')!.childRunId,
+    });
   });
 
   test('cancels a paused workflow child before cancelling its parent', async () => {

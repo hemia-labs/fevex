@@ -49,11 +49,23 @@ export class FevexService {
   }
 
   listAgents() {
-    return agentCatalog.map(({ name, label, description }) => ({ name, label, description }));
+    return agentCatalog.map(({ name, label, description, instructions, examples }) => ({
+      name,
+      label,
+      description,
+      instructions,
+      examples,
+    }));
   }
 
   listWorkflows() {
-    return workflowCatalog.map(({ name, label, description }) => ({ name, label, description }));
+    return workflowCatalog.map(({ name, label, description, instructions, examples }) => ({
+      name,
+      label,
+      description,
+      instructions,
+      examples,
+    }));
   }
 
 }

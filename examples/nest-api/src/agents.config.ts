@@ -12,24 +12,47 @@ import {
 const localAgentCatalog = [
   {
     name: 'support',
-    label: 'Support',
-    description: 'Answers account questions using tools.',
+    label: 'Soporte',
+    description: 'Responde preguntas de cuentas usando tools.',
     instructions:
-      'Answer account questions clearly. Use tools when account data is needed. When showing account data from accounts_get, respond with a Markdown table using the columns Campo and Valor.',
+      'Responde preguntas de cuentas con claridad. Usa tools cuando necesites datos de cuenta. Cuando muestres datos de accounts_get, responde con una tabla Markdown usando las columnas Campo y Valor.',
+    examples: [
+      'Muestra el estado y plan de la cuenta 42.',
+      '¿Qué plan tiene la cuenta 15?',
+    ],
   },
   {
     name: 'ops',
-    label: 'Ops Triage',
-    description: 'Investigates account health using account, tickets, metrics and incidents tools.',
+    label: 'Triage Ops',
+    description: 'Investiga salud de cuentas con datos, tickets, métricas e incidentes.',
     instructions:
-      'You are an operations triage agent. Investigate the account before answering: get the account, recent tickets, service metrics and open incidents when relevant. Present findings in Markdown with a short status, tables for data, and clear next actions. Only create an escalation when the user asks you to escalate or when there is an open critical incident.',
+      'Eres un agente de triage operativo. Investiga la cuenta antes de responder: consulta la cuenta, tickets recientes, métricas de servicio e incidentes abiertos cuando sea relevante. Presenta hallazgos en Markdown con un estado breve, tablas para los datos y siguientes acciones claras. Crea una escalación sólo cuando el usuario la pida o cuando exista un incidente crítico abierto.',
+    examples: [
+      'Investiga la salud de la cuenta 25.',
+      'Revisa incidentes y tickets de la cuenta 42.',
+    ],
   },
   {
     name: 'sandbox-code',
-    label: 'Sandbox Code',
-    description: 'Runs a tiny allowlisted local command through the development sandbox.',
+    label: 'Código Sandbox',
+    description: 'Ejecuta expresiones cortas en el sandbox local de desarrollo.',
     instructions:
-      'Use sandbox_run to evaluate short arithmetic expressions. Explain that this is a local development sandbox, not production isolation.',
+      'Usa sandbox_run para evaluar expresiones aritméticas cortas. Explica que esto es un sandbox local de desarrollo, no aislamiento de producción.',
+    examples: [
+      'Calcula (18 + 24) / 3.',
+      'Evalúa 12 * (7 + 5).',
+    ],
+  },
+  {
+    name: 'elicitation-support',
+    label: 'Soporte con Elicitation',
+    description: 'Pausa de forma durable para pedir datos faltantes de la cuenta.',
+    instructions:
+      'Ayuda con solicitudes de soporte de cuentas. Si el usuario no proporcionó un ID de cuenta, llama fevex__elicit como única tool call y solicita un objeto con accountId como número. Después de recibirlo, usa accounts_get y responde con una tabla Markdown concisa.',
+    examples: [
+      '¿Puedes revisar el estado de mi cuenta?',
+      'Necesito soporte para mi cuenta.',
+    ],
   },
 ];
 
@@ -38,18 +61,33 @@ export const agentCatalog = [...localAgentCatalog, ...capabilityAgentCatalog];
 export const workflowCatalog = [
   {
     name: 'support-workflow',
-    label: 'Smart Support Workflow',
-    description: 'Routes simple account questions to Support and operational questions to Ops.',
+    label: 'Flujo de Soporte Inteligente',
+    description: 'Enruta preguntas simples a Support y preguntas operativas a Ops.',
+    instructions: 'Úsalo cuando quieras que Fevex elija el agente correcto para una solicitud de soporte u operaciones.',
+    examples: [
+      '¿Cuál es el estado de la cuenta 42?',
+      'Investiga la latencia de la cuenta 25.',
+    ],
   },
   {
     name: 'incident-workflow',
-    label: 'Incident Workflow',
-    description: 'Runs Support and Ops in parallel, then merges both perspectives.',
+    label: 'Flujo de Incidentes',
+    description: 'Ejecuta Support y Ops en paralelo y combina ambas perspectivas.',
+    instructions: 'Úsalo para comparar hallazgos de soporte y operaciones sobre incidentes, latencia, tickets o salud de cuenta.',
+    examples: [
+      'Dame un resumen completo de incidentes para la cuenta 25.',
+      'Compara señales de soporte y operaciones para la cuenta 42.',
+    ],
   },
   {
     name: 'review-workflow',
-    label: 'Durable Review Workflow',
-    description: 'Drafts an answer, waits for an external review event, then finalizes it.',
+    label: 'Flujo de Revisión Durable',
+    description: 'Redacta una respuesta, espera revisión externa y luego finaliza.',
+    instructions: 'Úsalo para demostrar una pausa durable de revisión externa antes de producir la respuesta final.',
+    examples: [
+      'Redacta una actualización para el cliente de la cuenta 25.',
+      'Prepara una respuesta revisada sobre un incidente de API.',
+    ],
   },
 ];
 
@@ -253,7 +291,10 @@ export const agents = [
         ? ['accounts_get']
         : name === 'sandbox-code'
           ? ['sandbox_run']
+          : name === 'elicitation-support'
+            ? ['accounts_get']
         : localTools.map((tool) => tool.name),
+    ...(name === 'elicitation-support' ? { elicitation: 'pause' as const } : {}),
   })),
   ...capabilityAgents,
 ];

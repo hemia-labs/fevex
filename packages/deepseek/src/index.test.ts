@@ -194,6 +194,36 @@ describe('createDeepSeek', () => {
     expect(bodies.map(({ max_tokens }) => max_tokens)).toEqual([30, 20]);
   });
 
+  test('translates neutral toolChoice', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const model = createDeepSeek({
+      apiKey: 'test-key',
+      schemaPolicy: 'best-effort',
+      fetch: async (_url, init) => {
+        bodies.push(JSON.parse(init?.body as string));
+        return ok({
+          choices: [{ finish_reason: 'stop', message: { content: 'done' } }],
+        });
+      },
+    })('deepseek-chat');
+
+    await collectModel(
+      model,
+      input({
+        tools: [{
+          name: 'lookup',
+          inputSchema: { type: 'object', additionalProperties: false },
+        }],
+        toolChoice: { name: 'lookup' },
+      }),
+    );
+
+    expect(bodies[0]?.tool_choice).toEqual({
+      type: 'function',
+      function: { name: 'lookup' },
+    });
+  });
+
   test('sends best-effort tools and replays reasoning with tool results', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [

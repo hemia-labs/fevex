@@ -1,6 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { ExactDefinition } from '../internal/exact-definition';
-import type { ModelRef, ReasoningEffort } from '../models';
+import type { ModelRef, ReasoningEffort, ToolChoice } from '../models';
+import type { ApprovalMode, ElicitationMode } from '../runtime';
 
 /** Resource limits enforced by the runtime for a single agent run. */
 export interface AgentLimits {
@@ -20,6 +21,9 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   skills?: string[];
   reasoning?: ReasoningEffort;
   modelOptions?: Record<string, unknown>;
+  toolChoice?: ToolChoice;
+  elicitation?: ElicitationMode;
+  approvalMode?: ApprovalMode;
   inputSchema?: StandardSchemaV1<unknown, TInput>;
   outputSchema?: StandardSchemaV1<unknown, TOutput>;
   limits?: AgentLimits;

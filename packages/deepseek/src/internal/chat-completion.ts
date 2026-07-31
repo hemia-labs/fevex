@@ -256,6 +256,9 @@ function buildRequestBody(config: ResolvedDeepSeekConfig, modelId: string, input
     ...(input.tools?.length
       ? {
           tools: input.tools.map((tool) => toDeepSeekTool(tool, strict)),
+          ...(toDeepSeekToolChoice(input) === undefined
+            ? {}
+            : { tool_choice: toDeepSeekToolChoice(input) }),
           parallel_tool_calls: false,
         }
       : {}),
@@ -266,6 +269,14 @@ function buildRequestBody(config: ResolvedDeepSeekConfig, modelId: string, input
     stream: true,
     stream_options: { include_usage: true },
   };
+}
+
+function toDeepSeekToolChoice(input: ModelInput): unknown {
+  if (!input.tools?.length || input.toolChoice === undefined || input.toolChoice === 'auto') {
+    return undefined;
+  }
+  if (typeof input.toolChoice === 'string') return input.toolChoice;
+  return { type: 'function', function: { name: input.toolChoice.name } };
 }
 
 function appendToolCallDeltas(

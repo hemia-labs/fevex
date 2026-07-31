@@ -57,6 +57,8 @@ export type AgentEventType =
   | 'tool.failed'
   | 'tool.retrying'
   | 'tool.execution_unknown'
+  | 'elicitation.requested'
+  | 'elicitation.resolved'
   | 'approval.requested'
   | 'approval.resolved'
   | 'run.completed'
@@ -95,7 +97,10 @@ export type AgentEventType =
 export interface AgentEventPayloads {
   'run.started': undefined;
   'run.recovered': { actorId: string };
-  'run.paused': { reason: 'approval' | 'tool_execution_unknown'; toolCallId: string };
+  'run.paused': {
+    reason: 'elicitation' | 'approval' | 'tool_execution_unknown';
+    toolCallId: string;
+  };
   'run.resumed': undefined;
   'model.started': {
     step: number;
@@ -175,6 +180,29 @@ export interface AgentEventPayloads {
     toolCallId: string;
     toolName: string;
     source?: ToolEventSource;
+    workflowStepId?: string;
+    workflowAgentName?: string;
+    teamDelegationId?: string;
+    teamAgentName?: string;
+  };
+  'elicitation.requested': {
+    request: {
+      id: string;
+      toolCallId: string;
+      prompt: string;
+      responseSchema: JsonObject;
+      requestedAt: string;
+      expiresAt?: string;
+    };
+    workflowStepId?: string;
+    workflowAgentName?: string;
+    teamDelegationId?: string;
+    teamAgentName?: string;
+  };
+  'elicitation.resolved': {
+    requestId: string;
+    toolCallId: string;
+    actorId: string;
     workflowStepId?: string;
     workflowAgentName?: string;
     teamDelegationId?: string;

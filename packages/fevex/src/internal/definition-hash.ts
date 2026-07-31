@@ -86,6 +86,9 @@ export async function definitionHash(
     tools: toolDefinitions,
     reasoning: agent.reasoning,
     modelOptions: agent.modelOptions,
+    toolChoice: agent.toolChoice,
+    elicitation: agent.elicitation,
+    approvalMode: agent.approvalMode,
     limits: agent.limits,
     inputSchema:
       agent.inputSchema === undefined

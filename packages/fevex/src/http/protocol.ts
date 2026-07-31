@@ -17,6 +17,7 @@ export interface StartRunHttpRequest<TInput extends JsonValue = JsonValue> {
 }
 
 export type ResumeRunHttpRequest =
+  | { type: 'elicitation'; requestId: string; value: JsonValue }
   | { type: 'approval'; approvalId: string; decision: 'approve' | 'reject' }
   | {
       type: 'tool_execution';

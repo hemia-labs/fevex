@@ -1,6 +1,6 @@
 import type { AgentEvent, ExecutionContext, JsonObject } from '../core';
 import type { Fevex } from '../fevex';
-import type { AgentRun, SessionId } from '../runtime';
+import type { AgentRun, ElicitationRequest, SessionId } from '../runtime';
 
 export interface ChannelMessage {
   id: string;
@@ -28,6 +28,7 @@ export interface ChannelAdapter<TInput = unknown, TOutput = unknown> {
   name: string;
   parse(input: TInput, context: ChannelContext): Promise<ChannelMessage | null>;
   deliver(output: ChannelOutput, context: ChannelContext): Promise<TOutput>;
+  deliverElicitation?(request: ElicitationRequest, context: ChannelContext): Promise<TOutput>;
 }
 
 export type ChannelEventType = 'channel.received' | 'channel.delivered' | 'channel.failed';

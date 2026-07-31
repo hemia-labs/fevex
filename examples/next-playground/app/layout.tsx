@@ -8,12 +8,12 @@ const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: 'Fevex Playground',
-  description: 'Next.js playground for Fevex examples.',
+  description: 'Playground Next.js para ejemplos de Fevex.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={cn("dark font-sans", geist.variable)}>
+    <html lang="es" className={cn("dark font-sans", geist.variable)}>
       <body>{children}</body>
     </html>
   );

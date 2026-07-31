@@ -4,15 +4,17 @@ import type {
   AgentEventType,
   AgentMessage,
   ExecutionContext,
+  JsonObject,
   JsonValue,
 } from '../core';
 import type { Fevex } from '../fevex';
 import type { ContextBlock, KnowledgeContext, MemoryStore } from '../knowledge';
-import type { ModelGateway, ModelUsage } from '../models';
+import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import type { PolicyDecision } from '../policies';
 import { FevexRunError, RunPausedError } from '../run-error';
 import {
   isDurableRunStore,
+  type AgentRunPause,
   type AgentRun,
   type DurableRunStore,
   type PendingToolExecution,
@@ -32,7 +34,13 @@ import {
   type WorkflowRun,
   type WorkflowStepRecord,
 } from '../runtime';
-import { IntegrationError, toToolSpec, type ToolDefinition } from '../tools';
+import {
+  compileFevexJsonSchema,
+  IntegrationError,
+  toToolSpec,
+  validateFevexJsonSchemaProfile,
+  type ToolDefinition,
+} from '../tools';
 import type {
   WorkflowAgentResult,
   WorkflowEventResult,
@@ -71,6 +79,7 @@ import {
 
 const LEASE_MS = 30_000;
 const LEASE_RENEW_MS = 10_000;
+const ELICIT_TOOL_NAME = 'fevex__elicit';
 
 interface ExecutionState<TInput = unknown, TOutput = unknown> {
   run: AgentRun;
@@ -118,6 +127,61 @@ function containsSecret(value: JsonValue, secrets: readonly string[]): boolean {
   return false;
 }
 
+function effectiveElicitationMode(
+  agent: { elicitation?: 'pause' | 'forbid' },
+  request: { elicitation?: 'pause' | 'forbid' },
+) {
+  return request.elicitation ?? agent.elicitation ?? 'forbid';
+}
+
+function effectiveApprovalMode(
+  agent: { approvalMode?: 'pause' | 'deny' },
+  request: { approvalMode?: 'pause' | 'deny' },
+) {
+  return request.approvalMode ?? agent.approvalMode ?? 'pause';
+}
+
+function effectiveToolChoice(
+  agent: { toolChoice?: ToolChoice },
+  request: { toolChoice?: ToolChoice },
+) {
+  return request.toolChoice ?? agent.toolChoice ?? 'auto';
+}
+
+function isElicitationToolCall(call: { name: string }) {
+  return call.name === ELICIT_TOOL_NAME;
+}
+
+function readElicitationInput(input: JsonValue): {
+  prompt: string;
+  responseSchema: JsonObject;
+  expiresAt?: string;
+} {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new TypeError('Elicitation input must be an object');
+  }
+  const prompt = input.prompt;
+  const responseSchema = input.responseSchema;
+  const expiresAt = input.expiresAt;
+  if (typeof prompt !== 'string' || !prompt.trim()) {
+    throw new TypeError('Elicitation prompt must be a non-empty string');
+  }
+  if (typeof responseSchema !== 'object' || responseSchema === null || Array.isArray(responseSchema)) {
+    throw new TypeError('Elicitation responseSchema must be an object');
+  }
+  validateFevexJsonSchemaProfile(responseSchema);
+  if (expiresAt !== undefined) {
+    if (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt))) {
+      throw new TypeError('Elicitation expiresAt must be a valid ISO date string');
+    }
+  }
+  return {
+    prompt,
+    responseSchema,
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+  };
+}
+
 function isCoordinatorRun(run: RunRecord): run is CoordinatorRun {
   return run.kind === 'workflow' || run.kind === 'team';
 }
@@ -137,6 +201,22 @@ class WorkflowChildPausedError extends Error {
   ) {
     super(paused.message, { cause: paused });
   }
+}
+
+function pauseMatchesResolution(
+  pause: AgentRunPause,
+  resolution: ResumeRunResolution,
+): boolean {
+  if (pause.type === 'elicitation' && resolution.type === 'elicitation') {
+    return pause.request.id === resolution.requestId;
+  }
+  if (pause.type === 'approval' && resolution.type === 'approval') {
+    return pause.approval.id === resolution.approvalId;
+  }
+  if (pause.type === 'tool_execution_unknown' && resolution.type === 'tool_execution') {
+    return pause.toolCallId === resolution.toolCallId;
+  }
+  return false;
 }
 
 function mergeExecutionContext(
@@ -563,6 +643,9 @@ export function createRuntime({
           seenToolCallIds: [],
           pendingTools: [],
           pendingIndex: 0,
+          effectiveElicitationMode: effectiveElicitationMode(agent, request),
+          effectiveApprovalMode: effectiveApprovalMode(agent, request),
+          effectiveToolChoice: effectiveToolChoice(agent, request),
         };
         const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
         const started = createEvent(state, 'run.started', undefined) as AgentEvent;
@@ -849,6 +932,12 @@ export function createRuntime({
       seenToolCallIds: [...seenToolCallIds],
       pendingTools: structuredClone(pendingTools),
       pendingIndex,
+      effectiveElicitationMode:
+        state.checkpoint?.effectiveElicitationMode ?? effectiveElicitationMode(agent, state.request),
+      effectiveApprovalMode:
+        state.checkpoint?.effectiveApprovalMode ?? effectiveApprovalMode(agent, state.request),
+      effectiveToolChoice:
+        state.checkpoint?.effectiveToolChoice ?? effectiveToolChoice(agent, state.request),
     };
   };
 
@@ -1031,6 +1120,12 @@ export function createRuntime({
               'output',
               `Output schema for agent "${name}" is not transportable`,
             );
+      const currentElicitationMode =
+        state.checkpoint?.effectiveElicitationMode ?? effectiveElicitationMode(agent, request);
+      const currentApprovalMode =
+        state.checkpoint?.effectiveApprovalMode ?? effectiveApprovalMode(agent, request);
+      const currentToolChoice =
+        state.checkpoint?.effectiveToolChoice ?? effectiveToolChoice(agent, request);
       const agentTools = await Promise.all((agent.tools ?? []).map(async (toolName) => {
         const tool = tools.get(toolName)!;
         const remote = await tool.resolve?.({ context: request.context });
@@ -1051,19 +1146,49 @@ export function createRuntime({
           inputSchema,
         );
       }));
+      const allTools = currentElicitationMode === 'pause'
+        ? [
+            ...agentTools,
+            {
+              name: ELICIT_TOOL_NAME,
+              description: 'Request external information required to continue this run.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  prompt: { type: 'string' },
+                  responseSchema: { type: 'object' },
+                  expiresAt: { type: 'string' },
+                },
+                required: ['prompt', 'responseSchema'],
+                additionalProperties: false,
+              },
+            },
+          ]
+        : agentTools;
       const effectiveLimits = state.checkpoint?.limits ?? combineLimits(agent.limits, request.limits);
       const maxSteps = effectiveLimits?.maxSteps ?? DEFAULT_MAX_STEPS;
       const maxToolCalls = effectiveLimits?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
+      if (
+        typeof currentToolChoice === 'object' &&
+        !allTools.some((tool) => tool.name === currentToolChoice.name)
+      ) {
+        throw new Error(`Tool "${currentToolChoice.name}" is not available to agent "${name}"`);
+      }
 
       while (step <= maxSteps) {
         request.signal.throwIfAborted();
 
         if (pendingTools.length === 0) {
           const hasToolBudget = step < maxSteps && toolCallCount < maxToolCalls;
+          const modelToolChoice: ToolChoice | undefined =
+            hasToolBudget && allTools.length
+              ? (currentToolChoice === 'auto' ? undefined : currentToolChoice)
+              : undefined;
           yield await emit('model.started', { step });
           const modelStream = readModelStream(model, {
             messages: [...messages],
-            tools: hasToolBudget && agentTools.length ? agentTools : undefined,
+            tools: hasToolBudget && allTools.length ? allTools : undefined,
+            ...(modelToolChoice === undefined ? {} : { toolChoice: modelToolChoice }),
             reasoning: agent.reasoning,
             modelOptions: agent.modelOptions,
             outputSchema,
@@ -1191,6 +1316,80 @@ export function createRuntime({
           if (result.toolCalls.length > maxToolCalls - toolCallCount) {
             throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
           }
+          const elicitationCall = result.toolCalls.find(isElicitationToolCall);
+          if (elicitationCall) {
+            if (!isDurableRunStore(runStore)) {
+              throw new FevexRunError(
+                'DURABLE_STORE_REQUIRED',
+                'Elicitation requires a DurableRunStore',
+                state.run.id,
+              );
+            }
+            if (currentElicitationMode !== 'pause') {
+              throw new Error(`Tool "${ELICIT_TOOL_NAME}" is not available to agent "${name}"`);
+            }
+            if (result.toolCalls.length !== 1) {
+              throw new Error(`${ELICIT_TOOL_NAME} must be the only tool call in a model turn`);
+            }
+            if (!elicitationCall.id?.trim()) throw new Error('Tool call id cannot be empty');
+            if (seenToolCallIds.has(elicitationCall.id)) {
+              throw new Error(`Tool call id "${elicitationCall.id}" is duplicated in run "${state.run.id}"`);
+            }
+            const rawInput = toJsonValue(
+              elicitationCall.input,
+              `Input for tool "${ELICIT_TOOL_NAME}" must be JSON-serializable`,
+            );
+            const input = readElicitationInput(rawInput);
+            seenToolCallIds.add(elicitationCall.id);
+            messages.push({
+              role: 'assistant',
+              content:
+                result.output === undefined
+                  ? ''
+                  : serializeValue(
+                      result.output,
+                      `Model output for agent "${name}" must be serializable`,
+                    ),
+              toolCalls: [{ ...elicitationCall, input: rawInput }],
+            });
+            const checkpoint = await durableCheckpoint(
+              state,
+              model,
+              modelName,
+              messages,
+              inputContent,
+              usage,
+              providerState,
+              step + 1,
+              toolCallCount,
+              seenToolCallIds,
+              [],
+              0,
+            );
+            const request = {
+              id: crypto.randomUUID(),
+              toolCallId: elicitationCall.id,
+              prompt: input.prompt,
+              responseSchema: input.responseSchema,
+              requestedAt: new Date().toISOString(),
+              ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+            };
+            state.run.status = 'paused';
+            state.run.pause = { type: 'elicitation', request };
+            const requested = createEvent(state, 'elicitation.requested', {
+              request,
+            }) as AgentEvent;
+            const paused = createEvent(state, 'run.paused', {
+              reason: 'elicitation',
+              toolCallId: elicitationCall.id,
+            }) as AgentEvent;
+            await commit(state, { checkpoint, events: [requested, paused] });
+            events.push(requested, paused);
+            await releaseExecution(state);
+            yield requested;
+            yield paused;
+            return undefined;
+          }
           const batch = new Set<string>();
           pendingTools = [];
           for (const call of result.toolCalls) {
@@ -1272,6 +1471,13 @@ export function createRuntime({
             && record?.status !== 'started'
             && record?.status !== 'completed'
           ) {
+            if (currentApprovalMode === 'deny') {
+              throw new FevexRunError(
+                'POLICY_DENIED',
+                `Tool "${tool.name}" requires approval but approvalMode is "deny"`,
+                state.run.id,
+              );
+            }
             const checkpoint = await durableCheckpoint(
               state,
               model,
@@ -1412,6 +1618,13 @@ export function createRuntime({
             if (attempt > 0) {
               const retryDecision = await authorize(state, tool, pending.input, 'tool.execute');
               if (retryDecision === 'require_approval') {
+                if (currentApprovalMode === 'deny') {
+                  throw new FevexRunError(
+                    'POLICY_DENIED',
+                    `Tool "${tool.name}" requires approval but approvalMode is "deny"`,
+                    state.run.id,
+                  );
+                }
                 const checkpoint = await durableCheckpoint(
                   state,
                   model,
@@ -1712,7 +1925,9 @@ export function createRuntime({
     ): Promise<never> => {
       if (parallelDepth > 0) throw new WorkflowChildPausedError(stepId, error);
       const childPause = error.pause;
-      if (childPause.type === 'workflow_child') throw error;
+      if (childPause.type === 'workflow_child' || childPause.type === 'workflow_children') {
+        throw error;
+      }
       if (childPause.type === 'workflow_timer' || childPause.type === 'workflow_event') {
         throw new FevexRunError(
           'RUN_NOT_RESUMABLE',
@@ -1790,6 +2005,8 @@ export function createRuntime({
         event.type !== 'tool.failed' &&
         event.type !== 'tool.retrying' &&
         event.type !== 'tool.execution_unknown' &&
+        event.type !== 'elicitation.requested' &&
+        event.type !== 'elicitation.resolved' &&
         event.type !== 'approval.requested' &&
         event.type !== 'approval.resolved'
       ) return;
@@ -2170,6 +2387,33 @@ export function createRuntime({
               : new AggregateError(errors, `Workflow parallel step "${stepId}" failed`);
           }
           if (pauses.length) {
+            if (pauses.length > 1) {
+              const event = createCoordinatorEvent(
+                state,
+                'workflow.run.paused',
+                { stepId, reason: 'child', childRunId: pauses[0]!.paused.runId },
+                'team.run.paused',
+                { delegationId: stepId, reason: 'child', childRunId: pauses[0]!.paused.runId },
+              );
+              await commitWorkflow(
+                state,
+                () => {
+                  state.run.status = 'paused';
+                  state.run.pause = {
+                    type: 'workflow_children',
+                    children: pauses.map((pause) => ({
+                      stepId: pause.stepId,
+                      childRunId: pause.paused.runId,
+                      childPause: pause.paused.pause as AgentRunPause,
+                    })),
+                  };
+                },
+                [event],
+              );
+              events.push(event);
+              await releaseWorkflowExecution(state);
+              throw new RunPausedError(state.run.id, state.run.pause!);
+            }
             return pauseForChild(pauses[0]!.stepId, pauses[0]!.paused);
           }
           const entries = settled.map(
@@ -2654,7 +2898,65 @@ export function createRuntime({
       }
       if (!resolution.actor?.id?.trim()) {
         await runStore.releaseLease(runId, ownerId);
-        throw new FevexRunError('APPROVAL_INVALID', 'Resolution actor is required', runId);
+        throw new FevexRunError(
+          resolution.type === 'elicitation' ? 'ELICITATION_INVALID' : 'APPROVAL_INVALID',
+          'Resolution actor is required',
+          runId,
+        );
+      }
+
+      if (resolution.type === 'elicitation') {
+        const pause = run.pause;
+        if (pause?.type !== 'elicitation' || pause.request.id !== resolution.requestId) {
+          await runStore.releaseLease(runId, ownerId);
+          throw new FevexRunError(
+            'ELICITATION_INVALID',
+            'Elicitation does not match the run',
+            runId,
+          );
+        }
+        if (pause.request.expiresAt && Date.now() > Date.parse(pause.request.expiresAt)) {
+          await runStore.releaseLease(runId, ownerId);
+          throw new FevexRunError('ELICITATION_INVALID', 'Elicitation has expired', runId);
+        }
+        let value: JsonValue;
+        try {
+          value = compileFevexJsonSchema(pause.request.responseSchema).validate(
+            resolution.value,
+          );
+        } catch (error) {
+          await runStore.releaseLease(runId, ownerId);
+          throw new FevexRunError(
+            'ELICITATION_INVALID',
+            `Elicitation value does not match responseSchema: ${toErrorMessage(error)}`,
+            runId,
+            { cause: error },
+          );
+        }
+        checkpoint.messages.push({
+          role: 'tool',
+          name: ELICIT_TOOL_NAME,
+          toolCallId: pause.request.toolCallId,
+          content: serializeJsonValue(value),
+        });
+        run.status = 'running';
+        run.pause = undefined;
+        const resolved = createEvent(state, 'elicitation.resolved', {
+          requestId: pause.request.id,
+          toolCallId: pause.request.toolCallId,
+          actorId: resolution.actor.id,
+        }) as AgentEvent;
+        const resumed = createEvent(state, 'run.resumed', undefined) as AgentEvent;
+        await commit(state, { checkpoint, events: [resolved, resumed] });
+        activeRuns.set(runId, state);
+        activeSessions.add(session.id);
+        startLease(state, runStore);
+        if (waitForCompletion) {
+          await drainExecution(run.agentName, state, false);
+        } else {
+          void drainExecution(run.agentName, state, false).catch(() => {});
+        }
+        return structuredClone(run) as AgentRun<TOutput>;
       }
 
       if (resolution.type === 'approval') {
@@ -2838,6 +3140,7 @@ export function createRuntime({
     }
     if (resolution && (
       run.pause?.type !== 'workflow_child' &&
+      run.pause?.type !== 'workflow_children' &&
       run.pause?.type !== 'workflow_timer' &&
       run.pause?.type !== 'workflow_event'
     )) {
@@ -2903,6 +3206,7 @@ export function createRuntime({
         !workflowPause ||
         (
           workflowPause.type !== 'workflow_child' &&
+          workflowPause.type !== 'workflow_children' &&
           workflowPause.type !== 'workflow_timer' &&
           workflowPause.type !== 'workflow_event'
         )
@@ -3019,7 +3323,19 @@ export function createRuntime({
       if (resolution.type === 'timer' || resolution.type === 'event') {
         throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" cannot be resumed`, runId);
       }
-      const childRun = await resumeAgent(workflowPause.childRunId, resolution, true);
+      const childRunId = workflowPause.type === 'workflow_children'
+        ? workflowPause.children.find(({ childPause }) =>
+            pauseMatchesResolution(childPause, resolution),
+          )?.childRunId
+        : workflowPause.childRunId;
+      if (!childRunId) {
+        throw new FevexRunError(
+          'RUN_NOT_RESUMABLE',
+          'Resolution does not match a paused child run',
+          runId,
+        );
+      }
+      const childRun = await resumeAgent(childRunId, resolution, true);
       const controller = new AbortController();
       const state: WorkflowExecutionState = {
         run,

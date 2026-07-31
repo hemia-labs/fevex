@@ -9,9 +9,16 @@ export interface ModelUsage {
   totalTokens?: number;
 }
 
+export type ToolChoice =
+  | 'auto'
+  | 'required'
+  | 'none'
+  | { name: string };
+
 export interface ModelInput {
   messages: AgentMessage[];
   tools?: ToolSpec[];
+  toolChoice?: ToolChoice;
   reasoning?: ReasoningEffort;
   modelOptions?: Record<string, unknown>;
   outputSchema?: JsonObject;

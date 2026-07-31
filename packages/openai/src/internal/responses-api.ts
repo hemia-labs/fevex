@@ -179,6 +179,9 @@ function buildRequestBody(config: ResolvedOpenAIConfig, modelId: string, input: 
     ...(input.tools?.length
       ? {
           tools: input.tools.map((tool) => toOpenAITool(tool, strict)),
+          ...(toOpenAIToolChoice(input) === undefined
+            ? {}
+            : { tool_choice: toOpenAIToolChoice(input) }),
           parallel_tool_calls: false,
         }
       : {}),
@@ -186,6 +189,14 @@ function buildRequestBody(config: ResolvedOpenAIConfig, modelId: string, input: 
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(maxOutputTokens === undefined ? {} : { max_output_tokens: maxOutputTokens }),
   };
+}
+
+function toOpenAIToolChoice(input: ModelInput): unknown {
+  if (!input.tools?.length || input.toolChoice === undefined || input.toolChoice === 'auto') {
+    return undefined;
+  }
+  if (typeof input.toolChoice === 'string') return input.toolChoice;
+  return { type: 'function', name: input.toolChoice.name };
 }
 
 function toResponsesURL(baseURL: string | undefined): string {

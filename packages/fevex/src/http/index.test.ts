@@ -222,6 +222,25 @@ describe('Fevex HTTP v3', () => {
       payload: { ok: true },
       actor: { id: 'trusted' },
     });
+
+    await handler(
+      new Request('http://local/v1/runs/run-1/resume', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'elicitation',
+          requestId: 'request-1',
+          value: { accountId: 'account-42' },
+        }),
+      }),
+      { context: { actor: { id: 'trusted' } } },
+    );
+    expect(resolution).toMatchObject({
+      type: 'elicitation',
+      requestId: 'request-1',
+      value: { accountId: 'account-42' },
+      actor: { id: 'trusted' },
+    });
   });
 
   test('recovers only with the hosting actor', async () => {

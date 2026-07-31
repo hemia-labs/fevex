@@ -3,6 +3,7 @@
 import {
   ArrowUp,
   Bug,
+  ChevronLeft,
   ChevronRight,
   Check,
   Circle,
@@ -18,6 +19,7 @@ import {
   Square,
   Trash2,
   Wrench,
+  X,
 } from 'lucide-react';
 import {
   type FormEvent,
@@ -31,6 +33,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AgentEvent, JsonValue, RunRecord } from '@fevex/core';
+import type { ElicitationRequest } from '@fevex/core/runtime';
 import { createFevexHttpClient } from '@fevex/core/http';
 import { Button } from '@/components/ui/button';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
@@ -47,6 +50,8 @@ type Message = {
   sessionId?: string;
   usage?: Record<string, number>;
   events?: AgentEvent[];
+  elicitation?: ElicitationRequest;
+  elicitationResolved?: boolean;
   status?: 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 };
 
@@ -72,6 +77,8 @@ type RunnableSummary = {
   name: string;
   label: string;
   description: string;
+  instructions?: string;
+  examples?: string[];
 };
 
 const initialMessages: Message[] = [
@@ -102,9 +109,16 @@ export default function Home() {
   const [now, setNow] = useState(Date.now());
   const runControllerRef = useRef<AbortController>(null);
   const scrollerRef = useRef<HTMLElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const rightPanelRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const selectedRunnable = runnables.find((item) => runnableId(item) === selectedRunnableId);
+  const pendingElicitationMessage = [...messages].reverse().find((message) =>
+    message.role === 'assistant' &&
+    message.status === 'paused' &&
+    message.elicitation &&
+    !message.elicitationResolved
+  );
   const AgentIcon = selectedRunnable?.kind === 'workflow' ? Sparkles : Circle;
 
   useEffect(() => {
@@ -149,9 +163,9 @@ export default function Home() {
         ];
         setRunnables(nextRunnables);
         setSelectedRunnableId(nextRunnables[0] ? runnableId(nextRunnables[0]) : '');
-        setMessages([{
+        setMessages(nextRunnables.length ? [] : [{
           role: 'assistant',
-          content: nextRunnables.length ? 'Ready when you are.' : 'No agents or workflows are available.',
+          content: 'No hay agentes ni workflows disponibles.',
         }]);
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -171,50 +185,16 @@ export default function Home() {
     return () => controller.abort();
   }, []);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const content = input.trim();
-    if (!content || !selectedRunnable || isRunning) return;
-
-    setMessages((current) => [
-      ...current,
-      { role: 'user', content },
-      {
-        role: 'assistant',
-        content: '',
-        tools: [],
-        events: [],
-        startedAt: Date.now(),
-        status: 'running',
-      },
-    ]);
-    setInput('');
-    setIsRunning(true);
-    const controller = new AbortController();
-    runControllerRef.current = controller;
+  async function observeRunToTerminal(runId: string, controller: AbortController, after?: string) {
     let terminal = false;
 
-    try {
-      const request = {
-        input: content,
-        ...(sessionId ? { sessionId } : {}),
-      };
-      const run =
-        selectedRunnable.kind === 'workflow'
-          ? await client.startWorkflow(selectedRunnable.name, request)
-          : await client.startRun(selectedRunnable.name, request);
-      setSessionId(run.sessionId);
-      setActiveRunId(run.id);
-      setAssistantRun(run);
-
-      for await (const agentEvent of client.observeRun(run.id, { signal: controller.signal })) {
+    for await (const agentEvent of client.observeRun(runId, { signal: controller.signal, after })) {
         recordAssistantEvent(agentEvent);
 
         if (agentEvent.type === 'model.output.delta') {
           const delta = readPayloadText(agentEvent.payload, 'delta');
           const workflowStepId = readPayloadText(agentEvent.payload, 'workflowStepId');
-          if (workflowStepId && isResearchStep(selectedRunnable.name, workflowStepId)) {
+          if (workflowStepId && isResearchStep(selectedRunnable?.name ?? '', workflowStepId)) {
             appendAssistantDraftDelta(
               workflowStepId,
               workflowDraftName(agentEvent.payload),
@@ -257,7 +237,7 @@ export default function Home() {
             workflowStepName(agentEvent.payload),
             'running',
             eventTime(agentEvent),
-            { label: 'Workflow', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
+            { label: 'Flujo', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
         }
         if (agentEvent.type === 'workflow.step.completed') {
@@ -266,7 +246,7 @@ export default function Home() {
             workflowStepName(agentEvent.payload),
             'done',
             eventTime(agentEvent),
-            { label: 'Workflow', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
+            { label: 'Flujo', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
         }
         if (agentEvent.type === 'workflow.step.failed') {
@@ -275,13 +255,20 @@ export default function Home() {
             workflowStepName(agentEvent.payload),
             'failed',
             eventTime(agentEvent),
-            { label: 'Workflow', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
+            { label: 'Flujo', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
         }
         if (agentEvent.type === 'approval.requested') {
           appendAssistantDelta(
             `\n\nApproval required (\`${readPayloadText(agentEvent.payload, 'approvalId')}\`). Resume this run through the HTTP API.`,
           );
+        }
+        if (agentEvent.type === 'elicitation.requested') {
+          const request = readElicitationRequest(agentEvent.payload);
+          if (request) {
+            setAssistantElicitation(request);
+            appendAssistantDelta(`\n\n${request.prompt}`);
+          }
         }
         if (agentEvent.type === 'run.paused' || agentEvent.type === 'workflow.run.paused') {
           terminal = true;
@@ -306,12 +293,49 @@ export default function Home() {
           );
         }
       }
-      if (!terminal) throw new Error('Run stream ended before a terminal event.');
+
+    if (!terminal) throw new Error('Run stream ended before a terminal event.');
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const content = input.trim();
+    if (!content || !selectedRunnable || isRunning || pendingElicitationMessage) return;
+
+    setMessages((current) => [
+      ...current,
+      { role: 'user', content },
+      {
+        role: 'assistant',
+        content: '',
+        tools: [],
+        events: [],
+        startedAt: Date.now(),
+        status: 'running',
+      },
+    ]);
+    setInput('');
+    setIsRunning(true);
+    const controller = new AbortController();
+    runControllerRef.current = controller;
+
+    try {
+      const request = {
+        input: content,
+        ...(sessionId ? { sessionId } : {}),
+      };
+      const run =
+        selectedRunnable.kind === 'workflow'
+          ? await client.startWorkflow(selectedRunnable.name, request)
+          : await client.startRun(selectedRunnable.name, request);
+      setSessionId(run.sessionId);
+      setActiveRunId(run.id);
+      setAssistantRun(run);
+      await observeRunToTerminal(run.id, controller);
     } catch (error) {
-      if (!terminal) {
-        appendAssistantError(toErrorMessage(error));
-        completeAssistant('failed');
-      }
+      appendAssistantError(toErrorMessage(error));
+      completeAssistant('failed');
     } finally {
       if (runControllerRef.current === controller) runControllerRef.current = null;
       setActiveRunId(undefined);
@@ -325,6 +349,77 @@ export default function Home() {
       await client.cancelRun(activeRunId);
     } catch (error) {
       appendAssistantError(toErrorMessage(error));
+    }
+  }
+
+  function useExamplePrompt(prompt: string) {
+    setInput(prompt);
+    promptRef.current?.focus();
+  }
+
+  async function resumeElicitation(message: Message, value: JsonValue, displayContent: JsonValue = value) {
+    if (!message.runId || !message.elicitation || isRunning) return;
+    const after = message.events?.at(-1)?.id;
+    const requestId = message.elicitation.id;
+    const resolvedAt = Date.now();
+    setMessages((current) => current.map((item) =>
+      item.role === 'assistant' && item.runId === message.runId && item.elicitation?.id === requestId
+        ? {
+            ...item,
+            elicitationResolved: true,
+            status: 'completed',
+            completedAt: item.completedAt ?? resolvedAt,
+            tools: item.tools?.map((tool) =>
+              tool.status === 'paused'
+                ? { ...tool, status: 'done', completedAt: tool.completedAt ?? resolvedAt }
+                : tool,
+            ),
+          }
+        : item,
+    ));
+    setMessages((current) => [
+      ...current,
+      { role: 'user', content: displayContent },
+      {
+        role: 'assistant',
+        content: '',
+        tools: [],
+        events: [],
+        startedAt: Date.now(),
+        runId: message.runId,
+        sessionId: message.sessionId,
+        status: 'running',
+      },
+    ]);
+    setIsRunning(true);
+    setActiveRunId(message.runId);
+    const controller = new AbortController();
+    runControllerRef.current = controller;
+
+    try {
+      await client.resumeRun(message.runId, {
+        type: 'elicitation',
+        requestId,
+        value,
+      });
+      await observeRunToTerminal(message.runId, controller, after);
+    } catch (error) {
+      setMessages((current) => current.map((item) =>
+        item.role === 'assistant' && item.runId === message.runId && item.elicitation?.id === requestId
+          ? {
+              ...item,
+              elicitationResolved: false,
+              status: 'paused',
+              completedAt: message.completedAt,
+            }
+          : item,
+      ));
+      appendAssistantError(toErrorMessage(error));
+      completeAssistant('failed');
+    } finally {
+      if (runControllerRef.current === controller) runControllerRef.current = null;
+      setActiveRunId(undefined);
+      setIsRunning(false);
     }
   }
 
@@ -419,6 +514,16 @@ export default function Home() {
     });
   }
 
+  function setAssistantElicitation(request: ElicitationRequest) {
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      next[next.length - 1] = { ...last, elicitation: request };
+      return next;
+    });
+  }
+
   function setAssistantTool(
     id: string,
     name: string,
@@ -492,7 +597,7 @@ export default function Home() {
   }
 
   function resetConversation() {
-    setMessages([{ role: 'assistant', content: 'Ready when you are.' }]);
+    setMessages([]);
     setSessionId(undefined);
     setInput('');
   }
@@ -559,23 +664,23 @@ export default function Home() {
     >
         <aside className="sidebar" data-collapsed={sidebarCollapsed}>
           <div className="sidebar-header">
-            <p className="sidebar-title">Examples</p>
+            <p className="sidebar-title">Ejemplos</p>
             <Button
-              aria-label={sidebarCollapsed ? 'Expand examples sidebar' : 'Collapse examples sidebar'}
+              aria-label={sidebarCollapsed ? 'Expandir barra de ejemplos' : 'Contraer barra de ejemplos'}
               aria-pressed={sidebarCollapsed}
               className="sidebar-toggle"
               size="icon"
               variant="ghost"
               onClick={() => setSidebarCollapsed((value) => !value)}
-              title={sidebarCollapsed ? 'Expand examples sidebar' : 'Collapse examples sidebar'}
+              title={sidebarCollapsed ? 'Expandir barra de ejemplos' : 'Contraer barra de ejemplos'}
               type="button"
             >
               {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             </Button>
           </div>
-          <nav className="agent-list" aria-label="Agents and workflows">
+          <nav className="agent-list" aria-label="Agentes y workflows">
             {!runnables.length && (
-              <p className="empty-state">{isLoadingRunnables ? 'Loading...' : 'No demos'}</p>
+              <p className="empty-state">{isLoadingRunnables ? 'Cargando...' : 'Sin demos'}</p>
             )}
             {runnables.map((item) => {
               const Icon = item.kind === 'workflow' ? Sparkles : Circle;
@@ -599,7 +704,7 @@ export default function Home() {
                   </span>
                   <span>
                     <strong>{item.label}</strong>
-                    <small>{item.kind === 'workflow' ? 'Workflow' : 'Agent'} / {item.description}</small>
+                    <small>{item.kind === 'workflow' ? 'Flujo' : 'Agente'} / {item.description}</small>
                   </span>
                   <Check className="agent-check" size={14} />
                 </button>
@@ -616,42 +721,42 @@ export default function Home() {
             </span>
             <div>
               <strong>Fevex</strong>
-              <span>Examples playground</span>
+              <span>Playground de ejemplos</span>
             </div>
           </div>
           <div className="toolbar">
             <Button
-              aria-label={`${debug ? 'Disable' : 'Enable'} debug mode`}
+              aria-label={`${debug ? 'Desactivar' : 'Activar'} modo debug`}
               aria-pressed={debug}
               className={`icon-button ${debug ? 'active' : ''}`}
               size="icon"
               variant="ghost"
               onClick={() => setDebug((value) => !value)}
-              title={`${debug ? 'Disable' : 'Enable'} debug mode`}
+              title={`${debug ? 'Desactivar' : 'Activar'} modo debug`}
               type="button"
             >
               <Bug size={16} />
             </Button>
             <Button
-              aria-label="Clear conversation"
+              aria-label="Limpiar conversación"
               className="icon-button"
               disabled={isRunning || (messages.length === 1 && !sessionId)}
               size="icon"
               variant="ghost"
               onClick={resetConversation}
-              title="Clear conversation"
+              title="Limpiar conversación"
               type="button"
             >
               <Trash2 size={16} />
             </Button>
             <Button
-              aria-label={rightPanelCollapsed ? 'Open environment panel' : 'Close environment panel'}
+              aria-label={rightPanelCollapsed ? 'Abrir panel de entorno' : 'Cerrar panel de entorno'}
               aria-pressed={!rightPanelCollapsed}
               className={`icon-button ${rightPanelCollapsed ? '' : 'active'}`}
               size="icon"
               variant="ghost"
               onClick={toggleRightPanel}
-              title={rightPanelCollapsed ? 'Open environment panel' : 'Close environment panel'}
+              title={rightPanelCollapsed ? 'Abrir panel de entorno' : 'Cerrar panel de entorno'}
               type="button"
             >
               {rightPanelCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
@@ -660,14 +765,17 @@ export default function Home() {
         </header>
 
         <main className="playground" onScroll={updateStickToBottom} ref={scrollerRef}>
-          <section className="conversation" aria-label="Run conversation" aria-live="polite">
+          <section className="conversation" aria-label="Conversación del run" aria-live="polite">
             <div className="agent">
               <span className="avatar">
                 <AgentIcon size={17} />
               </span>
               <div>
-                <strong>{selectedRunnable?.label ?? 'No demo selected'}</strong>
-                <span>{selectedRunnable?.description ?? 'Start the Nest API to load examples.'}</span>
+                <strong>{selectedRunnable?.label ?? 'Ningún demo seleccionado'}</strong>
+                <span>{selectedRunnable?.description ?? 'Inicia la API Nest para cargar ejemplos.'}</span>
+                {selectedRunnable?.instructions && (
+                  <p className="agent-instructions">{selectedRunnable.instructions}</p>
+                )}
               </div>
             </div>
 
@@ -684,6 +792,17 @@ export default function Home() {
                       <RunActivityPanel debug={debug} message={message} now={now} />
                     )}
                     <MessageContent content={message.content} />
+                    {message.role === 'assistant' && message.elicitation && !message.elicitationResolved && message.status === 'paused' && (
+                      <ApprovalCard
+                        disabled={isRunning}
+                        request={message.elicitation}
+                        onSubmit={(value) => void resumeElicitation(
+                          message,
+                          value,
+                          formatElicitationDisplay(message.elicitation!, value),
+                        )}
+                      />
+                    )}
                   </div>
                 </article>
               ))}
@@ -691,12 +810,28 @@ export default function Home() {
           </section>
 
           <div className="composer-dock">
+            {messages.length === 0 && selectedRunnable?.examples?.length ? (
+              <div className="composer-examples" aria-label="Prompts de ejemplo">
+                {selectedRunnable.examples.map((example) => (
+                  <button
+                    disabled={isRunning}
+                    key={example}
+                    onClick={() => useExamplePrompt(example)}
+                    type="button"
+                  >
+                    <Sparkles size={13} />
+                    <span>{example}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <form className="composer" onSubmit={submit}>
               <label htmlFor="prompt">Prompt</label>
               <textarea
                 id="prompt"
+                ref={promptRef}
                 maxLength={4000}
-                disabled={isRunning}
+                disabled={isRunning || Boolean(pendingElicitationMessage)}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -704,22 +839,18 @@ export default function Home() {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder="Message the selected example..."
-                rows={2}
+                placeholder="Escribe al ejemplo seleccionado..."
+                rows={1}
                 value={input}
               />
               <div className="composer-footer">
-                <span>
-                  <AgentIcon size={14} />
-                  {selectedRunnable?.name ?? 'none'}
-                </span>
                 <Button
-                  aria-label={isRunning ? 'Cancel run' : 'Run selected demo'}
+                  aria-label={isRunning ? 'Cancelar run' : 'Ejecutar demo seleccionado'}
                   className={isRunning ? 'cancel' : ''}
-                  disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable}
+                  disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable || Boolean(pendingElicitationMessage)}
                   size="icon"
                   onClick={isRunning ? () => void cancelActiveRun() : undefined}
-                  title={isRunning ? 'Cancel run' : 'Run selected demo'}
+                  title={isRunning ? 'Cancelar run' : 'Ejecutar demo seleccionado'}
                   type={isRunning ? 'button' : 'submit'}
                 >
                   {isRunning ? <Square fill="currentColor" size={14} /> : <ArrowUp size={17} />}
@@ -737,7 +868,7 @@ export default function Home() {
         style={rightPanelCollapsed ? undefined : { width: rightPanelWidth }}
       >
         <div
-          aria-label="Resize environment panel"
+          aria-label="Redimensionar panel de entorno"
           aria-orientation="vertical"
           className="right-panel-resize-handle"
           onKeyDown={resizeRightPanelWithKeyboard}
@@ -751,9 +882,13 @@ export default function Home() {
         <div className="right-panel-list">
           <EnvironmentRow icon={<Circle size={14} />} label="API" value={apiUrl} />
           <EnvironmentRow icon={<AgentIcon size={14} />} label="Seleccionado" value={selectedRunnable?.label ?? 'Ninguno'} />
-          <EnvironmentRow icon={<Sparkles size={14} />} label="Tipo" value={selectedRunnable?.kind ?? '-'} />
-          <EnvironmentRow icon={<Bug size={14} />} label="Debug" value={debug ? 'Activo' : 'Inactivo'} />
-          <EnvironmentRow icon={<Check size={14} />} label="Run" value={activeRunId ?? 'Sin run activo'} />
+          <EnvironmentRow
+            icon={<Sparkles size={14} />}
+            label="Tipo"
+            value={selectedRunnable?.kind === 'workflow' ? 'Flujo' : selectedRunnable?.kind === 'agent' ? 'Agente' : '-'}
+          />
+          <EnvironmentRow icon={<Bug size={14} />} label="Depuración" value={debug ? 'Activo' : 'Inactivo'} />
+          <EnvironmentRow icon={<Check size={14} />} label="Ejecución" value={activeRunId ?? 'Sin ejecución activa'} />
         </div>
       </aside>
     </div>
@@ -972,8 +1107,351 @@ function MessageContent({ content }: { content: JsonValue }) {
   );
 }
 
+function ApprovalCard({
+  disabled,
+  onSubmit,
+  request,
+}: {
+  disabled?: boolean;
+  onSubmit(value: JsonValue): void;
+  request: ElicitationRequest;
+}) {
+  const questions = elicitationQuestions(request.responseSchema);
+  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const [sent, setSent] = useState(false);
+  const [open, setOpen] = useState(true);
+  const question = questions[index];
+  const last = index === questions.length - 1;
+  const selected = question ? (answers[question.name] ?? []) : [];
+  const customValue = question ? (custom[question.name] ?? '') : '';
+  const hasAnswer = selected.length > 0 || Boolean(customValue.trim());
+  const canAdvance = !question?.required || hasAnswer;
+  const canSubmit = questions.every((item) => !item.required || hasApprovalAnswer(item, answers, custom));
+
+  const setSelected = (value: string) => {
+    if (!question) return;
+    setAnswers((current) => {
+      const picked = current[question.name] ?? [];
+      const next = question.kind === 'check'
+        ? picked.includes(value)
+          ? picked.filter((item) => item !== value)
+          : [...picked, value]
+        : [value];
+      return { ...current, [question.name]: next };
+    });
+    setCustom((current) => ({ ...current, [question.name]: '' }));
+    if ((question.kind === 'radio' || question.kind === 'boolean') && !last) {
+      window.setTimeout(() => {
+        setIndex((current) => Math.min(questions.length - 1, current + 1));
+      }, 220);
+    }
+  };
+
+  const submitAnswers = () => {
+    if (!question || !canSubmit || sent) return;
+    setSent(true);
+    onSubmit(Object.fromEntries(
+      questions
+        .filter((item) => item.required || hasApprovalAnswer(item, answers, custom))
+        .map((item) => [item.name, readApprovalAnswer(item, answers[item.name] ?? [], custom[item.name] ?? '')]),
+    ));
+  };
+
+  if (!open) {
+    return (
+      <button className="approval-reopen" onClick={() => setOpen(true)} type="button">
+        Abrir aprobación
+      </button>
+    );
+  }
+
+  if (!question) return null;
+
+  return (
+    <form
+      aria-label="Solicitud de aprobación"
+      className="approval-card"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitAnswers();
+      }}
+    >
+      {sent ? (
+        <div className="approval-sent">
+          <span><Check size={13} /></span>
+          <strong>Respuesta enviada</strong>
+        </div>
+      ) : (
+        <>
+          <div className="approval-card-body">
+            <div className="approval-card-header">
+              <span>
+                <strong>{request.prompt}</strong>
+                {question.label !== request.prompt && <em>{question.label}</em>}
+              </span>
+              <button
+                aria-label="Cerrar tarjeta de aprobación"
+                className="approval-icon-button"
+                onClick={() => setOpen(false)}
+                type="button"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="approval-options">
+              {(question.kind === 'radio' || question.kind === 'check' || question.kind === 'boolean') ? (
+                question.options.map((option) => {
+                  const on = selected.includes(option.value);
+                  return (
+                    <button
+                      aria-pressed={on}
+                      className="approval-option"
+                      disabled={disabled}
+                      key={option.value}
+                      onClick={() => setSelected(option.value)}
+                      type="button"
+                    >
+                      <span
+                        className="approval-option-mark"
+                        data-kind={question.kind === 'check' ? 'check' : 'radio'}
+                        data-selected={on}
+                      >
+                        {question.kind === 'check' && on ? <Check size={11} /> : <span />}
+                      </span>
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })
+              ) : (
+                <label className="approval-custom">
+                  <span>{question.inputType === 'number' ? 'Número' : 'Respuesta'}</span>
+                  <input
+                    disabled={disabled}
+                    inputMode={question.inputType === 'number' ? 'numeric' : undefined}
+                    onChange={(event) => {
+                      setCustom((current) => ({ ...current, [question.name]: event.target.value }));
+                      setAnswers((current) => ({ ...current, [question.name]: [] }));
+                    }}
+                    required={question.required}
+                    type={question.inputType === 'number' ? 'number' : 'text'}
+                    value={customValue}
+                  />
+                </label>
+              )}
+              {question.kind !== 'input' && question.kind !== 'boolean' && (
+                <label className="approval-custom inline">
+                  <span />
+                  <input
+                    disabled={disabled}
+                    onChange={(event) => {
+                      setCustom((current) => ({ ...current, [question.name]: event.target.value }));
+                      setAnswers((current) => ({ ...current, [question.name]: [] }));
+                    }}
+                    placeholder="Escribe algo..."
+                    value={customValue}
+                  />
+                </label>
+              )}
+            </div>
+          </div>
+          <div className="approval-card-footer">
+            <span className="approval-pager">
+              <button
+                aria-label="Pregunta anterior"
+                disabled={disabled || index === 0}
+                onClick={() => setIndex((current) => Math.max(0, current - 1))}
+                type="button"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              {questions.map((item, itemIndex) => (
+                <button
+                  aria-current={itemIndex === index ? 'step' : undefined}
+                  aria-label={`Ir a ${item.label}`}
+                  className="approval-dot"
+                  data-active={itemIndex === index}
+                  data-done={itemIndex < index}
+                  disabled={disabled}
+                  key={item.name}
+                  onClick={() => setIndex(itemIndex)}
+                  type="button"
+                />
+              ))}
+              <button
+                aria-label="Siguiente pregunta"
+                disabled={disabled || last}
+                onClick={() => setIndex((current) => Math.min(questions.length - 1, current + 1))}
+                type="button"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </span>
+            <button
+              aria-label={last ? 'Enviar respuesta' : 'Siguiente pregunta'}
+              className="approval-send"
+              data-ready={last ? canSubmit : canAdvance}
+              disabled={disabled || !(last ? canSubmit : canAdvance)}
+              onClick={() => {
+                if (!last) setIndex((current) => current + 1);
+              }}
+              type={last ? 'submit' : 'button'}
+            >
+              <ArrowUp size={15} />
+            </button>
+          </div>
+        </>
+      )}
+    </form>
+  );
+}
+
 function runnableId(item: RunnableSummary) {
   return `${item.kind}:${item.name}`;
+}
+
+function readElicitationRequest(payload: unknown): ElicitationRequest | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const request = (payload as Record<string, unknown>).request;
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return undefined;
+  const value = request as Record<string, unknown>;
+  if (
+    typeof value.id !== 'string' ||
+    typeof value.toolCallId !== 'string' ||
+    typeof value.prompt !== 'string' ||
+    !value.responseSchema ||
+    typeof value.responseSchema !== 'object' ||
+    Array.isArray(value.responseSchema) ||
+    typeof value.requestedAt !== 'string'
+  ) return undefined;
+  return value as unknown as ElicitationRequest;
+}
+
+type ApprovalQuestion = {
+  name: string;
+  label: string;
+  kind: 'radio' | 'check' | 'boolean' | 'input';
+  inputType: 'text' | 'number';
+  required: boolean;
+  options: Array<{ label: string; value: string }>;
+  valueType: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+};
+
+function elicitationQuestions(schema: JsonValue): ApprovalQuestion[] {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return [];
+  const record = schema as Record<string, unknown>;
+  const properties = record.properties;
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return [];
+  const required = new Set(Array.isArray(record.required) ? record.required.filter((item) => typeof item === 'string') : []);
+  return Object.entries(properties)
+    .filter((entry): entry is [string, Record<string, unknown>] =>
+      typeof entry[1] === 'object' && entry[1] !== null && !Array.isArray(entry[1]),
+    )
+    .map(([name, property]) => {
+      const type = readSchemaType(property);
+      const enumOptions = readEnumOptions(property.enum);
+      const arrayOptions = type === 'array' && property.items && typeof property.items === 'object' && !Array.isArray(property.items)
+        ? readEnumOptions((property.items as Record<string, unknown>).enum)
+        : [];
+      const kind =
+        arrayOptions.length > 0
+          ? 'check'
+          : type === 'boolean'
+            ? 'boolean'
+            : enumOptions.length > 0
+              ? 'radio'
+              : 'input';
+      return {
+        name,
+        label: typeof property.title === 'string' ? property.title : name,
+        kind,
+        inputType: type === 'number' || type === 'integer' ? 'number' : 'text',
+        required: required.has(name),
+        options:
+          kind === 'boolean'
+            ? [
+                { label: 'Sí', value: 'true' },
+                { label: 'No', value: 'false' },
+              ]
+            : kind === 'check'
+              ? arrayOptions
+              : enumOptions,
+        valueType: type,
+      };
+    });
+}
+
+function readSchemaType(property: Record<string, unknown>): ApprovalQuestion['valueType'] {
+  const type = Array.isArray(property.type) ? property.type[0] : property.type;
+  if (
+    type === 'number' ||
+    type === 'integer' ||
+    type === 'boolean' ||
+    type === 'array'
+  ) return type;
+  return 'string';
+}
+
+function readEnumOptions(value: unknown): Array<{ label: string; value: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string | number | boolean =>
+      typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean',
+    )
+    .map((item) => ({ label: String(item), value: String(item) }));
+}
+
+function readApprovalAnswer(question: ApprovalQuestion, selected: string[], custom: string): JsonValue {
+  const raw = custom.trim() ? custom : selected[0] ?? '';
+  if (question.kind === 'check') {
+    const values = custom.trim() ? [custom] : selected;
+    return values.map((value) => coerceApprovalValue(question, value));
+  }
+  return coerceApprovalValue(question, raw);
+}
+
+function formatElicitationDisplay(request: ElicitationRequest, value: JsonValue) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return String(value ?? '');
+
+  const questions = elicitationQuestions(request.responseSchema);
+  const labels = new Map(questions.map((question) => [question.name, question.label]));
+  const entries = Object.entries(value);
+  if (entries.length === 1) {
+    const [name, fieldValue] = entries[0]!;
+    if (name === 'accountId') return `La cuenta es ${formatDisplayValue(fieldValue as JsonValue)}.`;
+    return `${labels.get(name) ?? name}: ${formatDisplayValue(fieldValue as JsonValue)}`;
+  }
+
+  return entries
+    .map(([name, fieldValue]) =>
+      name === 'accountId'
+        ? `**Cuenta:** ${formatDisplayValue(fieldValue as JsonValue)}`
+        : `**${labels.get(name) ?? name}:** ${formatDisplayValue(fieldValue as JsonValue)}`,
+    )
+    .join('\n');
+}
+
+function formatDisplayValue(value: JsonValue): string {
+  if (Array.isArray(value)) return value.map(formatDisplayValue).join(', ');
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
+  return String(value ?? '');
+}
+
+function hasApprovalAnswer(
+  question: ApprovalQuestion,
+  answers: Record<string, string[]>,
+  custom: Record<string, string>,
+) {
+  return (answers[question.name]?.length ?? 0) > 0 || Boolean(custom[question.name]?.trim());
+}
+
+function coerceApprovalValue(question: ApprovalQuestion, value: string): JsonValue {
+  if (question.valueType === 'boolean') return value === 'true';
+  if (question.valueType === 'integer') return Number.parseInt(value || '0', 10);
+  if (question.valueType === 'number') return Number(value || '0');
+  return value;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1045,6 +1523,7 @@ function runStageLabel(message: Message, running: boolean, elapsedMs: number) {
   // "durante" solo donde el tiempo se pasó haciendo algo; los estados de corte
   // marcan el momento en que se interrumpió.
   if (running) return `${currentStage(message)} durante ${elapsed}`;
+  if (message.status === 'paused' && message.elicitationResolved) return `Aprobación enviada después de ${elapsed}`;
   if (message.status === 'paused') return `En espera de aprobación después de ${elapsed}`;
   if (message.status === 'failed') return `Falló después de ${elapsed}`;
   if (message.status === 'cancelled') return `Cancelado después de ${elapsed}`;
@@ -1103,5 +1582,5 @@ function formatUsage(usage: Record<string, number> | undefined) {
 }
 
 function toErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Agent API request failed.';
+  return error instanceof Error ? error.message : 'Falló la solicitud a la API del agente.';
 }

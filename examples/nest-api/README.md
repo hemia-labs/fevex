@@ -36,6 +36,7 @@ The API exposes independent agents for the optional capabilities:
 | `refund-approval` | Durable human approval and keyed effect | `Refund account 10 for 250 MXN because of a duplicate charge` |
 | `knowledge-support` | Skill, request context and session memory | `What refund policy and customer context apply?` |
 | `sandbox-code` | Local development sandbox for allowlisted commands | `Evaluate 2 * (21 + 1) in the sandbox` |
+| `elicitation-support` | Durable elicitation for missing information | `Check the status for my account` |
 
 For the MCP demo, start the local MCP server first with `bun run dev:mcp`.
 The playground timeline will show rows like `Usando MCP nest_mcp · slugify`
@@ -50,6 +51,10 @@ Runs and approval checkpoints persist in
 `FEVEX_DB_PATH` (default `.fevex/demo.sqlite`). The example uses the fixed
 actor `demo-user` to make approval runnable without adding fake authentication.
 Do not copy that actor setup into production.
+
+`elicitation-support` demonstrates the same durable pause mechanism for missing
+information. Ask without an account ID, answer the generated form in the
+playground, and the run resumes through `POST /v1/runs/:runId/resume`.
 
 To approve a refund, start the run and observe its events:
 

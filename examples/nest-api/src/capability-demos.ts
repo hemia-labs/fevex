@@ -141,22 +141,42 @@ export const capabilityAgentCatalog = [
   {
     name: 'mcp-tools',
     label: 'MCP Tools',
-    description: 'Uses local MCP Streamable HTTP tools for text and arithmetic.',
+    description: 'Usa tools MCP locales para texto y aritmética.',
+    instructions: 'Úsalo para demostrar tools respaldadas por MCP como echo, suma, multiplicación, slugify y conteo de palabras.',
+    examples: [
+      'Convierte "Fevex Durable Runtime" a slug.',
+      'Multiplica 12 por 9 usando MCP.',
+    ],
   },
   {
     name: 'billing-openapi',
-    label: 'OpenAPI Billing',
-    description: 'Reads invoices through an OpenAPI 3.1 connection.',
+    label: 'Billing OpenAPI',
+    description: 'Lee facturas mediante una conexión OpenAPI 3.1.',
+    instructions: 'Úsalo para demostrar llamadas OpenAPI contra el fixture local de billing. Proporciona un ID de factura cuando puedas.',
+    examples: [
+      'Busca la factura inv_1001.',
+      '¿Cuál es el estado de la factura inv_1002?',
+    ],
   },
   {
     name: 'refund-approval',
-    label: 'Approved Refund',
-    description: 'Pauses sensitive refund operations for human approval.',
+    label: 'Reembolso Aprobado',
+    description: 'Pausa operaciones sensibles de reembolso para aprobación humana.',
+    instructions: 'Úsalo para demostrar tools de escritura que requieren aprobación. Pide emitir un reembolso con cuenta, monto y razón.',
+    examples: [
+      'Emite un reembolso para la cuenta 42 por 15 dólares por cobro duplicado.',
+      'Reembolsa 30 dólares a la cuenta 25 por crédito de interrupción.',
+    ],
   },
   {
     name: 'knowledge-support',
-    label: 'Knowledge & Memory',
-    description: 'Uses reusable policy, customer context and session memory.',
+    label: 'Conocimiento y Memoria',
+    description: 'Usa policy reutilizable, contexto del cliente y memoria de sesión.',
+    instructions: 'Úsalo para demostrar skills, proveedores de contexto y memoria de sesión en un solo agente.',
+    examples: [
+      '¿Este cliente puede recibir un reembolso?',
+      'Recuerda que el cliente prefiere actualizaciones breves.',
+    ],
   },
 ];
 

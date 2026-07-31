@@ -326,6 +326,19 @@ function readResolution(
   actor: NonNullable<ExecutionContext['actor']>,
 ): ResumeRunResolution {
   if (
+    body.type === 'elicitation' &&
+    typeof body.requestId === 'string' &&
+    body.requestId.trim() &&
+    hasOwn(body, 'value')
+  ) {
+    return {
+      type: 'elicitation',
+      requestId: body.requestId,
+      value: body.value as JsonValue,
+      actor,
+    };
+  }
+  if (
     body.type === 'approval'
     && typeof body.approvalId === 'string'
     && (body.decision === 'approve' || body.decision === 'reject')
