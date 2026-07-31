@@ -1,6 +1,7 @@
 import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
 import type { Fevex } from '../fevex';
-import { FevexRunError } from '../run-error';
+import type { ReasoningEffort } from '../models';
+import { FevexRunError, type FevexRunErrorCode } from '../run-error';
 import type { ResumeRunResolution } from '../runtime';
 import {
   FEVEX_HTTP_PROTOCOL_VERSION,
@@ -16,6 +17,26 @@ import {
 const JSON_TYPE = 'application/json';
 const PROBLEM_TYPE = 'application/problem+json';
 const SSE_TYPE = 'text/event-stream';
+const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
+  'AGENT_NOT_FOUND',
+  'WORKFLOW_NOT_FOUND',
+  'TEAM_NOT_FOUND',
+  'MODEL_NOT_FOUND',
+  'SESSION_NOT_FOUND',
+  'DURABLE_STORE_REQUIRED',
+  'RUN_CONFLICT',
+  'RUN_NOT_RESUMABLE',
+  'RUN_NOT_RECOVERABLE',
+  'CHECKPOINT_UNSUPPORTED',
+  'RUN_DEFINITION_CHANGED',
+  'POLICY_DENIED',
+  'CREDENTIAL_NOT_FOUND',
+  'SANDBOX_REQUIRED',
+  'ELICITATION_INVALID',
+  'APPROVAL_INVALID',
+  'RUN_PAUSED',
+  'TOOL_EXECUTION_UNKNOWN',
+]);
 
 /** Exposes a Fevex instance through the versioned HTTP protocol. */
 export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexHttpHandler {
@@ -34,8 +55,12 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const body = await readJson(request);
         if (!hasOwn(body, 'input')) throw badRequest('input is required');
         const sessionId = optionalId(body.sessionId, 'sessionId');
+        const model = optionalId(body.model, 'model');
+        const reasoning = optionalReasoning(body.reasoning);
         const run = await options.fevex.startAgent(decodeURIComponent(start[1]!), {
           input: body.input as JsonValue,
+          ...(model ? { model } : {}),
+          ...(reasoning === undefined ? {} : { reasoning }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
@@ -47,8 +72,12 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const body = await readJson(request);
         if (!hasOwn(body, 'input')) throw badRequest('input is required');
         const sessionId = optionalId(body.sessionId, 'sessionId');
+        const model = optionalId(body.model, 'model');
+        const reasoning = optionalReasoning(body.reasoning);
         const run = await options.fevex.startWorkflow(decodeURIComponent(startWorkflow[1]!), {
           input: body.input as JsonValue,
+          ...(model ? { model } : {}),
+          ...(reasoning === undefined ? {} : { reasoning }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
@@ -59,8 +88,12 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const body = await readJson(request);
         if (!hasOwn(body, 'input')) throw badRequest('Run input is required');
         const sessionId = optionalId(body.sessionId, 'sessionId');
+        const model = optionalId(body.model, 'model');
+        const reasoning = optionalReasoning(body.reasoning);
         const run = await options.fevex.startTeam(decodeURIComponent(startTeam[1]!), {
           input: body.input as JsonValue,
+          ...(model ? { model } : {}),
+          ...(reasoning === undefined ? {} : { reasoning }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
@@ -139,7 +172,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
       }
       throw notFound('ROUTE_NOT_FOUND', 'Route not found');
     } catch (error) {
-      return problem(error, url.pathname);
+      return problem(error, url.pathname, options.onError);
     }
   };
 }
@@ -402,6 +435,26 @@ function optionalId(value: unknown, name: string) {
   return value.trim();
 }
 
+function optionalReasoning(value: unknown): ReasoningEffort | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'string' ||
+    ![
+      'provider-default',
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ].includes(value)
+  ) {
+    throw badRequest('reasoning must be a valid effort');
+  }
+  return value as ReasoningEffort;
+}
+
 function hasOwn(value: object, key: string) {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -470,7 +523,11 @@ function notFound(code: string, message: string) {
   return new HttpProtocolError(404, code, message);
 }
 
-function problem(error: unknown, instance: string) {
+function problem(
+  error: unknown,
+  instance: string,
+  onError?: FevexHttpHandlerOptions['onError'],
+) {
   let status = 500;
   let code = 'INTERNAL_ERROR';
   let title = 'Internal Server Error';
@@ -480,26 +537,14 @@ function problem(error: unknown, instance: string) {
     ({ status, code } = error);
     title = error.message;
     detail = error.message;
-  } else if (error instanceof FevexRunError) {
-    code = error.code;
-    status = error.code === 'AGENT_NOT_FOUND'
-      || error.code === 'WORKFLOW_NOT_FOUND'
-      || error.code === 'TEAM_NOT_FOUND'
-      || error.code === 'SESSION_NOT_FOUND'
-      ? 404
-      : error.code === 'APPROVAL_INVALID'
-        ? 400
-        : error.code === 'POLICY_DENIED'
-          ? 403
-        : 409;
-    title = status === 404
-      ? 'Not Found'
-      : status === 400
-        ? 'Bad Request'
-        : status === 403
-          ? 'Forbidden'
-          : 'Conflict';
-    detail = error.message;
+  } else {
+    const runError = readFevexRunError(error);
+    if (runError) {
+      code = runError.code;
+      status = statusForRunErrorCode(runError.code);
+      title = titleForStatus(status);
+      detail = runError.message;
+    }
   }
 
   const value: FevexProblemDetails = {
@@ -510,10 +555,45 @@ function problem(error: unknown, instance: string) {
     ...(detail ? { detail } : {}),
     instance,
   };
+  if (status >= 500) {
+    try {
+      onError?.(error, value);
+    } catch {}
+  }
   return versioned(new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': PROBLEM_TYPE },
   }));
+}
+
+function readFevexRunError(error: unknown) {
+  if (error instanceof FevexRunError) return error;
+  if (!error || typeof error !== 'object') return undefined;
+  const value = error as Record<string, unknown>;
+  return typeof value.message === 'string' &&
+    typeof value.code === 'string' &&
+    FEVEX_RUN_ERROR_CODES.has(value.code as FevexRunErrorCode)
+    ? { code: value.code as FevexRunErrorCode, message: value.message }
+    : undefined;
+}
+
+function statusForRunErrorCode(code: FevexRunErrorCode) {
+  if (
+    code === 'AGENT_NOT_FOUND' ||
+    code === 'WORKFLOW_NOT_FOUND' ||
+    code === 'TEAM_NOT_FOUND' ||
+    code === 'SESSION_NOT_FOUND'
+  ) return 404;
+  if (code === 'APPROVAL_INVALID') return 400;
+  if (code === 'POLICY_DENIED') return 403;
+  return 409;
+}
+
+function titleForStatus(status: number) {
+  if (status === 404) return 'Not Found';
+  if (status === 400) return 'Bad Request';
+  if (status === 403) return 'Forbidden';
+  return 'Conflict';
 }
 
 function wait(ms: number, signal: AbortSignal) {

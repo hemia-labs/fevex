@@ -5,6 +5,7 @@ export type FevexRunErrorCode =
   | 'AGENT_NOT_FOUND'
   | 'WORKFLOW_NOT_FOUND'
   | 'TEAM_NOT_FOUND'
+  | 'MODEL_NOT_FOUND'
   | 'SESSION_NOT_FOUND'
   | 'DURABLE_STORE_REQUIRED'
   | 'RUN_CONFLICT'

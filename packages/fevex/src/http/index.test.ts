@@ -14,6 +14,28 @@ import {
 } from './index';
 
 describe('Fevex HTTP v3', () => {
+  test('selects a registered model per run', async () => {
+    const defaultModel = fakeModel({ output: 'default' });
+    const alternateModel = fakeModel({ output: 'alternate' });
+    const app = createFevex({
+      models: { default: defaultModel, alternate: alternateModel },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Answer.' })],
+    });
+    const client = clientFor(app);
+
+    const run = await client.startRun('assistant', {
+      input: 'hello',
+      model: 'alternate',
+      reasoning: 'high',
+    });
+    await collect(client.observeRun(run.id));
+
+    expect(alternateModel.calls).toHaveLength(1);
+    expect(alternateModel.calls[0]?.reasoning).toBe('high');
+    expect(defaultModel.calls).toHaveLength(0);
+    expect((await client.getRun<string>(run.id)).output).toBe('alternate');
+  });
+
   test('starts, observes, reconnects and continues one session without duplicate execution', async () => {
     const model = fakeModel({ output: 'first' }, { output: 'second' });
     const app = createFevex({
@@ -351,6 +373,57 @@ describe('Fevex HTTP v3', () => {
     const missingRun = await handler(new Request('http://local/v1/runs/missing'));
     expect(missingRun.status).toBe(404);
     expect(await missingRun.json()).toMatchObject({ code: 'RUN_NOT_FOUND' });
+
+    const changedDefinition = createFevexHttpHandler({
+      fevex: {
+        async startAgent() {
+          throw {
+            name: 'FevexRunError',
+            code: 'RUN_DEFINITION_CHANGED',
+            message: 'Definition for agent "assistant" changed',
+          };
+        },
+      } as unknown as Fevex,
+    });
+    const changed = await changedDefinition(new Request('http://local/v1/agents/assistant/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"input":"hello"}',
+    }));
+    expect(changed.status).toBe(409);
+    expect(await changed.json()).toMatchObject({
+      code: 'RUN_DEFINITION_CHANGED',
+      detail: 'Definition for agent "assistant" changed',
+    });
+  });
+
+  test('reports internal protocol errors to the host', async () => {
+    const internal = new Error('database path leaked');
+    let reported: { error: unknown; problem: unknown } | undefined;
+    const handler = createFevexHttpHandler({
+      fevex: {
+        async startAgent() {
+          throw internal;
+        },
+      } as unknown as Fevex,
+      onError(error, problem) {
+        reported = { error, problem };
+      },
+    });
+    const response = await handler(new Request('http://local/v1/agents/assistant/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"input":"hello"}',
+    }));
+    const problem = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(problem).toMatchObject({ code: 'INTERNAL_ERROR', status: 500 });
+    expect(JSON.stringify(problem)).not.toContain('database path leaked');
+    expect(reported).toMatchObject({
+      error: internal,
+      problem: { code: 'INTERNAL_ERROR', instance: '/v1/agents/assistant/runs' },
+    });
   });
 
   test('client parses fragmented SSE and Problem Details', async () => {

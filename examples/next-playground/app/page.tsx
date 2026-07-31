@@ -3,6 +3,7 @@
 import {
   ArrowUp,
   Bug,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -10,6 +11,7 @@ import {
   CircleDashed,
   CircleSlash2,
   CircleX,
+  Copy,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -22,20 +24,37 @@ import {
   X,
 } from 'lucide-react';
 import {
+  type ComponentProps,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  isValidElement,
   useEffect,
   useRef,
   useState,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
-import type { AgentEvent, JsonValue, RunRecord } from '@fevex/core';
+import remarkMath from 'remark-math';
+import type { AgentEvent, JsonValue, ReasoningEffort, RunRecord } from '@fevex/core';
 import type { ElicitationRequest } from '@fevex/core/runtime';
-import { createFevexHttpClient } from '@fevex/core/http';
+import { createFevexHttpClient, FevexHttpError } from '@fevex/core/http';
+import { ApprovalDecisionCard } from '@/components/approval-decision-card';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -52,7 +71,23 @@ type Message = {
   events?: AgentEvent[];
   elicitation?: ElicitationRequest;
   elicitationResolved?: boolean;
+  approval?: ApprovalRequestSummary;
+  approvalResolved?: boolean;
+  workflowEvent?: WorkflowEventSummary;
+  workflowEventResolved?: boolean;
   status?: 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+};
+
+type ApprovalRequestSummary = {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  toolLabel: string;
+};
+
+type WorkflowEventSummary = {
+  stepId: string;
+  eventName: string;
 };
 
 type ToolActivity = {
@@ -81,6 +116,13 @@ type RunnableSummary = {
   examples?: string[];
 };
 
+type ModelSummary = {
+  id: string;
+  provider?: string;
+  model?: string;
+  efforts: ReasoningEffort[];
+};
+
 const initialMessages: Message[] = [
   {
     role: 'assistant',
@@ -98,6 +140,9 @@ export default function Home() {
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState('');
   const [selectedRunnableId, setSelectedRunnableId] = useState('');
+  const [models, setModels] = useState<ModelSummary[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [selectedEffort, setSelectedEffort] = useState<ReasoningEffort>('provider-default');
   const [isLoadingRunnables, setIsLoadingRunnables] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [debug, setDebug] = useState(false);
@@ -113,11 +158,27 @@ export default function Home() {
   const rightPanelRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const selectedRunnable = runnables.find((item) => runnableId(item) === selectedRunnableId);
+  const selectedModel = models.find((item) => item.id === selectedModelId);
+  const efforts = selectedModel?.efforts ?? ['provider-default'];
+  const selectedModelLabel = selectedModel?.model ?? selectedModel?.id ?? 'Modelo';
+  const selectedEffortLabel = effortLabel(selectedEffort);
   const pendingElicitationMessage = [...messages].reverse().find((message) =>
     message.role === 'assistant' &&
     message.status === 'paused' &&
     message.elicitation &&
     !message.elicitationResolved
+  );
+  const pendingApprovalMessage = [...messages].reverse().find((message) =>
+    message.role === 'assistant' &&
+    message.status === 'paused' &&
+    message.approval &&
+    !message.approvalResolved
+  );
+  const pendingWorkflowEventMessage = [...messages].reverse().find((message) =>
+    message.role === 'assistant' &&
+    message.status === 'paused' &&
+    message.workflowEvent &&
+    !message.workflowEventResolved
   );
   const AgentIcon = selectedRunnable?.kind === 'workflow' ? Sparkles : Circle;
 
@@ -143,25 +204,32 @@ export default function Home() {
 
     async function loadRunnables() {
       try {
-        const [agentsResponse, workflowsResponse] = await Promise.all([
+        const [agentsResponse, workflowsResponse, modelsResponse] = await Promise.all([
           fetch(`${apiUrl}/agents`, { signal: controller.signal }),
           fetch(`${apiUrl}/workflows`, { signal: controller.signal }),
+          fetch(`${apiUrl}/models`, { signal: controller.signal }),
         ]);
         if (!agentsResponse.ok) throw new Error(`GET /agents returned ${agentsResponse.status}`);
         if (!workflowsResponse.ok) {
           throw new Error(`GET /workflows returned ${workflowsResponse.status}`);
         }
+        if (!modelsResponse.ok) throw new Error(`GET /models returned ${modelsResponse.status}`);
 
         const nextAgents = await agentsResponse.json() as Omit<RunnableSummary, 'kind'>[];
         const nextWorkflows = await workflowsResponse.json() as Omit<RunnableSummary, 'kind'>[];
+        const nextModels = await modelsResponse.json() as ModelSummary[];
         if (!Array.isArray(nextAgents)) throw new Error('GET /agents returned invalid JSON');
         if (!Array.isArray(nextWorkflows)) throw new Error('GET /workflows returned invalid JSON');
+        if (!Array.isArray(nextModels)) throw new Error('GET /models returned invalid JSON');
 
         const nextRunnables: RunnableSummary[] = [
           ...nextAgents.map((agent) => ({ ...agent, kind: 'agent' as const })),
           ...nextWorkflows.map((workflow) => ({ ...workflow, kind: 'workflow' as const })),
         ];
         setRunnables(nextRunnables);
+        setModels(nextModels);
+        setSelectedModelId(nextModels[0]?.id ?? '');
+        setSelectedEffort(nextModels[0]?.efforts[0] ?? 'provider-default');
         setSelectedRunnableId(nextRunnables[0] ? runnableId(nextRunnables[0]) : '');
         setMessages(nextRunnables.length ? [] : [{
           role: 'assistant',
@@ -258,10 +326,19 @@ export default function Home() {
             { label: 'Flujo', remoteName: workflowStepName(agentEvent.payload), kind: 'workflow' },
           );
         }
+        if (agentEvent.type === 'workflow.wait.started') {
+          const request = readWorkflowEventRequest(agentEvent.payload);
+          if (request) {
+            setAssistantWorkflowEvent(request);
+            appendAssistantDelta(`\n\nEl flujo está esperando el evento externo “${request.eventName}”.`);
+          }
+        }
         if (agentEvent.type === 'approval.requested') {
-          appendAssistantDelta(
-            `\n\nApproval required (\`${readPayloadText(agentEvent.payload, 'approvalId')}\`). Resume this run through the HTTP API.`,
-          );
+          const request = readApprovalRequest(agentEvent.payload);
+          if (request) {
+            setAssistantApproval(request);
+            appendAssistantDelta(`\n\nEl agente necesita tu aprobación para ejecutar “${request.toolLabel}” y continuar.`);
+          }
         }
         if (agentEvent.type === 'elicitation.requested') {
           const request = readElicitationRequest(agentEvent.payload);
@@ -297,11 +374,25 @@ export default function Home() {
     if (!terminal) throw new Error('Run stream ended before a terminal event.');
   }
 
+  function selectModel(id: string) {
+    if (id === selectedModelId) return;
+    setSelectedModelId(id);
+    const nextModel = models.find((item) => item.id === id);
+    setSelectedEffort(nextModel?.efforts[0] ?? 'provider-default');
+    resetConversation();
+  }
+
+  function selectEffort(effort: ReasoningEffort) {
+    if (effort === selectedEffort) return;
+    setSelectedEffort(effort);
+    resetConversation();
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const content = input.trim();
-    if (!content || !selectedRunnable || isRunning || pendingElicitationMessage) return;
+    if (!content || !selectedRunnable || isRunning || pendingElicitationMessage || pendingApprovalMessage || pendingWorkflowEventMessage) return;
 
     setMessages((current) => [
       ...current,
@@ -323,6 +414,8 @@ export default function Home() {
     try {
       const request = {
         input: content,
+        ...(selectedModelId ? { model: selectedModelId } : {}),
+        ...(selectedEffort ? { reasoning: selectedEffort } : {}),
         ...(sessionId ? { sessionId } : {}),
       };
       const run =
@@ -404,16 +497,158 @@ export default function Home() {
       });
       await observeRunToTerminal(message.runId, controller, after);
     } catch (error) {
+      const staleRun = isRunDefinitionChanged(error);
       setMessages((current) => current.map((item) =>
         item.role === 'assistant' && item.runId === message.runId && item.elicitation?.id === requestId
           ? {
               ...item,
-              elicitationResolved: false,
-              status: 'paused',
-              completedAt: message.completedAt,
+              elicitationResolved: staleRun,
+              status: staleRun ? 'failed' : 'paused',
+              completedAt: staleRun ? Date.now() : message.completedAt,
             }
           : item,
       ));
+      if (staleRun) setSessionId(undefined);
+      appendAssistantError(toErrorMessage(error));
+      completeAssistant('failed');
+    } finally {
+      if (runControllerRef.current === controller) runControllerRef.current = null;
+      setActiveRunId(undefined);
+      setIsRunning(false);
+    }
+  }
+
+  async function resumeApproval(message: Message, decision: 'approve' | 'reject') {
+    if (!message.runId || !message.approval || isRunning) return;
+    const after = message.events?.at(-1)?.id;
+    const approvalId = message.approval.approvalId;
+    const resolvedAt = Date.now();
+    setMessages((current) => current.map((item) =>
+      item.role === 'assistant' && item.runId === message.runId && item.approval?.approvalId === approvalId
+        ? {
+            ...item,
+            approvalResolved: true,
+            status: decision === 'approve' ? 'completed' : 'cancelled',
+            completedAt: item.completedAt ?? resolvedAt,
+            tools: item.tools?.map((tool) =>
+              tool.status === 'paused'
+                ? {
+                    ...tool,
+                    status: decision === 'approve' ? 'done' : 'cancelled',
+                    completedAt: tool.completedAt ?? resolvedAt,
+                  }
+                : tool,
+            ),
+          }
+        : item,
+    ));
+    setMessages((current) => [
+      ...current,
+      { role: 'user', content: decision === 'approve' ? 'Aprobado.' : 'Rechazado.' },
+      {
+        role: 'assistant',
+        content: '',
+        tools: [],
+        events: [],
+        startedAt: Date.now(),
+        runId: message.runId,
+        sessionId: message.sessionId,
+        status: 'running',
+      },
+    ]);
+    setIsRunning(true);
+    setActiveRunId(message.runId);
+    const controller = new AbortController();
+    runControllerRef.current = controller;
+
+    try {
+      await client.resumeRun(message.runId, {
+        type: 'approval',
+        approvalId,
+        decision,
+      });
+      await observeRunToTerminal(message.runId, controller, after);
+    } catch (error) {
+      const staleRun = isRunDefinitionChanged(error);
+      setMessages((current) => current.map((item) =>
+        item.role === 'assistant' && item.runId === message.runId && item.approval?.approvalId === approvalId
+          ? {
+              ...item,
+              approvalResolved: staleRun,
+              status: staleRun ? 'failed' : 'paused',
+              completedAt: staleRun ? Date.now() : message.completedAt,
+            }
+          : item,
+      ));
+      if (staleRun) setSessionId(undefined);
+      appendAssistantError(toErrorMessage(error));
+      completeAssistant('failed');
+    } finally {
+      if (runControllerRef.current === controller) runControllerRef.current = null;
+      setActiveRunId(undefined);
+      setIsRunning(false);
+    }
+  }
+
+  async function resumeWorkflowEvent(message: Message, comment: string) {
+    if (!message.runId || !message.workflowEvent || isRunning) return;
+    const after = message.events?.at(-1)?.id;
+    const { eventName } = message.workflowEvent;
+    const resolvedAt = Date.now();
+    setMessages((current) => current.map((item) =>
+      item.role === 'assistant' && item.runId === message.runId && item.workflowEvent?.eventName === eventName
+        ? {
+            ...item,
+            workflowEventResolved: true,
+            status: 'completed',
+            completedAt: item.completedAt ?? resolvedAt,
+            tools: item.tools?.map((tool) =>
+              tool.status === 'paused'
+                ? { ...tool, status: 'done', completedAt: tool.completedAt ?? resolvedAt }
+                : tool,
+            ),
+          }
+        : item,
+    ));
+    setMessages((current) => [
+      ...current,
+      { role: 'user', content: comment.trim() ? `Evento ${eventName}: ${comment.trim()}` : `Evento ${eventName} enviado.` },
+      {
+        role: 'assistant',
+        content: '',
+        tools: [],
+        events: [],
+        startedAt: Date.now(),
+        runId: message.runId,
+        sessionId: message.sessionId,
+        status: 'running',
+      },
+    ]);
+    setIsRunning(true);
+    setActiveRunId(message.runId);
+    const controller = new AbortController();
+    runControllerRef.current = controller;
+
+    try {
+      await client.resumeRun(message.runId, {
+        type: 'event',
+        eventName,
+        payload: workflowEventPayload(eventName, comment),
+      });
+      await observeRunToTerminal(message.runId, controller, after);
+    } catch (error) {
+      const staleRun = isRunDefinitionChanged(error);
+      setMessages((current) => current.map((item) =>
+        item.role === 'assistant' && item.runId === message.runId && item.workflowEvent?.eventName === eventName
+          ? {
+              ...item,
+              workflowEventResolved: staleRun,
+              status: staleRun ? 'failed' : 'paused',
+              completedAt: staleRun ? Date.now() : message.completedAt,
+            }
+          : item,
+      ));
+      if (staleRun) setSessionId(undefined);
       appendAssistantError(toErrorMessage(error));
       completeAssistant('failed');
     } finally {
@@ -520,6 +755,26 @@ export default function Home() {
       const last = next[next.length - 1];
       if (last?.role !== 'assistant') return current;
       next[next.length - 1] = { ...last, elicitation: request };
+      return next;
+    });
+  }
+
+  function setAssistantApproval(request: ApprovalRequestSummary) {
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      next[next.length - 1] = { ...last, approval: request };
+      return next;
+    });
+  }
+
+  function setAssistantWorkflowEvent(request: WorkflowEventSummary) {
+    setMessages((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return current;
+      next[next.length - 1] = { ...last, workflowEvent: request };
       return next;
     });
   }
@@ -803,6 +1058,20 @@ export default function Home() {
                         )}
                       />
                     )}
+                    {message.role === 'assistant' && message.approval && !message.approvalResolved && message.status === 'paused' && (
+                      <ApprovalDecisionCard
+                        disabled={isRunning}
+                        toolLabel={message.approval.toolLabel}
+                        onSubmit={(decision) => void resumeApproval(message, decision)}
+                      />
+                    )}
+                    {message.role === 'assistant' && message.workflowEvent && !message.workflowEventResolved && message.status === 'paused' && (
+                      <WorkflowEventCard
+                        disabled={isRunning}
+                        eventName={message.workflowEvent.eventName}
+                        onSubmit={(comment) => void resumeWorkflowEvent(message, comment)}
+                      />
+                    )}
                   </div>
                 </article>
               ))}
@@ -831,7 +1100,7 @@ export default function Home() {
                 id="prompt"
                 ref={promptRef}
                 maxLength={4000}
-                disabled={isRunning || Boolean(pendingElicitationMessage)}
+                disabled={isRunning || Boolean(pendingElicitationMessage) || Boolean(pendingApprovalMessage) || Boolean(pendingWorkflowEventMessage)}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -844,10 +1113,65 @@ export default function Home() {
                 value={input}
               />
               <div className="composer-footer">
+                <div className="composer-pickers">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          aria-label="Seleccionar modelo y esfuerzo"
+                          className="composer-menu-trigger"
+                          disabled={isRunning || models.length === 0}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <span className="composer-menu-label">{selectedModelLabel}</span>
+                          <span className="composer-menu-effort">{selectedEffortLabel}</span>
+                          <ChevronDown size={14} />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="end" side="top" className="composer-menu-content">
+                      <DropdownMenuGroup>
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>Modelo</DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent className="composer-menu-subcontent">
+                            {models.map((item) => (
+                              <DropdownMenuItem
+                                closeOnClick={false}
+                                key={item.id}
+                                onClick={() => selectModel(item.id)}
+                              >
+                                <span>{item.model ?? item.id}</span>
+                                {item.id === selectedModelId ? <Check size={13} /> : null}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>Esfuerzo</DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent className="composer-menu-subcontent">
+                            {efforts.map((effort) => (
+                              <DropdownMenuItem
+                                closeOnClick={false}
+                                key={effort}
+                                onClick={() => selectEffort(effort)}
+                              >
+                                <span>{effortLabel(effort)}</span>
+                                {effort === selectedEffort ? <Check size={13} /> : null}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 <Button
                   aria-label={isRunning ? 'Cancelar run' : 'Ejecutar demo seleccionado'}
-                  className={isRunning ? 'cancel' : ''}
-                  disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable || Boolean(pendingElicitationMessage)}
+                  className={`composer-submit${isRunning ? ' cancel' : ''}`}
+                  disabled={isRunning ? !activeRunId : !input.trim() || !selectedRunnable || Boolean(pendingElicitationMessage) || Boolean(pendingApprovalMessage) || Boolean(pendingWorkflowEventMessage)}
                   size="icon"
                   onClick={isRunning ? () => void cancelActiveRun() : undefined}
                   title={isRunning ? 'Cancelar run' : 'Ejecutar demo seleccionado'}
@@ -881,6 +1205,8 @@ export default function Home() {
         </div>
         <div className="right-panel-list">
           <EnvironmentRow icon={<Circle size={14} />} label="API" value={apiUrl} />
+          <EnvironmentRow icon={<Sparkles size={14} />} label="Modelo" value={models.find((item) => item.id === selectedModelId)?.model ?? (selectedModelId || 'Ninguno')} />
+          <EnvironmentRow icon={<Sparkles size={14} />} label="Esfuerzo" value={effortLabel(selectedEffort)} />
           <EnvironmentRow icon={<AgentIcon size={14} />} label="Seleccionado" value={selectedRunnable?.label ?? 'Ninguno'} />
           <EnvironmentRow
             icon={<Sparkles size={14} />}
@@ -1102,7 +1428,97 @@ function MessageContent({ content }: { content: JsonValue }) {
 
   return (
     <div className="message-content">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        components={{ pre: CodeBlock }}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+      >
+        {normalizeMathMarkdown(content)}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function CodeBlock({ children, ...props }: ComponentProps<'pre'>) {
+  const codeRef = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  const language = codeBlockLanguage(children);
+
+  async function copyCode() {
+    const text = codeRef.current?.textContent;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
+
+  return (
+    <div className="code-block">
+      {language && <span className="code-language">{language}</span>}
+      <button className="code-copy" onClick={() => void copyCode()} type="button">
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+        {copied ? 'Copiado' : 'Copiar'}
+      </button>
+      <pre {...props} ref={codeRef}>{children}</pre>
+    </div>
+  );
+}
+
+function codeBlockLanguage(node: ReactNode): string | undefined {
+  if (isValidElement<{ className?: string }>(node)) {
+    return node.props.className?.match(/\blanguage-([^\s]+)/)?.[1];
+  }
+  if (Array.isArray(node)) return node.map(codeBlockLanguage).find(Boolean);
+  return undefined;
+}
+
+function WorkflowEventCard({
+  disabled,
+  eventName,
+  onSubmit,
+}: {
+  disabled?: boolean;
+  eventName: string;
+  onSubmit(comment: string): void;
+}) {
+  const [comment, setComment] = useState('');
+  const [sent, setSent] = useState(false);
+
+  const submitEvent = () => {
+    if (disabled || sent) return;
+    setSent(true);
+    onSubmit(comment);
+  };
+
+  return (
+    <div className="approval-decision-card">
+      <div>
+        <strong>{sent ? 'Evento enviado' : 'Enviar evento externo'}</strong>
+        <p>
+          {sent
+            ? 'El run continuará con el evento recibido.'
+            : `El flujo espera “${eventName}” para continuar.`}
+        </p>
+      </div>
+      {!sent && (
+        <>
+          <label className="approval-custom">
+            <input
+              disabled={disabled}
+              onChange={(event) => setComment(event.target.value)}
+              placeholder="Comentario opcional"
+              value={comment}
+            />
+          </label>
+          <div className="approval-decision-actions">
+            <button data-kind="approve" disabled={disabled} onClick={submitEvent} type="button">
+              Enviar evento
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1169,6 +1585,9 @@ function ApprovalCard({
 
   if (!question) return null;
 
+  const questionLabel = displayQuestionLabel(question, request.prompt);
+  const questionHelp = displayQuestionDescription(question, request.prompt, questionLabel);
+
   return (
     <form
       aria-label="Solicitud de aprobación"
@@ -1188,8 +1607,8 @@ function ApprovalCard({
           <div className="approval-card-body">
             <div className="approval-card-header">
               <span>
-                <strong>{request.prompt}</strong>
-                {question.label !== request.prompt && <em>{question.label}</em>}
+                <strong>{questionLabel}</strong>
+                {questionHelp && <em>{questionHelp}</em>}
               </span>
               <button
                 aria-label="Cerrar tarjeta de aprobación"
@@ -1226,8 +1645,8 @@ function ApprovalCard({
                 })
               ) : (
                 <label className="approval-custom">
-                  <span>{question.inputType === 'number' ? 'Número' : 'Respuesta'}</span>
                   <input
+                    aria-label={questionLabel}
                     disabled={disabled}
                     inputMode={question.inputType === 'number' ? 'numeric' : undefined}
                     onChange={(event) => {
@@ -1235,6 +1654,7 @@ function ApprovalCard({
                       setAnswers((current) => ({ ...current, [question.name]: [] }));
                     }}
                     required={question.required}
+                    placeholder={question.inputType === 'number' ? 'Número' : 'Respuesta'}
                     type={question.inputType === 'number' ? 'number' : 'text'}
                     value={customValue}
                   />
@@ -1311,6 +1731,14 @@ function runnableId(item: RunnableSummary) {
   return `${item.kind}:${item.name}`;
 }
 
+function effortLabel(effort: ReasoningEffort): string {
+  return effort === 'provider-default' ? 'Proveedor' : effort;
+}
+
+function normalizeMathMarkdown(content: string) {
+  return content.replace(/^\[\s*([^\]\n]*(?:\\|=|≈|\\approx|\\times|\\frac|\\text)[^\]\n]*)\s*\]$/gm, '$$$$\n$1\n$$$$');
+}
+
 function readElicitationRequest(payload: unknown): ElicitationRequest | undefined {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
   const request = (payload as Record<string, unknown>).request;
@@ -1328,9 +1756,39 @@ function readElicitationRequest(payload: unknown): ElicitationRequest | undefine
   return value as unknown as ElicitationRequest;
 }
 
+function readApprovalRequest(payload: unknown): ApprovalRequestSummary | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const approvalId = readPayloadText(payload, 'approvalId');
+  const toolCallId = readPayloadText(payload, 'toolCallId');
+  const toolName = readPayloadText(payload, 'toolName');
+  const toolLabel = readPayloadText(payload, 'toolLabel') || toolName;
+  if (!approvalId || !toolCallId || !toolName) return undefined;
+  return { approvalId, toolCallId, toolName, toolLabel };
+}
+
+function readWorkflowEventRequest(payload: unknown): WorkflowEventSummary | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  if (readPayloadText(payload, 'kind') !== 'event') return undefined;
+  const stepId = readPayloadText(payload, 'stepId');
+  const eventName = readPayloadText(payload, 'eventName');
+  if (!stepId || !eventName) return undefined;
+  return { stepId, eventName };
+}
+
+function workflowEventPayload(eventName: string, comment: string): JsonValue {
+  if (eventName === 'review.approved') {
+    return {
+      approved: true,
+      ...(comment.trim() ? { comment: comment.trim() } : {}),
+    };
+  }
+  return comment.trim() ? { comment: comment.trim() } : {};
+}
+
 type ApprovalQuestion = {
   name: string;
   label: string;
+  description?: string;
   kind: 'radio' | 'check' | 'boolean' | 'input';
   inputType: 'text' | 'number';
   required: boolean;
@@ -1354,6 +1812,7 @@ function elicitationQuestions(schema: JsonValue): ApprovalQuestion[] {
       const arrayOptions = type === 'array' && property.items && typeof property.items === 'object' && !Array.isArray(property.items)
         ? readEnumOptions((property.items as Record<string, unknown>).enum)
         : [];
+      const description = readSchemaText(property.description);
       const kind =
         arrayOptions.length > 0
           ? 'check'
@@ -1364,7 +1823,8 @@ function elicitationQuestions(schema: JsonValue): ApprovalQuestion[] {
               : 'input';
       return {
         name,
-        label: typeof property.title === 'string' ? property.title : name,
+        label: readSchemaText(property.title) ?? name,
+        ...(description === undefined ? {} : { description }),
         kind,
         inputType: type === 'number' || type === 'integer' ? 'number' : 'text',
         required: required.has(name),
@@ -1380,6 +1840,29 @@ function elicitationQuestions(schema: JsonValue): ApprovalQuestion[] {
         valueType: type,
       };
     });
+}
+
+function readSchemaText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function displayQuestionLabel(question: ApprovalQuestion, prompt: string) {
+  return sameText(question.label, prompt) ? question.name : question.label;
+}
+
+function displayQuestionDescription(question: ApprovalQuestion, prompt: string, label: string) {
+  if (!question.description) return undefined;
+  return sameText(question.description, prompt) || sameText(question.description, label)
+    ? undefined
+    : question.description;
+}
+
+function sameText(left: string, right: string) {
+  return normalizeText(left) === normalizeText(right);
+}
+
+function normalizeText(value: string) {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
 function readSchemaType(property: Record<string, unknown>): ApprovalQuestion['valueType'] {
@@ -1582,5 +2065,15 @@ function formatUsage(usage: Record<string, number> | undefined) {
 }
 
 function toErrorMessage(error: unknown) {
+  if (isRunDefinitionChanged(error)) {
+    return 'Este formulario pertenece a una versión anterior del agente. Inicia una conversación nueva para continuar.';
+  }
+  if (error instanceof FevexHttpError) {
+    return `${error.code} (${error.status}): ${error.message}`;
+  }
   return error instanceof Error ? error.message : 'Falló la solicitud a la API del agente.';
+}
+
+function isRunDefinitionChanged(error: unknown) {
+  return error instanceof FevexHttpError && error.code === 'RUN_DEFINITION_CHANGED';
 }

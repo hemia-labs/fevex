@@ -21,6 +21,11 @@ export class AgentsController {
     return this.fevex.listWorkflows();
   }
 
+  @Get('models')
+  listModels() {
+    return this.fevex.listModels();
+  }
+
   @All([
     'v1/agents/:name/runs',
     'v1/workflows/:name/runs',

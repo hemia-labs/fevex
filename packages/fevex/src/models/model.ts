@@ -1,7 +1,15 @@
 import type { AgentMessage, JsonObject, JsonValue, ToolCall, ToolSpec } from '../core';
 
 /** Provider-neutral reasoning levels accepted by model gateways. */
-export type ReasoningEffort = 'provider-default' | 'none' | 'minimal' | 'low' | 'medium' | 'high';
+export type ReasoningEffort =
+  | 'provider-default'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
 
 export interface ModelUsage {
   inputTokens?: number;

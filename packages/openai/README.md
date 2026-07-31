@@ -37,10 +37,16 @@ run-local and must not be inspected. The adapter's `stateCodec` lets Fevex
 persist it only inside a private durable checkpoint.
 
 Core reasoning efforts are forwarded to `reasoning.effort`;
-`provider-default` leaves provider options untouched. Model-specific effort
-support remains an OpenAI capability and an unsupported value is reported by
-the API. Provider-only settings can be supplied through
-`modelOptions.reasoning`.
+`provider-default` leaves provider options untouched. The core contract
+includes `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max` so
+current GPT-5.6 models can use their documented effort levels. Model-specific
+support still belongs to OpenAI, so an unsupported value is reported by the
+API. Provider-only settings can be supplied through `modelOptions.reasoning`.
+
+`createOpenAI` receives the connection settings (`apiKey`, optional
+`organization`, `project`, `baseURL`, schema policy and `fetch`) and the model
+ID is supplied when creating the gateway. Reasoning effort is intentionally a
+per-request setting forwarded through `ModelInput`, not a factory setting.
 
 The adapter always uses the Responses streaming API. It emits only
 `response.output_text.delta` as visible output and builds the terminal result

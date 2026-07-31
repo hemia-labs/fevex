@@ -247,7 +247,12 @@ function buildRequestBody(config: ResolvedDeepSeekConfig, modelId: string, input
       : input.messages;
   const maxOutputTokens = cappedTokenLimit(input.maxOutputTokens, providerLimit);
   const responseFormat = toDeepSeekResponseFormat(input, providerResponseFormat);
-  const reasoning = toDeepSeekReasoning(input, providerThinking, providerReasoningEffort);
+  const reasoning = toDeepSeekReasoning(
+    input,
+    providerThinking,
+    providerReasoningEffort,
+    modelId,
+  );
 
   return {
     ...options,
@@ -475,11 +480,20 @@ function assertCompatibleInput(input: ModelInput): void {
   }
   if (
     input.reasoning !== undefined &&
-    !['provider-default', 'none', 'minimal', 'low', 'medium', 'high'].includes(input.reasoning)
+    ![
+      'provider-default',
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ].includes(input.reasoning)
   ) {
     throw new DeepSeekError('DeepSeek reasoning effort is invalid');
   }
-  if (input.reasoning === 'minimal' || input.reasoning === 'low' || input.reasoning === 'medium') {
+  if (input.reasoning === 'minimal' || input.reasoning === 'medium') {
     throw new DeepSeekError(
       `DeepSeek does not support reasoning effort "${input.reasoning}" without compatibility mapping`,
       { code: PROVIDER_REASONING_UNSUPPORTED },
@@ -489,6 +503,7 @@ function assertCompatibleInput(input: ModelInput): void {
   if (
     (!input.reasoning || input.reasoning === 'provider-default') &&
     providerReasoning !== undefined &&
+    providerReasoning !== 'low' &&
     providerReasoning !== 'high' &&
     providerReasoning !== 'max'
   ) {
@@ -576,6 +591,7 @@ function toDeepSeekReasoning(
   input: ModelInput,
   providerThinking: unknown,
   providerEffort: unknown,
+  modelId: string,
 ): { thinking?: unknown; effort?: unknown } {
   if (!input.reasoning || input.reasoning === 'provider-default') {
     return {
@@ -586,9 +602,22 @@ function toDeepSeekReasoning(
   if (input.reasoning === 'none') {
     return { thinking: { type: 'disabled' } };
   }
+  if (
+    input.reasoning !== 'low' &&
+    input.reasoning !== 'high' &&
+    input.reasoning !== 'xhigh' &&
+    input.reasoning !== 'max'
+  ) {
+    throw new DeepSeekError('DeepSeek reasoning effort is invalid');
+  }
   return {
     thinking: { type: 'enabled' },
-    effort: input.reasoning,
+    effort:
+      input.reasoning === 'xhigh'
+        ? modelId === 'deepseek-v4-pro'
+          ? 'max'
+          : 'high'
+        : input.reasoning,
   };
 }
 

@@ -9,7 +9,7 @@ import type {
 } from '../core';
 import type { Fevex } from '../fevex';
 import type { ContextBlock, KnowledgeContext, MemoryStore } from '../knowledge';
-import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
+import type { ModelGateway, ModelRef, ModelUsage, ToolChoice } from '../models';
 import type { PolicyDecision } from '../policies';
 import { FevexRunError, RunPausedError } from '../run-error';
 import {
@@ -299,6 +299,41 @@ export function createRuntime({
   const exportedRuns = new Set<string>();
   const runtimeOwner = crypto.randomUUID();
 
+  const resolveModel = (agent: { model?: ModelRef }, requestedModel?: string) => {
+    const modelName = requestedModel ?? (typeof agent.model === 'string' ? agent.model : 'default');
+    if (!modelName.trim()) {
+      throw new FevexRunError('MODEL_NOT_FOUND', 'Model name cannot be empty');
+    }
+    const model = requestedModel !== undefined || typeof agent.model === 'string'
+      ? models.get(modelName)
+      : (agent.model ?? models.get(modelName));
+    if (!model) {
+      throw new FevexRunError('MODEL_NOT_FOUND', `Model "${modelName}" is not registered`);
+    }
+    return { modelName, model };
+  };
+
+  const resolveCheckpointModel = async (
+    agentName: string,
+    agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
+    checkpoint: RunCheckpoint,
+  ) => {
+    const preferred = resolveModel(agent, checkpoint.modelName);
+    if (checkpoint.definitionHash === await definitionHash(agentName, preferred.modelName, agent, tools)) {
+      return preferred;
+    }
+    if (checkpoint.modelName !== undefined) return undefined;
+
+    for (const candidateName of models.keys()) {
+      if (candidateName === preferred.modelName) continue;
+      const candidate = resolveModel(agent, candidateName);
+      if (checkpoint.definitionHash === await definitionHash(agentName, candidate.modelName, agent, tools)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  };
+
   const scheduleTraceExport = (event: AgentEvent): void => {
     if (
       !observability ||
@@ -316,11 +351,13 @@ export function createRuntime({
       const agentRun = run as AgentRun;
       const agent = agents.get(agentRun.agentName);
       if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
-      const modelRegistryName = typeof agent.model === 'string' ? agent.model : 'default';
-      const gateway =
-        typeof agent.model === 'string'
-          ? models.get(agent.model)
-          : (agent.model ?? models.get('default'));
+      const checkpoint = isDurableRunStore(runStore)
+        ? await runStore.getCheckpoint<RunCheckpoint>(agentRun.id)
+        : undefined;
+      const { modelName: modelRegistryName, model: gateway } = resolveModel(
+        agent,
+        checkpoint?.modelName,
+      );
       const trace = buildRunTrace(
         agentRun,
         await runStore.listEvents(agentRun.id),
@@ -562,6 +599,7 @@ export function createRuntime({
     if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
     }
+    const { modelName } = resolveModel(agent, request.model);
     const now = new Date().toISOString();
     let session: Session;
     const newSession = request.sessionId === undefined;
@@ -604,7 +642,6 @@ export function createRuntime({
     };
     try {
       if (isDurableRunStore(runStore)) {
-        const modelName = typeof agent.model === 'string' ? agent.model : 'default';
         const validatedInput =
           agent.inputSchema === undefined
             ? request.input
@@ -633,6 +670,10 @@ export function createRuntime({
         const checkpoint: RunCheckpoint = {
           version: 2,
           runId: run.id,
+          ...(request.model !== undefined || typeof agent.model === 'string'
+            ? { modelName }
+            : {}),
+          ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
           definitionHash: await definitionHash(name, modelName, agent, tools),
           limits: combineLimits(agent.limits, request.limits),
           messages,
@@ -771,6 +812,8 @@ export function createRuntime({
             kind: 'team',
             runId: run.id,
             teamName: name,
+            ...(request.model === undefined ? {} : { model: request.model }),
+            ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
             definitionHash: await teamDefinitionHash(name, team!),
             input,
             context: request.context,
@@ -782,6 +825,8 @@ export function createRuntime({
             kind: 'workflow',
             runId: run.id,
             workflowName: name,
+            ...(request.model === undefined ? {} : { model: request.model }),
+            ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
             definitionHash: await workflowDefinitionHash(name, workflow),
             input,
             context: request.context,
@@ -865,6 +910,9 @@ export function createRuntime({
     return source === undefined ? {} : { source };
   };
 
+  const toolLabelPayload = (tool: ToolDefinition) =>
+    tool.label === undefined ? {} : { toolLabel: tool.label };
+
   const toolErrorPayload = (tool: ToolDefinition, error: unknown) => ({
     ...toolSourcePayload(tool, error),
     ...(error instanceof IntegrationError
@@ -920,6 +968,8 @@ export function createRuntime({
     return {
       version: 2,
       runId: state.run.id,
+      modelName,
+      ...(state.request.reasoning === undefined ? {} : { reasoning: state.request.reasoning }),
       definitionHash: await definitionHash(state.run.agentName, modelName, agent, tools),
       limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
       messages: structuredClone(messages),
@@ -1019,11 +1069,7 @@ export function createRuntime({
   ): AsyncGenerator<AgentEvent, RunResult<TOutput> | undefined> {
     const { request } = state;
     const agent = agents.get(name)!;
-    const modelName = typeof agent.model === 'string' ? agent.model : 'default';
-    const model =
-      typeof agent.model === 'string'
-        ? models.get(agent.model)!
-        : (agent.model ?? models.get('default')!);
+    const { modelName, model } = resolveModel(agent, state.checkpoint?.modelName ?? request.model);
     const events: AgentEvent[] = [...(state.initialEvents ?? [])];
     const firstEvents = state.initialEvents ?? [];
     state.initialEvents = undefined;
@@ -1151,12 +1197,20 @@ export function createRuntime({
             ...agentTools,
             {
               name: ELICIT_TOOL_NAME,
-              description: 'Request external information required to continue this run.',
+              description:
+                'Request external information required to continue this run. Use prompt for explanatory text shown outside the form. Put short field labels in responseSchema property titles and optional field help in property descriptions.',
               inputSchema: {
                 type: 'object',
                 properties: {
-                  prompt: { type: 'string' },
-                  responseSchema: { type: 'object' },
+                  prompt: {
+                    type: 'string',
+                    description: 'Explanatory text for the user; do not duplicate field labels here.',
+                  },
+                  responseSchema: {
+                    type: 'object',
+                    description:
+                      'JSON Schema for the expected response. Each property should include a short title for the form label and may include a description for field help.',
+                  },
                   expiresAt: { type: 'string' },
                 },
                 required: ['prompt', 'responseSchema'],
@@ -1189,7 +1243,7 @@ export function createRuntime({
             messages: [...messages],
             tools: hasToolBudget && allTools.length ? allTools : undefined,
             ...(modelToolChoice === undefined ? {} : { toolChoice: modelToolChoice }),
-            reasoning: agent.reasoning,
+            reasoning: state.request.reasoning ?? agent.reasoning,
             modelOptions: agent.modelOptions,
             outputSchema,
             ...(remainingOutputTokens(effectiveLimits?.maxOutputTokens, usage) === undefined
@@ -1496,6 +1550,7 @@ export function createRuntime({
               id: crypto.randomUUID(),
               toolCallId: pending.call.id,
               toolName: pending.call.name,
+              ...(tool.label === undefined ? {} : { toolLabel: tool.label }),
               input: pending.input,
               risk: tool.risk ?? ('read' as const),
               requestedAt: new Date().toISOString(),
@@ -1506,6 +1561,7 @@ export function createRuntime({
               approvalId: approval.id,
               toolCallId: approval.toolCallId,
               toolName: approval.toolName,
+              ...toolLabelPayload(tool),
               ...toolSourcePayload(tool),
             }) as AgentEvent;
             const paused = createEvent(state, 'run.paused', {
@@ -1643,6 +1699,7 @@ export function createRuntime({
                   id: crypto.randomUUID(),
                   toolCallId: pending.call.id,
                   toolName: pending.call.name,
+                  ...(tool.label === undefined ? {} : { toolLabel: tool.label }),
                   input: pending.input,
                   risk: tool.risk ?? ('read' as const),
                   requestedAt: new Date().toISOString(),
@@ -1653,6 +1710,7 @@ export function createRuntime({
                   approvalId: approval.id,
                   toolCallId: approval.toolCallId,
                   toolName: approval.toolName,
+                  ...toolLabelPayload(tool),
                   ...toolSourcePayload(tool),
                 }) as AgentEvent;
                 const paused = createEvent(state, 'run.paused', {
@@ -2180,6 +2238,8 @@ export function createRuntime({
           : state.request.signal;
         const childState = await prepareExecution(agentName, {
           ...request,
+          model: request.model ?? state.request.model,
+          reasoning: request.reasoning ?? state.request.reasoning,
           context: mergeExecutionContext(state.request.context, request.context),
           limits: combineLimits(
             request.limits,
@@ -2810,21 +2870,15 @@ export function createRuntime({
         runId,
       );
     }
-    const modelName = typeof agent.model === 'string' ? agent.model : 'default';
-    const model =
-      typeof agent.model === 'string'
-        ? models.get(agent.model)
-        : (agent.model ?? models.get('default'));
-    if (
-      !model ||
-      checkpoint.definitionHash !== (await definitionHash(run.agentName, modelName, agent, tools))
-    ) {
+    const checkpointModel = await resolveCheckpointModel(run.agentName, agent, checkpoint);
+    if (!checkpointModel) {
       throw new FevexRunError(
         'RUN_DEFINITION_CHANGED',
         `Definition for agent "${run.agentName}" changed`,
         runId,
       );
     }
+    const { modelName, model } = checkpointModel;
     if (checkpoint.providerState !== undefined && !model.stateCodec) {
       throw new FevexRunError(
         'RUN_NOT_RESUMABLE',
@@ -2852,6 +2906,8 @@ export function createRuntime({
         session,
         request: {
           input: '',
+          model: modelName,
+          ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
           sessionId: session.id,
           context: checkpoint.context,
           limits: checkpoint.limits,
@@ -2977,7 +3033,8 @@ export function createRuntime({
           });
         }
         if (resolution.decision === 'reject') {
-          const toolCallId = run.pause.approval.toolCallId;
+          const approval = run.pause.approval;
+          const toolCallId = approval.toolCallId;
           run.status = 'cancelled';
           run.pause = undefined;
           run.error = 'approval_rejected';
@@ -2986,6 +3043,9 @@ export function createRuntime({
             toolCallId,
             decision: 'reject',
             actorId: resolution.actor.id,
+            ...(approval.toolLabel === undefined
+              ? {}
+              : { toolLabel: approval.toolLabel }),
             ...toolSourcePayload(tool),
           }) as AgentEvent;
           const cancelled = createEvent(state, 'run.cancelled', {
@@ -3059,6 +3119,7 @@ export function createRuntime({
             toolCallId: approval.toolCallId,
             decision: 'approve',
             actorId: resolution.actor.id,
+            ...(approval.toolLabel === undefined ? {} : { toolLabel: approval.toolLabel }),
             ...(approvalTool === undefined ? {} : toolSourcePayload(approvalTool)),
           }) as AgentEvent,
         );
@@ -3174,6 +3235,8 @@ export function createRuntime({
           session,
           request: {
             input: checkpoint.input,
+            ...(checkpoint.model === undefined ? {} : { model: checkpoint.model }),
+            ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
             sessionId: session.id,
             context: checkpoint.context,
             limits: checkpoint.limits,
@@ -3269,6 +3332,8 @@ export function createRuntime({
           session,
           request: {
             input: checkpoint.input,
+            ...(checkpoint.model === undefined ? {} : { model: checkpoint.model }),
+            ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
             sessionId: session.id,
             context: checkpoint.context,
             limits: checkpoint.limits,
@@ -3342,10 +3407,12 @@ export function createRuntime({
         session,
         request: {
           input: checkpoint.input,
+          ...(checkpoint.model === undefined ? {} : { model: checkpoint.model }),
+          ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
           sessionId: session.id,
-            context: checkpoint.context,
-            limits: checkpoint.limits,
-            signal: controller.signal,
+          context: checkpoint.context,
+          limits: checkpoint.limits,
+          signal: controller.signal,
         },
         controller,
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
@@ -3649,6 +3716,7 @@ export function createRuntime({
             session,
             request: {
               input: checkpoint.input,
+              ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
               sessionId: session.id,
               context: checkpoint.context,
               limits: checkpoint.limits,

@@ -6,7 +6,7 @@ import type {
   JsonValue,
   RunId,
 } from '../core';
-import type { ModelUsage } from '../models';
+import type { ModelUsage, ReasoningEffort } from '../models';
 import type { ToolChoice } from '../models';
 import type { AgentLimits } from '../agents';
 
@@ -18,6 +18,7 @@ export interface ApprovalRequest {
   id: string;
   toolCallId: string;
   toolName: string;
+  toolLabel?: string;
   input: JsonValue;
   risk: 'read' | 'write' | 'sensitive' | 'destructive';
   requestedAt: string;
@@ -212,6 +213,8 @@ export interface RunCheckpoint {
   version: 2;
   kind?: 'agent';
   runId: RunId;
+  modelName?: string;
+  reasoning?: ReasoningEffort;
   definitionHash: string;
   limits?: AgentLimits;
   messages: AgentMessage[];
@@ -292,6 +295,8 @@ export interface WorkflowCheckpoint {
   kind: 'workflow';
   runId: RunId;
   workflowName: string;
+  model?: string;
+  reasoning?: ReasoningEffort;
   definitionHash: string;
   input: JsonValue;
   context?: ExecutionContext;
@@ -375,6 +380,8 @@ export function isDurableRunStore(store: RunStore): store is DurableRunStore {
 
 export interface RunRequest<TInput = unknown, TOutput = unknown> {
   input: TInput;
+  model?: string;
+  reasoning?: ReasoningEffort;
   context?: ExecutionContext;
   limits?: AgentLimits;
   elicitation?: ElicitationMode;

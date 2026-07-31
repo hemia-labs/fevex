@@ -343,7 +343,7 @@ function assertCompatibleInput(input: ModelInput): void {
   }
   if (
     input.reasoning !== undefined &&
-    !['provider-default', 'none', 'minimal', 'low', 'medium', 'high'].includes(input.reasoning)
+    !['provider-default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(input.reasoning)
   ) {
     throw new OpenAIError('OpenAI reasoning effort is invalid');
   }

@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import 'highlight.js/styles/github-dark.css';
+import 'katex/dist/katex.min.css';
 import './globals.css';
 import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";

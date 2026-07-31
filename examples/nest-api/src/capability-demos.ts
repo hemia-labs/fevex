@@ -93,6 +93,7 @@ export const connections = [
 
 const refundTool = defineTool({
   name: 'refund_issue',
+  label: 'Emitir reembolso',
   description: 'Issue a demo refund after human approval.',
   inputSchema: z.object({
     accountId: z.number(),
@@ -142,7 +143,7 @@ export const capabilityAgentCatalog = [
     name: 'mcp-tools',
     label: 'MCP Tools',
     description: 'Usa tools MCP locales para texto y aritmética.',
-    instructions: 'Úsalo para demostrar tools respaldadas por MCP como echo, suma, multiplicación, slugify y conteo de palabras.',
+    instructions: 'Sólo úsalo para echo, suma, multiplicación, slugify y conteo de palabras mediante MCP local.',
     examples: [
       'Convierte "Fevex Durable Runtime" a slug.',
       'Multiplica 12 por 9 usando MCP.',
@@ -152,7 +153,7 @@ export const capabilityAgentCatalog = [
     name: 'billing-openapi',
     label: 'Billing OpenAPI',
     description: 'Lee facturas mediante una conexión OpenAPI 3.1.',
-    instructions: 'Úsalo para demostrar llamadas OpenAPI contra el fixture local de billing. Proporciona un ID de factura cuando puedas.',
+    instructions: 'Sólo úsalo para consultar facturas por ID mediante la conexión OpenAPI de billing.',
     examples: [
       'Busca la factura inv_1001.',
       '¿Cuál es el estado de la factura inv_1002?',
@@ -162,7 +163,7 @@ export const capabilityAgentCatalog = [
     name: 'refund-approval',
     label: 'Reembolso Aprobado',
     description: 'Pausa operaciones sensibles de reembolso para aprobación humana.',
-    instructions: 'Úsalo para demostrar tools de escritura que requieren aprobación. Pide emitir un reembolso con cuenta, monto y razón.',
+    instructions: 'Sólo úsalo para emitir reembolsos demo cuando exista cuenta, monto y razón explícitos.',
     examples: [
       'Emite un reembolso para la cuenta 42 por 15 dólares por cobro duplicado.',
       'Reembolsa 30 dólares a la cuenta 25 por crédito de interrupción.',
@@ -172,7 +173,7 @@ export const capabilityAgentCatalog = [
     name: 'knowledge-support',
     label: 'Conocimiento y Memoria',
     description: 'Usa policy reutilizable, contexto del cliente y memoria de sesión.',
-    instructions: 'Úsalo para demostrar skills, proveedores de contexto y memoria de sesión en un solo agente.',
+    instructions: 'Sólo úsalo para soporte de reembolsos usando policy, contexto del cliente y memoria de sesión.',
     examples: [
       '¿Este cliente puede recibir un reembolso?',
       'Recuerda que el cliente prefiere actualizaciones breves.',
@@ -184,7 +185,7 @@ export const capabilityAgents = [
   defineAgent({
     name: 'mcp-tools',
     instructions:
-      'Use nest_mcp tools for simple text and arithmetic tasks. The MCP server is local development infrastructure.',
+      'Only handle simple text and arithmetic tasks supported by nest_mcp: echo, sum, multiply, slugify and word_count. If the request is outside that scope, briefly say this agent only demonstrates those MCP tools. Always use the matching nest_mcp tool; do not answer from memory. The MCP server is local development infrastructure.',
     tools: [
       'nest_mcp__echo',
       'nest_mcp__sum',
@@ -196,18 +197,19 @@ export const capabilityAgents = [
   defineAgent({
     name: 'billing-openapi',
     instructions:
-      'Answer invoice questions using billing__getInvoice. Ask for an invoice ID when none is provided.',
+      'Only answer invoice lookup questions. Ask for an invoice ID when none is provided. Use billing__getInvoice before giving invoice amount, currency or status; do not invent billing data. If the request is not about invoices, briefly say this agent only handles invoice lookups.',
     tools: ['billing__getInvoice'],
   }),
   defineAgent({
     name: 'refund-approval',
     instructions:
-      'Use refund_issue only when the user explicitly asks to issue a refund and provides account ID, amount and reason.',
+      'Only handle demo refund issuance. Use refund_issue only when the user explicitly asks to issue a refund and provides account ID, amount and reason. If any required value is missing, ask for it. If the request is not about issuing a refund, briefly say this agent only handles demo refunds.',
     tools: ['refund_issue'],
   }),
   defineAgent({
     name: 'knowledge-support',
-    instructions: 'Answer using the supplied policy, customer context and relevant memory.',
+    instructions:
+      'Only answer refund-support questions using the supplied policy, customer context and relevant memory. Do not invent account, billing or refund facts not present in context, memory or policy. If the request is outside refund support, briefly say this agent only handles refund support.',
     skills: ['support-policy'],
     context: ['customer-profile'],
     memory: { read: true, write: true, limit: 3 },

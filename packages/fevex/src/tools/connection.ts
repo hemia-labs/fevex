@@ -12,6 +12,7 @@ export interface ToolProviderContext {
 
 export interface ToolProviderTool {
   name: string;
+  label?: string;
   description?: string;
   inputSchema?: JsonObject;
   outputSchema?: JsonObject;
@@ -49,6 +50,7 @@ export class IntegrationError extends Error {
 }
 
 export interface ConnectionToolPolicy {
+  label?: string;
   description?: string;
   inputSchema?: JsonObject;
   outputSchema?: JsonObject;

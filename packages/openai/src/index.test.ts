@@ -823,6 +823,26 @@ describe('createOpenAI', () => {
     ]);
   });
 
+  test('forwards extended core reasoning efforts', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const model = createOpenAI({
+      apiKey: 'test-key',
+      fetch: async (_url, init) => {
+        bodies.push(JSON.parse(init?.body as string));
+        return ok(textResponse('done'));
+      },
+    })('gpt-5.6');
+
+    for (const reasoning of ['xhigh', 'max'] as const) {
+      await collectModel(model, input({ reasoning }));
+    }
+
+    expect(bodies.map(({ reasoning }) => reasoning)).toEqual([
+      { effort: 'xhigh' },
+      { effort: 'max' },
+    ]);
+  });
+
   test('preserves abort and reports HTTP failures', async () => {
     const controller = new AbortController();
     const abortReason = new Error('stop now');

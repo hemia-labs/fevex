@@ -34,11 +34,11 @@ between model steps. Direct `ModelGateway` consumers must pass it unchanged; it
 is run-local and must not be inspected. The adapter's `stateCodec` lets Fevex
 persist it only inside a private durable checkpoint.
 
-`reasoning: "none"` disables thinking and `high` enables its native effort.
-`minimal`, `low` and `medium` are rejected before HTTP with
-`PROVIDER_REASONING_UNSUPPORTED`: DeepSeek only implements `high` and `max`,
-while its lower effort names are compatibility aliases that resolve to `high`.
-Provider-only `max` remains available through `modelOptions` when core
+`reasoning: "none"` disables thinking. `low`, `high` and `max` map directly to
+DeepSeek's native `reasoning_effort`; neutral `xhigh` maps to `high` for
+`deepseek-v4-flash` and `max` for `deepseek-v4-pro`. `minimal` and `medium`
+are rejected before HTTP with `PROVIDER_REASONING_UNSUPPORTED`. Provider-only
+`low`, `high` and `max` remain available through `modelOptions` when core
 reasoning is `provider-default`.
 
 The adapter always uses native Chat Completions SSE with usage enabled. Visible

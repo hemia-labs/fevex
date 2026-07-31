@@ -105,6 +105,10 @@ describe('createDeepSeek', () => {
     const result = await collectModel(
       model,
       input({
+        messages: [
+          { role: 'system', content: 'You are helpful.' },
+          { role: 'user', content: 'Hello' },
+        ],
         modelOptions: {
           temperature: 0,
           model: 'ignored-model',
@@ -128,7 +132,10 @@ describe('createDeepSeek', () => {
     });
     expect(JSON.parse(request.init.body as string)).toEqual({
       model: 'deepseek-chat',
-      messages: [{ role: 'user', content: 'Hello' }],
+      messages: [
+        { role: 'system', content: 'You are helpful.' },
+        { role: 'user', content: 'Hello' },
+      ],
       stream: true,
       stream_options: { include_usage: true },
       temperature: 0,
@@ -881,42 +888,41 @@ describe('createDeepSeek', () => {
     expect(fetchCalls).toBe(0);
   });
 
-  test('maps only native reasoning efforts and rejects compatibility aliases', async () => {
+  test('maps neutral reasoning efforts to DeepSeek native controls', async () => {
     const bodies: Array<Record<string, unknown>> = [];
-    const model = createDeepSeek({
+    const config = {
       apiKey: 'test-key',
-      schemaPolicy: 'best-effort',
-      fetch: async (_url, init) => {
+      schemaPolicy: 'best-effort' as const,
+      fetch: async (_url: string | URL | Request, init?: RequestInit) => {
         bodies.push(JSON.parse(init?.body as string));
         return ok({ choices: [{ finish_reason: 'stop', message: { content: 'done' } }] });
       },
-    })('deepseek-chat');
+    };
+    const flash = createDeepSeek(config)('deepseek-v4-flash');
+    const pro = createDeepSeek(config)('deepseek-v4-pro');
 
+    for (const reasoning of ['low', 'high', 'xhigh', 'max'] as const) {
+      await collectModel(
+        flash,
+        input({ reasoning }),
+      );
+    }
+    await collectModel(pro, input({ reasoning: 'xhigh' }));
     await collectModel(
-      model,
+      flash,
       input({
         modelOptions: {
           thinking: { type: 'enabled' },
-          reasoning_effort: 'max',
+          reasoning_effort: 'low',
         },
       }),
     );
-    for (const reasoning of ['none', 'high'] as const) {
-      await collectModel(
-        model,
-        input({
-          reasoning,
-          modelOptions: {
-            thinking: { type: 'disabled' },
-            reasoning_effort: 'max',
-          },
-        }),
-      );
-    }
-    for (const reasoning of ['minimal', 'low', 'medium'] as const) {
+    await collectModel(flash, input({ reasoning: 'none' }));
+
+    for (const reasoning of ['minimal', 'medium'] as const) {
       await expect(
         collectModel(
-          model,
+          flash,
           input({
             reasoning,
           }),
@@ -928,7 +934,7 @@ describe('createDeepSeek', () => {
     }
     await expect(
       collectModel(
-        model,
+        flash,
         input({
           modelOptions: { reasoning_effort: 'xhigh' },
         }),
@@ -944,9 +950,13 @@ describe('createDeepSeek', () => {
         reasoning_effort,
       })),
     ).toEqual([
-      { thinking: { type: 'enabled' }, reasoning_effort: 'max' },
-      { thinking: { type: 'disabled' }, reasoning_effort: undefined },
+      { thinking: { type: 'enabled' }, reasoning_effort: 'low' },
       { thinking: { type: 'enabled' }, reasoning_effort: 'high' },
+      { thinking: { type: 'enabled' }, reasoning_effort: 'high' },
+      { thinking: { type: 'enabled' }, reasoning_effort: 'max' },
+      { thinking: { type: 'enabled' }, reasoning_effort: 'max' },
+      { thinking: { type: 'enabled' }, reasoning_effort: 'low' },
+      { thinking: { type: 'disabled' }, reasoning_effort: undefined },
     ]);
   });
 

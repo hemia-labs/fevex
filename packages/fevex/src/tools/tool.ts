@@ -36,6 +36,7 @@ export interface ToolRetryPolicy {
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
+  label?: string;
   description?: string;
   inputSchema?: StandardSchemaV1<unknown, TInput>;
   outputSchema?: StandardSchemaV1<unknown, TOutput>;

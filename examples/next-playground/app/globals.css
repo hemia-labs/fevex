@@ -174,7 +174,7 @@
 }
 
 .icon-button,
-.composer button {
+.composer-submit {
   display: grid;
   place-items: center;
   width: 32px;
@@ -826,6 +826,69 @@
   opacity: 0.52;
 }
 
+.approval-decision-card {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 380px);
+  margin-top: 12px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  padding: 14px;
+  background: #101113;
+  box-shadow: 0 16px 44px rgb(0 0 0 / 28%);
+}
+
+.approval-decision-card strong {
+  color: #f4f4f5;
+  font-size: 13px;
+}
+
+.approval-decision-card p {
+  margin: 5px 0 0;
+  color: #a1a1aa;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.approval-decision-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.approval-decision-actions button {
+  height: 30px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #d4d4d8;
+  background: rgb(255 255 255 / 4%);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.approval-decision-actions button:hover:not(:disabled) {
+  color: #f4f4f5;
+  background: rgb(255 255 255 / 8%);
+}
+
+.approval-decision-actions button[data-kind="approve"] {
+  border-color: rgb(59 130 246 / 36%);
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.approval-decision-actions button[data-kind="approve"]:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.approval-decision-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 /* the run-activity / tool list UI now lives in components/ui/marker.tsx + Tailwind utilities */
 
 .pixel-loader {
@@ -1030,27 +1093,87 @@
   border: 1px solid var(--pg-border);
   border-radius: 6px;
   background: var(--surface);
-  color: #f4f4f5;
+  color: #a1a1aa;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.code-block {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 10px;
+  background: #0d1117;
 }
 
 .message-content pre {
   overflow-x: auto;
-  padding: 12px 14px;
-  border: 1px solid var(--pg-border);
-  border-radius: 8px;
-  background: var(--surface);
+  margin: 0;
+  padding: 38px 14px 14px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 5%), transparent 34px),
+    #0d1117;
 }
 
 .message-content pre code {
   padding: 0;
   border: 0;
   background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+}
+
+.message-content pre code.hljs {
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+}
+
+.message-content .hljs-string {
+  color: #a1a1aa;
+}
+
+.code-language {
+  position: absolute;
+  top: 13px;
+  left: 14px;
+  z-index: 1;
+  color: #8b949e;
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: lowercase;
+}
+
+.code-copy {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 7px;
+  padding: 0 8px;
+  color: #d4d4d8;
+  background: rgb(24 24 27 / 88%);
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.code-copy:hover {
+  color: #ffffff;
+  background: rgb(39 39 42 / 96%);
 }
 
 .message-content strong {
   color: #f4f4f5;
   font-weight: 700;
+}
+
+.message-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
 }
 
 .draft-list {
@@ -1144,10 +1267,86 @@
 
 .composer-footer {
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 4px;
 }
 
-.composer button {
+.composer-pickers {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: 6px;
+  flex: 0 1 auto;
+  margin-left: auto;
+}
+
+.composer-menu-trigger {
+  interpolate-size: allow-keywords;
+  width: max-content;
+  max-width: min(58vw, 360px);
+  height: 34px;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  color: #d4d4d8;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  transition:
+    width 180ms ease,
+    max-width 180ms ease,
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.composer-menu-trigger:hover:not(:disabled),
+.composer-menu-trigger[aria-expanded="true"] {
+  color: #f4f4f5;
+  background: transparent;
+}
+
+.composer-menu-trigger:disabled {
+  opacity: 0.7;
+}
+
+.composer-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-menu-effort {
+  color: var(--pg-muted);
+  white-space: nowrap;
+}
+
+.composer-menu-content,
+.composer-menu-subcontent {
+  width: auto;
+  min-width: 180px;
+  border: 1px solid var(--pg-border);
+  color: #e4e4e7;
+  background: #18181b;
+}
+
+.composer-menu-subcontent {
+  min-width: 160px;
+}
+
+.composer-menu-content [data-slot="dropdown-menu-item"],
+.composer-menu-content [data-slot="dropdown-menu-sub-trigger"],
+.composer-menu-subcontent [data-slot="dropdown-menu-item"],
+.composer-menu-subcontent [data-slot="dropdown-menu-sub-trigger"] {
+  min-height: 30px;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.composer-submit {
   width: 34px;
   height: 34px;
   border-radius: 999px;
@@ -1156,16 +1355,16 @@
   background: var(--ruby);
 }
 
-.composer button:hover:not(:disabled) {
+.composer-submit:hover:not(:disabled) {
   background: #9f1f2b;
 }
 
-.composer button.cancel {
+.composer-submit.cancel {
   border-color: #52525b;
   background: #27272a;
 }
 
-.composer button:disabled {
+.composer-submit:disabled {
   border-color: var(--pg-border);
   color: #52525b;
   background: var(--raised);

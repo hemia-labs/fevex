@@ -1,5 +1,6 @@
 import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
 import type { Fevex } from '../fevex';
+import type { ReasoningEffort } from '../models';
 import type {
   AgentRun,
   RunRecord,
@@ -13,6 +14,8 @@ export const FEVEX_HTTP_PROTOCOL_VERSION_HEADER = 'Fevex-Protocol-Version';
 
 export interface StartRunHttpRequest<TInput extends JsonValue = JsonValue> {
   input: TInput;
+  model?: string;
+  reasoning?: ReasoningEffort;
   sessionId?: SessionId;
 }
 
@@ -46,6 +49,7 @@ export interface FevexHttpHandlerContext {
 export interface FevexHttpHandlerOptions {
   fevex: Fevex;
   pollIntervalMs?: number;
+  onError?: (error: unknown, problem: FevexProblemDetails) => void;
 }
 
 export type FevexHttpHandler = (

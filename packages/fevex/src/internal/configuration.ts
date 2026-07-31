@@ -35,6 +35,8 @@ const REASONING_EFFORTS = new Set<ReasoningEffort>([
   'low',
   'medium',
   'high',
+  'xhigh',
+  'max',
 ]);
 
 const DEFAULT_CONNECTION_TIMEOUT_MS = 30_000;
@@ -274,6 +276,7 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
 
     return {
       name: namespacedToolName(connection.name, remoteName),
+      ...(policy?.label === undefined ? {} : { label: policy.label }),
       ...(policy?.description === undefined ? {} : { description: policy.description }),
       ...(policy?.inputSchema === undefined ? {} : { inputJsonSchema: policy.inputSchema }),
       ...(policy?.outputSchema === undefined ? {} : { outputJsonSchema: policy.outputSchema }),
@@ -741,6 +744,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
 
     tools.set(name, {
       name,
+      ...(definition.label === undefined ? {} : { label: definition.label }),
       ...(definition.description === undefined ? {} : { description: definition.description }),
       ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),

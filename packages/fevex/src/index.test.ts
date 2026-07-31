@@ -113,6 +113,15 @@ describe('createFevex', () => {
     expect(PROVIDER_REASONING_UNSUPPORTED).toBe('PROVIDER_REASONING_UNSUPPORTED');
   });
 
+  test('accepts extended reasoning effort levels', () => {
+    for (const reasoning of ['xhigh', 'max'] as const) {
+      expect(() => createFevex({
+        models: { default: modelWithOutput('ok') },
+        agents: [agent('assistant', { reasoning })],
+      })).not.toThrow();
+    }
+  });
+
   test('runs the default model and forwards agent options', async () => {
     const calls: ModelInput[] = [];
     const requestSchemaJson = {
@@ -2664,13 +2673,13 @@ describe('createFevex', () => {
     });
     const makeApp = () =>
       createFevex({
-        models: { default: configuredModel() },
+        models: { default: configuredModel(), alternate: configuredModel() },
         agents: [agent('assistant', { elicitation: 'pause' })],
         runStore: store,
       });
 
     let paused!: RunPausedError;
-    await makeApp().runAgent('assistant', { input: 'hello' }).catch((error) => {
+    await makeApp().runAgent('assistant', { input: 'hello', model: 'alternate' }).catch((error) => {
       paused = error as RunPausedError;
     });
 
@@ -2683,6 +2692,21 @@ describe('createFevex', () => {
       },
     });
     expect(calls[0]?.tools?.map(({ name }) => name)).toContain('fevex__elicit');
+    const elicitTool = calls[0]?.tools?.find(({ name }) => name === 'fevex__elicit');
+    const elicitInputSchema = elicitTool?.inputSchema as { properties?: Record<string, unknown> } | undefined;
+    expect(elicitTool?.description).toContain('responseSchema property titles');
+    expect(elicitInputSchema?.properties?.responseSchema).toMatchObject({
+      description: expect.stringContaining('short title'),
+    });
+
+    const legacyRun = (await store.getRun(paused.runId))!;
+    const legacyCheckpoint = (await store.getCheckpoint<RunCheckpoint>(paused.runId))!;
+    delete legacyCheckpoint.modelName;
+    expect(await store.commitExecution({
+      expectedRevision: legacyRun.revision,
+      run: legacyRun,
+      checkpoint: legacyCheckpoint,
+    })).toBe(true);
 
     const second = makeApp();
     await second.resumeRun(paused.runId, {
@@ -2854,6 +2878,7 @@ describe('createFevex', () => {
     const configuredTool = () =>
       defineTool({
         name: 'lookup',
+        label: 'Lookup account',
         risk: 'write',
         approval: 'required',
         idempotency: 'keyed',
@@ -2880,6 +2905,10 @@ describe('createFevex', () => {
     }
     expect(paused.pause.type).toBe('approval');
     expect(executions).toBe(0);
+    expect(paused.pause.type === 'approval' ? paused.pause.approval : undefined).toMatchObject({
+      toolName: 'lookup',
+      toolLabel: 'Lookup account',
+    });
 
     let complete!: () => void;
     const completed = new Promise<void>((resolve) => {
@@ -2924,6 +2953,12 @@ describe('createFevex', () => {
       'model.completed',
       'run.completed',
     ]);
+    expect(
+      (await second.listEvents(paused.runId)).find((event) => event.type === 'approval.requested')?.payload,
+    ).toMatchObject({
+      toolName: 'lookup',
+      toolLabel: 'Lookup account',
+    });
   });
 
   test('rejects an approval once and cancels paused runs with terminal events', async () => {

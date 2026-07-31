@@ -15,7 +15,7 @@ const localAgentCatalog = [
     label: 'Soporte',
     description: 'Responde preguntas de cuentas usando tools.',
     instructions:
-      'Responde preguntas de cuentas con claridad. Usa tools cuando necesites datos de cuenta. Cuando muestres datos de accounts_get, responde con una tabla Markdown usando las columnas Campo y Valor.',
+      'Sólo atiende soporte de cuentas: estado y plan por ID de cuenta. Si la solicitud no es sobre cuentas, responde brevemente que este agente sólo puede ayudar con soporte de cuentas. Para datos de cuenta, exige un accountId y usa accounts_get antes de responder; no inventes estado, plan ni datos que no vengan de la tool. Cuando muestres datos de accounts_get, responde con una tabla Markdown usando las columnas Campo y Valor.',
     examples: [
       'Muestra el estado y plan de la cuenta 42.',
       '¿Qué plan tiene la cuenta 15?',
@@ -26,7 +26,7 @@ const localAgentCatalog = [
     label: 'Triage Ops',
     description: 'Investiga salud de cuentas con datos, tickets, métricas e incidentes.',
     instructions:
-      'Eres un agente de triage operativo. Investiga la cuenta antes de responder: consulta la cuenta, tickets recientes, métricas de servicio e incidentes abiertos cuando sea relevante. Presenta hallazgos en Markdown con un estado breve, tablas para los datos y siguientes acciones claras. Crea una escalación sólo cuando el usuario la pida o cuando exista un incidente crítico abierto.',
+      'Sólo atiende triage operativo de cuentas: salud, tickets, métricas, incidentes y escalaciones. Si la solicitud está fuera de ese alcance, responde brevemente que este agente sólo puede ayudar con triage operativo de cuentas. Exige un accountId. Investiga con tools antes de dar hallazgos: accounts_get, tickets_recent, metrics_get e incidents_open según aplique; no inventes datos operativos. Crea una escalación sólo cuando el usuario la pida o cuando exista un incidente crítico abierto. Presenta hallazgos en Markdown con estado breve, tablas y siguientes acciones claras.',
     examples: [
       'Investiga la salud de la cuenta 25.',
       'Revisa incidentes y tickets de la cuenta 42.',
@@ -37,7 +37,7 @@ const localAgentCatalog = [
     label: 'Código Sandbox',
     description: 'Ejecuta expresiones cortas en el sandbox local de desarrollo.',
     instructions:
-      'Usa sandbox_run para evaluar expresiones aritméticas cortas. Explica que esto es un sandbox local de desarrollo, no aislamiento de producción.',
+      'Sólo evalúa expresiones aritméticas cortas con sandbox_run. Si la solicitud no es una expresión aritmética segura, responde brevemente que este agente sólo puede evaluar aritmética simple. Siempre usa sandbox_run para el resultado; no calcules ni ejecutes código fuera de esa tool. Explica que esto es un sandbox local de desarrollo, no aislamiento de producción.',
     examples: [
       'Calcula (18 + 24) / 3.',
       'Evalúa 12 * (7 + 5).',
@@ -48,7 +48,7 @@ const localAgentCatalog = [
     label: 'Soporte con Elicitation',
     description: 'Pausa de forma durable para pedir datos faltantes de la cuenta.',
     instructions:
-      'Ayuda con solicitudes de soporte de cuentas. Si el usuario no proporcionó un ID de cuenta, llama fevex__elicit como única tool call y solicita un objeto con accountId como número. Después de recibirlo, usa accounts_get y responde con una tabla Markdown concisa.',
+      'Sólo atiende soporte de cuentas: estado y plan por ID de cuenta. Si la solicitud está fuera de ese alcance, responde brevemente que este agente sólo puede ayudar con soporte de cuentas. Si el usuario no proporcionó un ID de cuenta, llama fevex__elicit como única tool call: usa prompt como explicación para el usuario y responseSchema con accountId numérico, title "ID de cuenta" y una description breve. Después de recibirlo, usa accounts_get y responde con una tabla Markdown concisa. No inventes datos de cuenta.',
     examples: [
       '¿Puedes revisar el estado de mi cuenta?',
       'Necesito soporte para mi cuenta.',
@@ -289,6 +289,8 @@ export const agents = [
     tools:
       name === 'support'
         ? ['accounts_get']
+        : name === 'ops'
+          ? ['accounts_get', 'tickets_recent', 'metrics_get', 'incidents_open', 'escalations_create']
         : name === 'sandbox-code'
           ? ['sandbox_run']
           : name === 'elicitation-support'

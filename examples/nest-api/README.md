@@ -18,8 +18,17 @@ OpenAI uses the same agents and protocol:
 FEVEX_PROVIDER=openai OPENAI_API_KEY=... bun run dev:nest
 ```
 
-`FEVEX_MODEL` overrides `deepseek-v4-flash` or `gpt-5.6`. OpenAI also accepts
-`OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
+Para alternarlos desde el playground, configura ambas claves en el mismo
+proceso:
+
+```bash
+FEVEX_PROVIDER=deepseek DEEPSEEK_API_KEY=... OPENAI_API_KEY=... bun run dev:nest
+```
+
+If both API keys are configured, the playground lets you choose the provider
+and reasoning effort per run. Use `DEEPSEEK_MODEL` and `OPENAI_MODEL` to override each model;
+`FEVEX_MODEL` remains a shortcut for the provider selected by
+`FEVEX_PROVIDER`. OpenAI also accepts `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
 
 Start the UI separately with `bun run dev:next` and open
 `http://localhost:3000`. `NEXT_PUBLIC_NEST_API_URL` defaults to
@@ -97,6 +106,10 @@ curl -s http://localhost:3001/v1/agents/support/runs \
   -H 'content-type: application/json' \
   -d '{"input":"Check account 10"}'
 ```
+
+The same request accepts `model` (`deepseek` or `openai`) and `reasoning`
+(`provider-default`, `none`, `low`, `medium`, `high`, `xhigh` or `max`,
+depending on the selected provider).
 
 The `202` response is an `AgentRun` containing `id` and `sessionId`. Pass that
 session ID when starting another run to continue the conversation.

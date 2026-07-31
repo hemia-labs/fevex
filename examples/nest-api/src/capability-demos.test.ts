@@ -91,11 +91,20 @@ test('capability demos exercise OpenAPI, approval and knowledge contracts', asyn
 
 test('nest demo exposes a sandboxed local command agent', () => {
   expect(agentCatalog.find(({ name }) => name === 'sandbox-code')).toMatchObject({
-    label: 'Sandbox Code',
+    label: 'Código Sandbox',
   });
   const sandboxAgent = agents.find(({ name }) => name === 'sandbox-code');
   if (!sandboxAgent || !('tools' in sandboxAgent)) throw new Error('Missing sandbox-code agent.');
   expect(sandboxAgent.tools).toEqual(['sandbox_run']);
+  const opsAgent = agents.find(({ name }) => name === 'ops');
+  if (!opsAgent || !('tools' in opsAgent)) throw new Error('Missing ops agent.');
+  expect(opsAgent.tools).toEqual([
+    'accounts_get',
+    'tickets_recent',
+    'metrics_get',
+    'incidents_open',
+    'escalations_create',
+  ]);
   expect(tools.find(({ name }) => name === 'sandbox_run')).toMatchObject({
     sandbox: {
       process: { commands: [process.execPath], timeoutMs: 1_000 },

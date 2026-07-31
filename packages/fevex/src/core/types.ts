@@ -212,6 +212,7 @@ export interface AgentEventPayloads {
     approvalId: string;
     toolCallId: string;
     toolName: string;
+    toolLabel?: string;
     source?: ToolEventSource;
     workflowStepId?: string;
     workflowAgentName?: string;
@@ -223,6 +224,7 @@ export interface AgentEventPayloads {
     toolCallId: string;
     decision: 'approve' | 'reject';
     actorId: string;
+    toolLabel?: string;
     source?: ToolEventSource;
     workflowStepId?: string;
     workflowAgentName?: string;
