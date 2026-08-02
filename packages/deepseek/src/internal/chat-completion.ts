@@ -602,14 +602,7 @@ function toDeepSeekReasoning(
   if (input.reasoning === 'none') {
     return { thinking: { type: 'disabled' } };
   }
-  if (
-    input.reasoning !== 'low' &&
-    input.reasoning !== 'high' &&
-    input.reasoning !== 'xhigh' &&
-    input.reasoning !== 'max'
-  ) {
-    throw new DeepSeekError('DeepSeek reasoning effort is invalid');
-  }
+  // ponytail: assertCompatibleInput already narrowed reasoning to low/high/xhigh/max here.
   return {
     thinking: { type: 'enabled' },
     effort:

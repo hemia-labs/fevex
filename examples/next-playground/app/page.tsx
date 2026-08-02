@@ -43,6 +43,7 @@ import type { AgentEvent, JsonValue, ReasoningEffort, RunRecord } from '@fevex/c
 import type { ElicitationRequest } from '@fevex/core/runtime';
 import { createFevexHttpClient, FevexHttpError } from '@fevex/core/http';
 import { ApprovalDecisionCard } from '@/components/approval-decision-card';
+import { BrowserPreview } from '@/components/browser-preview';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -1216,6 +1217,7 @@ export default function Home() {
           <EnvironmentRow icon={<Bug size={14} />} label="Depuración" value={debug ? 'Activo' : 'Inactivo'} />
           <EnvironmentRow icon={<Check size={14} />} label="Ejecución" value={activeRunId ?? 'Sin ejecución activa'} />
         </div>
+        {activeRunId ? <BrowserPreview apiUrl={apiUrl} runId={activeRunId} /> : null}
       </aside>
     </div>
   );

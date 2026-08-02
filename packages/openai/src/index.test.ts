@@ -8,6 +8,7 @@ import {
 } from '@fevex/core';
 import { testModelGateway } from '@fevex/core/testing';
 import { createOpenAI, OpenAIError } from './index';
+import { findOpenAISchemaIssue } from './internal/provider-schema';
 
 const ok = (body: unknown) =>
   new Response(toOpenAISSE(body), {
@@ -1038,5 +1039,70 @@ describe('createOpenAI', () => {
       }),
     ).toThrow('OpenAI schemaPolicy must be "strict" or "best-effort"');
     expect(new OpenAIError('failed')).toBeInstanceOf(Error);
+  });
+
+  test('reports every unsupported strict schema construct', () => {
+    const wrap = (value: JsonObject): JsonObject => ({
+      type: 'object',
+      properties: { value },
+      required: ['value'],
+      additionalProperties: false,
+    });
+    let tooDeep = wrap({ type: 'string' });
+    for (let index = 0; index < 10; index += 1) tooDeep = wrap(tooDeep);
+
+    const cases: Array<[JsonObject, string]> = [
+      [{ type: 'string' }, 'root must be an object'],
+      [wrap({ $ref: 1 }), '$ref: must be a string'],
+      [tooDeep, 'limit of 10 object nesting levels'],
+      [wrap({ type: 'string', properties: {} }), 'object keywords require type "object"'],
+      [wrap({ type: 'string', items: {} }), 'array keywords require type "array"'],
+      [wrap({ type: 'number', format: 'email' }), 'string keywords require type "string"'],
+      [wrap({ type: 'string', minimum: 1 }), 'numeric keywords require type "number" or "integer"'],
+      [
+        { type: 'object', properties: [], required: [], additionalProperties: false },
+        'properties: must be an object',
+      ],
+      [wrap({ anyOf: [] }), 'anyOf: must be a non-empty array'],
+      [wrap({ anyOf: [{ type: 'null' }, { type: 'bogus' }] }), 'type "bogus" is not supported'],
+      [wrap({ $defs: [] }), '$defs: must be an object'],
+      [wrap({ $defs: { Node: { type: 'symbol' } } }), 'type "symbol" is not supported'],
+      [wrap({ enum: [{}] }), 'enum: must contain only JSON primitive values'],
+      [
+        wrap({ type: 'number', enum: Array.from({ length: 1_001 }, (_, index) => index) }),
+        'limit of 1000 enum values',
+      ],
+      [
+        wrap({ type: 'string', enum: Array.from({ length: 251 }, (_, index) => `${index}`.padEnd(100, 'x')) }),
+        'limit of 15000 characters for large enums',
+      ],
+      [wrap({ const: Number.NaN }), 'const: must be a JSON primitive'],
+      [
+        wrap({ type: 'string', const: 'x'.repeat(120_001) }),
+        'limit of 120000 schema string characters',
+      ],
+      [wrap({ type: 'string', pattern: 1 }), 'pattern: must be a string'],
+      [wrap({ type: 'string', format: 'uri' }), 'format "uri" is not supported'],
+      [wrap({ type: 'number', minimum: Number.NaN }), 'minimum: must be a number'],
+      [
+        wrap({ type: 'array', items: { type: 'string' }, minItems: -1 }),
+        'minItems: must be a non-negative integer',
+      ],
+      [wrap({ type: 'bogus' }), 'type "bogus" is not supported'],
+      [wrap({ type: ['string', 'number'] }), 'supported type or a nullable two-type union'],
+    ];
+
+    for (const [schema, expected] of cases) {
+      expect(findOpenAISchemaIssue(schema)).toContain(expected);
+    }
+    expect(
+      findOpenAISchemaIssue(
+        wrap({
+          $defs: { Node: { type: 'string' } },
+          type: ['string', 'null'],
+          enum: [null, 'a', true, 1],
+        }),
+      ),
+    ).toBeUndefined();
   });
 });

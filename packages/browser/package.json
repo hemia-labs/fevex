@@ -1,0 +1,57 @@
+{
+  "name": "@fevex/browser",
+  "version": "0.1.0-alpha.1",
+  "description": "Curated agent-browser navigation tools for Fevex.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": ["dist"],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hemia-labs/fevex.git",
+    "directory": "packages/browser"
+  },
+  "bugs": {
+    "url": "https://github.com/hemia-labs/fevex/issues"
+  },
+  "homepage": "https://github.com/hemia-labs/fevex#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "browser",
+    "agent-browser",
+    "tools",
+    "typescript",
+    "fevex",
+    "fevex-integration",
+    "fevex-extension"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts",
+    "prepack": "bun run build",
+    "test": "bun test src/index.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@fevex/core": "0.1.0-alpha.1"
+  },
+  "devDependencies": {
+    "@standard-schema/spec": "^1.1.0",
+    "typescript": "^5.7.0"
+  }
+}

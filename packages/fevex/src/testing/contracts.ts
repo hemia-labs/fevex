@@ -40,6 +40,15 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new TypeError(message);
 }
 
+async function assertRejects(operation: () => Promise<unknown>, message: string): Promise<void> {
+  try {
+    await operation();
+  } catch {
+    return;
+  }
+  throw new TypeError(message);
+}
+
 export interface ChannelAdapterContract<TInput, TOutput> {
   input: TInput;
   message: ChannelMessage;
@@ -415,6 +424,13 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
     'RunStore must not expose mutable run references',
   );
 
+  await store.saveRun({ ...run, status: 'completed' });
+  assert(
+    (await store.getRun(runId))?.status === 'completed',
+    'RunStore must overwrite an existing run on save',
+  );
+  await store.saveRun(run);
+
   const firstEvent = {
     id: `event-1-${suffix}`,
     sequence: 1,
@@ -502,6 +518,27 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
     events.length === 1 && events[0]?.id === secondEvent.id,
     'RunStore cursors must return stable ordered suffixes',
   );
+  await assertRejects(
+    () => store.listEvents(`missing-run-${suffix}`),
+    'RunStore listEvents must reject unknown runs',
+  );
+  await assertRejects(
+    () => store.listEvents(runId, { after: `missing-cursor-${suffix}` }),
+    'RunStore listEvents must reject unknown cursors',
+  );
+
+  assert(
+    await store.commitExecution({ expectedRevision: 1, run, checkpoint: null }),
+    'RunStore must commit a checkpoint deletion',
+  );
+  assert(
+    (await store.getCheckpoint(runId)) === undefined,
+    'RunStore must delete the checkpoint when a commit sets it to null',
+  );
+  assert(
+    (await store.getToolExecution(runId, 'tool-call'))?.status === 'completed',
+    'RunStore must keep the tool ledger when a checkpoint is deleted',
+  );
 
   const lease1 = {
     runId,
@@ -520,4 +557,26 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   await store.releaseLease(runId, lease1.ownerId);
   assert(await store.acquireLease(lease2), 'RunStore must release a lease for another owner');
   await store.releaseLease(runId, lease2.ownerId);
+
+  assert(
+    !(await store.renewLease(lease1)),
+    'RunStore must reject renewal of a released lease',
+  );
+
+  const expiredLease = {
+    runId,
+    ownerId: `owner-3-${suffix}`,
+    expiresAt: new Date(Date.now() - 1_000).toISOString(),
+  };
+  const takeoverLease = {
+    runId,
+    ownerId: `owner-4-${suffix}`,
+    expiresAt: new Date(Date.now() + 30_000).toISOString(),
+  };
+  assert(await store.acquireLease(expiredLease), 'RunStore must acquire a free lease');
+  assert(
+    await store.acquireLease(takeoverLease),
+    'RunStore must let another owner take over an expired lease',
+  );
+  await store.releaseLease(runId, takeoverLease.ownerId);
 }

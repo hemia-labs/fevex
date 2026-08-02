@@ -87,7 +87,7 @@
   "scripts": {
     "build": "tsdown src/index.ts src/agents/index.ts src/channels/index.ts src/http/index.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/teams/index.ts src/runtime/index.ts src/sandbox/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
     "prepack": "bun run build",
-    "test": "bun test src/index.test.ts src/http/index.test.ts src/internal/json.test.ts src/internal/model-stream.test.ts src/observability/index.test.ts src/evals/index.test.ts src/sandbox/index.test.ts src/testing/index.test.ts",
+    "test": "bun test src/index.test.ts src/agent-run.test.ts src/durability.test.ts src/workflows.test.ts src/teams.test.ts src/http/index.test.ts src/internal/json.test.ts src/internal/model-stream.test.ts src/observability/index.test.ts src/evals/index.test.ts src/sandbox/index.test.ts src/testing/index.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "publishConfig": {

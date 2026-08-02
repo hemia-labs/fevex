@@ -9,6 +9,7 @@ import {
 } from '@fevex/core';
 import { testModelGateway } from '@fevex/core/testing';
 import { createDeepSeek, DeepSeekError } from './index';
+import { findDeepSeekToolSchemaIssue } from './internal/provider-schema';
 
 const ok = (body: unknown) =>
   new Response(toDeepSeekSSE(body), {
@@ -198,7 +199,15 @@ describe('createDeepSeek', () => {
       }),
     );
 
-    expect(bodies.map(({ max_tokens }) => max_tokens)).toEqual([30, 20]);
+    await collectModel(
+      model,
+      input({
+        maxOutputTokens: 40,
+        modelOptions: { max_tokens: 0 },
+      }),
+    );
+
+    expect(bodies.map(({ max_tokens }) => max_tokens)).toEqual([30, 20, 40]);
   });
 
   test('translates neutral toolChoice', async () => {
@@ -1231,5 +1240,273 @@ describe('createDeepSeek', () => {
       }),
     ).toThrow('DeepSeek schemaPolicy must be "strict" or "best-effort"');
     expect(new DeepSeekError('failed')).toBeInstanceOf(Error);
+  });
+
+  test('reports every unsupported strict tool schema construct', () => {
+    const wrap = (value: JsonObject): JsonObject => ({
+      type: 'object',
+      properties: { value },
+      required: ['value'],
+      additionalProperties: false,
+    });
+
+    const cases: Array<[JsonObject, string]> = [
+      [{ type: 'string' }, 'tool input root must be an object'],
+      [wrap({ $ref: 1 }), '$ref: must be a string'],
+      [wrap({ type: 'null' }), 'type "null" is not supported by DeepSeek'],
+      [wrap({ type: 'string', properties: {} }), 'object keywords require type "object"'],
+      [wrap({ type: 'string', items: {} }), 'items requires type "array"'],
+      [wrap({ type: 'number', format: 'email' }), 'string keywords require type "string"'],
+      [
+        { type: 'object', properties: [], required: [], additionalProperties: false },
+        'properties: must be an object',
+      ],
+      [
+        { type: 'object', properties: {}, required: [], additionalProperties: true },
+        'additionalProperties: must be false',
+      ],
+      [
+        { type: 'object', properties: { a: { type: 'string' } }, required: [], additionalProperties: false },
+        'required: must contain every property exactly once',
+      ],
+      [wrap({ type: 'array', items: 1 }), 'items: must be a schema object'],
+      [wrap({ type: 'array', items: { type: 'null' } }), 'type "null" is not supported'],
+      [wrap({ anyOf: 1 }), 'anyOf: must be a non-empty array'],
+      [wrap({ anyOf: [{ type: 'null' }] }), 'type "null" is not supported'],
+      [wrap({ $def: 1 }), '$def: must be an object'],
+      [wrap({ $def: { Node: { type: 'null' } } }), 'type "null" is not supported'],
+      [wrap({ enum: [null, 'a', true, 1, {}] }), 'enum: must contain only JSON primitive values'],
+      [wrap({ type: 'string', format: 'uri' }), 'format "uri" is not supported by DeepSeek'],
+      [wrap({ type: 'string', pattern: 1 }), 'pattern: must be a string'],
+      [wrap({ type: 'string', const: 'x' }), 'const: is supported only as a numeric constraint'],
+      [
+        wrap({ type: 'number', multipleOf: 'x' }),
+        'multipleOf: is supported only as a numeric constraint',
+      ],
+      [
+        wrap({ type: 'number', minimum: Number.NaN }),
+        'minimum: is supported only as a numeric constraint',
+      ],
+    ];
+
+    for (const [schema, expected] of cases) {
+      expect(findDeepSeekToolSchemaIssue(schema)).toContain(expected);
+    }
+    expect(
+      findDeepSeekToolSchemaIssue(
+        wrap({
+          $def: { Node: { type: 'string' } },
+          anyOf: [{ type: 'string' }, { type: 'integer', minimum: 1, maximum: 5 }],
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test('rejects malformed stream chunks', async () => {
+    const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+    const delta = (value: unknown) => chunk({ choices: [{ index: 0, delta: value }] });
+    const toolCall = (value: unknown) => delta({ tool_calls: value });
+    const cases: Array<[string, string]> = [
+      ['data: not-json\n\n', 'stream event was not valid JSON'],
+      [chunk([1]), 'stream event was invalid'],
+      [chunk({ error: { message: 'upstream boom' } }), 'upstream boom'],
+      [chunk({ usage: 5, choices: [] }), 'stream usage was invalid'],
+      [chunk({ choices: {} }), 'stream choices were invalid'],
+      [
+        chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+          + chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'length' }] }),
+        'conflicting finish reasons',
+      ],
+      [chunk({ choices: [{ index: 0, delta: 'text' }] }), 'invalid delta'],
+      [delta({ content: 1 }), 'content delta was invalid'],
+      [delta({ reasoning_content: 1 }), 'reasoning delta was invalid'],
+      [toolCall(5), 'tool call delta was invalid'],
+      [toolCall([{}]), 'tool call delta index was invalid'],
+      [toolCall([{ index: 0, type: 'other' }]), 'tool call delta type was invalid'],
+      [toolCall([{ index: 0, id: 1 }]), 'tool call delta id was invalid'],
+      [
+        toolCall([{ index: 0, id: 'call-1' }]) + toolCall([{ index: 0, id: 'call-2' }]),
+        'tool call delta id was invalid',
+      ],
+      [toolCall([{ index: 0, function: 1 }]), 'tool call function delta was invalid'],
+      [toolCall([{ index: 0, function: { name: 1 } }]), 'tool call name delta was invalid'],
+      [
+        toolCall([{ index: 0, function: { arguments: 1 } }]),
+        'tool call arguments delta was invalid',
+      ],
+    ];
+
+    for (const [body, expected] of cases) {
+      const model = createDeepSeek({
+        apiKey: 'test-key',
+        fetch: async () => fragmentedSSE(body),
+      })('deepseek-chat');
+      await expect(collectModel(model, input())).rejects.toThrow(expected);
+    }
+  });
+
+  test('wraps transport, stream and error-body failures', async () => {
+    const failing = createDeepSeek({
+      apiKey: 'test-key',
+      fetch: async () => {
+        throw new Error('socket refused');
+      },
+    })('deepseek-chat');
+    await expect(collectModel(failing, input())).rejects.toThrow('DeepSeek request failed');
+
+    const brokenStream = createDeepSeek({
+      apiKey: 'test-key',
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.error(new Error('socket reset'));
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    })('deepseek-chat');
+    await expect(collectModel(brokenStream, input())).rejects.toThrow('DeepSeek stream failed');
+
+    const badErrorBody = createDeepSeek({
+      apiKey: 'test-key',
+      fetch: async () => new Response('nope', { status: 500 }),
+    })('deepseek-chat');
+    await expect(collectModel(badErrorBody, input())).rejects.toThrow(
+      'DeepSeek response was not valid JSON',
+    );
+
+    const emptyErrorBody = createDeepSeek({
+      apiKey: 'test-key',
+      fetch: async () => new Response('', { status: 503 }),
+    })('deepseek-chat');
+    await expect(collectModel(emptyErrorBody, input())).rejects.toThrow(
+      'DeepSeek request failed with status 503',
+    );
+
+    const unparsableBaseURL = createDeepSeek({
+      apiKey: 'test-key',
+      baseURL: 'not a url',
+      fetch: async () => ok({}),
+    })('deepseek-chat');
+    await expect(
+      collectModel(unparsableBaseURL, input({ tools: [{ name: 'lookup' }] })),
+    ).rejects.toThrow('/beta');
+  });
+
+  test('rejects incompatible model input before fetch', async () => {
+    let fetchCalls = 0;
+    const model = createDeepSeek({
+      apiKey: 'test-key',
+      schemaPolicy: 'best-effort',
+      fetch: async () => {
+        fetchCalls += 1;
+        return ok({ choices: [{ finish_reason: 'stop', message: { content: 'done' } }] });
+      },
+    })('deepseek-chat');
+
+    const cases: Array<[ModelInput, string]> = [
+      [input({ messages: [] }), 'messages must be a non-empty array'],
+      [input({ modelOptions: [] as never }), 'modelOptions must be an object'],
+      [input({ maxOutputTokens: 0 }), 'maxOutputTokens must be a positive integer'],
+      [input({ reasoning: 'turbo' as never }), 'reasoning effort is invalid'],
+      [input({ outputSchema: [] as never }), 'outputSchema must be an object'],
+      [input({ tools: {} as never }), 'tools must be an array'],
+      [
+        input({ tools: Array.from({ length: 129 }, (_, index) => ({ name: `tool-${index}` })) }),
+        'at most 128 tools',
+      ],
+      [input({ tools: [{ name: 'lookup' }, { name: 'lookup' }] }), 'tool "lookup" is duplicated'],
+      [input({ messages: [{ role: 'wizard', content: 'x' } as never] }), 'message is invalid'],
+      [
+        input({
+          messages: [{ role: 'assistant', content: '', toolCalls: {} as never }],
+        }),
+        'assistant toolCalls must be an array',
+      ],
+      [
+        input({
+          messages: [{ role: 'assistant', content: '', toolCalls: [{ id: ' ' } as never] }],
+        }),
+        'assistant tool call is invalid',
+      ],
+      [
+        input({
+          messages: [
+            {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                { id: 'call-1', name: 'lookup', input: {} },
+                { id: 'call-1', name: 'lookup', input: {} },
+              ],
+            },
+          ],
+        }),
+        'tool call id "call-1" is duplicated',
+      ],
+      [
+        input({
+          messages: [
+            {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'call-1', name: 'lookup', input: {} }],
+            },
+          ],
+        }),
+        'missing a tool result',
+      ],
+    ];
+
+    for (const [invalidInput, expected] of cases) {
+      await expect(collectModel(model, invalidInput)).rejects.toThrow(expected);
+    }
+    expect(fetchCalls).toBe(0);
+  });
+
+  test('rejects provider state that outlives its tool-call history', async () => {
+    const responses = [
+      {
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-1',
+                  type: 'function',
+                  function: { name: 'lookup', arguments: '{}' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    let body: Record<string, unknown> | undefined;
+    const model = createDeepSeek({
+      apiKey: 'test-key',
+      schemaPolicy: 'best-effort',
+      fetch: async (_url, init) => {
+        body = JSON.parse(init?.body as string);
+        return ok(responses.shift());
+      },
+    })('deepseek-chat');
+
+    const first = await collectModel(model, input({ tools: [{ name: 'lookup' }] }));
+    expect((body?.tools as Array<{ function: { parameters: unknown } }>)[0]?.function.parameters)
+      .toEqual({ type: 'object', properties: {} });
+
+    await expect(
+      collectModel(
+        model,
+        input({
+          messages: [{ role: 'user', content: 'Hello' }],
+          providerState: first.providerState,
+        }),
+      ),
+    ).rejects.toThrow('providerState does not match assistant tool-call history');
   });
 });

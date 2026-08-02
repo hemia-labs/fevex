@@ -7,8 +7,16 @@ import {
   type Fevex,
   type ModelGateway,
   type ReasoningEffort,
+  type RunId,
+  type RunRecord,
+  type Sandbox,
 } from '@fevex/core';
 import { createFevexHttpHandler, type FevexHttpHandler } from '@fevex/core/http';
+import {
+  mockPreviewFrameSource,
+  realPreviewFrameSource,
+  type PreviewFrameSource,
+} from './preview.frame-source';
 import { createSQLiteRunStore } from '@fevex/sqlite';
 import {
   agentCatalog,
@@ -32,10 +40,27 @@ export class FevexService {
     efforts: ReasoningEffort[];
   }>;
   readonly http: FevexHttpHandler;
+  /** The single actor in this example; the core does not persist per-run owners. */
+  readonly demoActor = 'demo-user';
+  readonly previewFrameSource: PreviewFrameSource;
 
   constructor() {
     const configured = createModels();
     this.modelCatalog = configured.catalog;
+    const sandbox: Sandbox = createLocalSandbox({
+      rootDir: process.cwd(),
+      commands: [process.execPath],
+      defaultTimeoutMs: 1_000,
+      maxOutputBytes: 2_048,
+    });
+    this.previewFrameSource =
+      process.env.FEVEX_BROWSER_PREVIEW === 'real'
+        ? realPreviewFrameSource({
+            sandbox,
+            expectedVersion: process.env.FEVEX_BROWSER_VERSION ?? '0.0.0',
+            network: { allow: ['*'] },
+          })
+        : mockPreviewFrameSource();
     this.fevex = createFevex({
       models: configured.models,
       agents,
@@ -44,12 +69,7 @@ export class FevexService {
       connections,
       contextProviders,
       memoryStore,
-      sandbox: createLocalSandbox({
-        rootDir: process.cwd(),
-        commands: [process.execPath],
-        defaultTimeoutMs: 1_000,
-        maxOutputBytes: 2_048,
-      }),
+      sandbox,
       runStore: createSQLiteRunStore({
         filename: process.env.FEVEX_DB_PATH ?? '.fevex/demo.sqlite',
       }),
@@ -95,6 +115,18 @@ export class FevexService {
     return this.modelCatalog;
   }
 
+  getRun(runId: RunId): Promise<RunRecord | undefined> {
+    return this.fevex.getRun(runId);
+  }
+
+  /**
+   * Resolves the owner of a run. The core does not store per-run owners, and this
+   * example has a single actor, so every run maps to `demoActor`. A multi-tenant
+   * app must maintain its own run->owner mapping (e.g. captured at start time).
+   */
+  getRunOwner(_runId: RunId): string {
+    return this.demoActor;
+  }
 }
 
 function errorMessage(error: unknown): string {
