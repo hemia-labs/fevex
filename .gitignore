@@ -9,3 +9,6 @@ dist
 .DS_Store
 .claude/
 docs/
+!apps/web/src/content/
+!apps/web/src/content/docs/
+!apps/web/src/content/docs/**
