@@ -1038,11 +1038,6 @@ export default function Home() {
             <div className="messages">
               {messages.map((message, index) => (
                 <article className={`message ${message.role}`} key={index}>
-                  {message.role === 'assistant' && (
-                    <span className="avatar">
-                      <AgentIcon size={16} />
-                    </span>
-                  )}
                   <div>
                     {message.role === 'assistant' && (
                       <RunActivityPanel debug={debug} message={message} now={now} />

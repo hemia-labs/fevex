@@ -1,0 +1,81 @@
+/* FEVEX brand theme for Starlight.
+   Dark mode mirrors the obsidian landing page exactly: same background, same
+   frosted nav, same wordmark size and the same ruby red. */
+
+@import '@fontsource-variable/inter';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+:root {
+  --fevex-obsidian: #020202;
+  --fevex-ivory: #f4f4f5;
+  --fevex-ruby: #b92432;
+  --fevex-graphite: #1d2024;
+  --fevex-silver: #9ca3af;
+
+  --sl-font: 'Inter Variable', Inter, system-ui, sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+
+  /* The same ruby in every theme — links and the active nav item. */
+  --sl-color-accent-low: color-mix(in oklab, var(--fevex-ruby) 20%, #020202);
+  --sl-color-accent: var(--fevex-ruby);
+  --sl-color-accent-high: color-mix(in oklab, var(--fevex-ruby) 55%, #f4f4f5);
+  --sl-color-text-accent: var(--fevex-ruby);
+
+  /* Match the landing topbar height (72px). */
+  --sl-nav-height: 4.5rem;
+}
+
+/* Dark theme — identical palette to the obsidian landing. */
+:root[data-theme='dark'] {
+  --sl-color-white: var(--fevex-ivory);
+  --sl-color-gray-1: #e6e6e8;
+  /* Sidebar / nav links: muted ivory like the landing nav (ivory at ~80%). */
+  --sl-color-gray-2: color-mix(in oklab, var(--fevex-ivory) 80%, transparent);
+  --sl-color-gray-3: var(--fevex-silver);
+  --sl-color-gray-4: #565b62;
+  --sl-color-gray-5: color-mix(in oklab, var(--fevex-ivory) 10%, transparent);
+  --sl-color-gray-6: var(--fevex-obsidian);
+  --sl-color-gray-7: var(--fevex-obsidian);
+  --sl-color-black: var(--fevex-obsidian);
+
+  /* Same obsidian across page, nav and sidebar (landing has no graphite panels). */
+  --sl-color-bg: var(--fevex-obsidian);
+  --sl-color-bg-nav: color-mix(in oklab, var(--fevex-obsidian) 92%, transparent);
+  --sl-color-bg-sidebar: var(--fevex-obsidian);
+
+  /* Hairlines: ivory at low opacity, like the landing borders. */
+  --sl-color-hairline: color-mix(in oklab, var(--fevex-ivory) 8%, transparent);
+  --sl-color-hairline-shade: color-mix(in oklab, var(--fevex-ivory) 10%, transparent);
+  --sl-color-hairline-light: color-mix(in oklab, var(--fevex-ivory) 12%, transparent);
+
+  /* Active nav item = solid ruby pill with ivory text. */
+  --sl-color-text-invert: var(--fevex-ivory);
+}
+
+/* Frosted obsidian nav, like the landing topbar. Starlight already draws the
+   header's bottom hairline (via --sl-color-hairline-shade); scope the blur to
+   the outer <header> only so the inner wrapper stays borderless. */
+:root[data-theme='dark'] header.header {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Wordmark: same size as the landing (~136px wide / ~22px tall). */
+.site-title img {
+  width: clamp(104px, 9vw, 136px);
+  height: auto;
+}
+
+/* The wordmark asset is dark ink; invert it to ivory on the dark header only. */
+:root[data-theme='dark'] .site-title img {
+  filter: brightness(0) invert(1);
+}
+
+/* Editorial headings to match the landing. */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  letter-spacing: -0.02em;
+}

@@ -2,15 +2,29 @@
 import "@/styles/global.css";
 import { buttonVariants } from "@/components/ui/button";
 import Copy from "lucide-astro/Copy";
-import Layers from "lucide-astro/Layers";
-import ShieldCheck from "lucide-astro/ShieldCheck";
+import Github from "lucide-astro/Github";
 import Terminal from "lucide-astro/Terminal";
+import Cpu from "lucide-astro/Cpu";
+import Plug from "lucide-astro/Plug";
+import Network from "lucide-astro/Network";
+import Database from "lucide-astro/Database";
+import Activity from "lucide-astro/Activity";
+import Bot from "lucide-astro/Bot";
+import Wrench from "lucide-astro/Wrench";
+import Workflow from "lucide-astro/Workflow";
+import Users from "lucide-astro/Users";
+import History from "lucide-astro/History";
+import Radio from "lucide-astro/Radio";
+import ShieldCheck from "lucide-astro/ShieldCheck";
+import Braces from "lucide-astro/Braces";
+import FlaskConical from "lucide-astro/FlaskConical";
+import LineChart from "lucide-astro/LineChart";
+import MessageSquare from "lucide-astro/MessageSquare";
 
-const { lang = "en" } = Astro.props as { lang?: "en" | "es" };
+const GITHUB = "https://github.com/hemia-labs/fevex";
 const copy = {
-  en: {
     metaDescription: "FEVEX is an open-source Agent Engineering Framework for production AI agents.",
-    title: "FEVEX - Agents built for production",
+    title: "FEVEX - Agent Engineering Framework for TypeScript",
     primaryNav: "Primary",
     home: "FEVEX home",
     docs: "Docs",
@@ -29,149 +43,240 @@ const copy = {
     codeFirstText: "Define agents and tools as typed TypeScript.",
     codeFirstNote: "Keep behavior explicit, reviewable and versionable.",
     providerTitle: "Provider agnostic",
-    providerText: "Start with fevex and add @fevex/openai or @fevex/deepseek only when needed.",
+    providerText: "Start with @fevex/core and add @fevex/openai or @fevex/deepseek only when needed.",
     providerNote: "Core contracts stay separate from models and infrastructure.",
-    productionTitle: "Runtime contracts",
-    productionText: "Validate tool input, tool output and final output at runtime.",
+    productionTitle: "Durable workflows",
+    productionText: "Compose agents into workflows and teams that survive restarts.",
     productionNote: "Events make runs observable without owning a platform.",
+    coreEyebrow: "Core API",
+    coreTitle: "One typed API, end to end.",
+    coreText: "Define agents, validate tools, connect any model and observe every run through one small API — with no runtime lock-in.",
+    coreDocs: "Visit Documentation",
+    coreSupports: "Adapters",
+    coreMore: "+ more adapters",
+    coreTabs: [
+      ["Define agent", "agent.ts"],
+      ["Type a tool", "tool.ts"],
+      ["Connect a model", "model.ts"],
+      ["Observe a run", "events.ts"],
+    ] as const,
+    capabilitiesTitle: "One framework for the agent system.",
+    capabilitiesText: "FEVEX keeps the core pieces explicit, typed and portable — from a single agent to durable workflows and teams.",
+    capabilities: ["Agents", "Tools", "Models", "Workflows", "Teams", "Sessions", "Streaming", "Approvals", "Events", "Schemas", "Evals", "Observability"],
+    archEyebrow: "Architecture",
+    archTitle: "One package. Explicit subpaths.",
+    archText: "The core ships as a single package with public subpaths. Provider adapters are separate packages, so your app installs only what it uses.",
+    archFlow: ["app code", "fevex runtime", "ModelGateway", "provider adapters"],
+    archSubpaths: [
+      ["@fevex/core", "Runtime, definitions and common contracts"],
+      ["@fevex/core/agents", "Agent definitions"],
+      ["@fevex/core/tools", "Tool definitions and execution context"],
+      ["@fevex/core/models", "Provider-neutral ModelGateway contracts"],
+      ["@fevex/core/workflows", "Durable workflow definitions"],
+      ["@fevex/core/teams", "Multiagent team definitions"],
+      ["@fevex/core/runtime", "Runs, sessions and store contracts"],
+      ["@fevex/core/evals", "Datasets, scorers and regressions"],
+      ["@fevex/core/testing", "Deterministic testing helpers"],
+    ] as const,
+    adaptersEyebrow: "Model Adapters",
+    adaptersTitle: "Connect real model providers.",
+    adaptersText: "Your app depends on the small ModelGateway contract. Official adapters implement it — they never execute tools, own retries or replace the runtime.",
+    adaptersInstall: ["npm install @fevex/core @fevex/openai", "npm install @fevex/core @fevex/deepseek"],
+    adaptersItems: ["@fevex/openai", "@fevex/deepseek", "custom ModelGateway"],
+    integrationsEyebrow: "Integrations",
+    integrationsTitle: "One runtime. Many surfaces.",
+    integrationsText: "Fevex connects agents to model providers, remote tools and messaging channels through small explicit contracts.",
+    integrationColumns: [
+      { title: "Connections", status: "Available", desc: "Turn external systems into controlled tools with allowlists, schemas and events.", items: ["@fevex/mcp", "@fevex/openapi"] },
+      { title: "Persistence & Traces", status: "Available", desc: "Durable runs and observability you plug in when production needs them.", items: ["@fevex/sqlite", "@fevex/postgres", "@fevex/opentelemetry"] },
+      { title: "Channels", status: "Roadmap", desc: "Bring messages in and deliver responses back without the runtime knowing the surface.", items: ["Slack", "Discord", "WhatsApp", "Telegram"] },
+    ] as const,
+    integrationsNote: "Connections respect schemas, allowlists, approvals, cancellation and events. Channels normalize input and output; they never replace the runtime.",
     problemTitle: "The demo is not the hard part.",
     problemText: "Most agent prototypes break when prompts, tools, memory, workflows and logs become production responsibilities.",
     problemItems: ["Versionless prompts", "Unsafe tool calls", "Untested model calls", "Incomplete logs"],
-    capabilitiesTitle: "One framework for the agent system.",
-    capabilitiesText: "FEVEX keeps the core pieces explicit, typed and portable.",
-    capabilities: ["Agents", "Models", "Tools", "Runtime", "Events", "Schemas", "Adapters"],
     controlsTitle: "Validation at runtime boundaries.",
-    controlsText: "Fevex validates what enters tools, what tools return, and what the agent returns to your app.",
-    controlsItems: ["Standard Schema validation", "Portable JSON Schema", "Tool events", "Run events"],
+    controlsText: "Fevex validates what enters tools, what tools return, and what the agent returns to your app. If a schema cannot be represented for a model adapter, the run fails before touching the provider.",
+    controlsItems: ["Standard Schema validation", "Portable JSON Schema 2020-12", "Tool events", "Run events"],
+    eventsEyebrow: "Events",
+    eventsTitle: "Observable runs, end to end.",
+    eventsText: "Successful and failed runs emit structured events. Observe them with onEvent, or consume them incrementally with streamAgent.",
+    eventNames: ["run.started", "model.completed", "tool.started", "tool.completed", "tool.failed", "run.completed", "run.failed", "run.cancelled"],
+    examplesEyebrow: "Examples",
+    examplesTitle: "Run real code.",
+    examplesText: "Executable examples in the repo, from a local playground to HTTP and MCP servers.",
+    examplesItems: [
+      ["next-playground", "Web playground over the Fetch/SSE protocol.", `${GITHUB}/tree/main/examples/next-playground`],
+      ["nest-api", "Real OpenAI/DeepSeek agent with sessions, cancellation and reconnection.", `${GITHUB}/tree/main/examples/nest-api`],
+      ["nest-mcp", "Remote MCP tools under local allowlists.", `${GITHUB}/tree/main/examples/nest-mcp`],
+    ] as const,
+    useCasesEyebrow: "Use Cases",
+    useCasesTitle: "A base for agent products.",
+    useCasesText: "Fevex is the runtime; the product is yours.",
+    useCasesItems: [
+      ["Create-your-agent builders", "Use Fevex behind UIs where users configure instructions, tools, models and permissions."],
+      ["Specialized agent catalogs", "Package support, sales, ops or developer agents as templates with explicit schemas."],
+      ["Private agent platforms", "Publish internal agents over chat while Fevex keeps runs, events and permissions consistent."],
+      ["Agent businesses", "Sell vertical agents without locking to one model provider or delivery channel."],
+    ] as const,
+    useCasesNote: "Builders, marketplaces and tenant management are products on top of Fevex, not part of the core package.",
     portableTitle: "Provider agnostic. Runtime portable.",
     portableText: "Start local, connect the model provider you need, and keep provider adapters outside the core.",
     portableItems: ["@fevex/openai", "@fevex/deepseek", "custom ModelGateway"],
+    roadmapEyebrow: "Roadmap",
+    roadmapTitle: "Ambition, honestly staged.",
+    roadmapText: "What is shipped, what is next, and what is still planned.",
+    roadmapRows: [
+      ["Core MVP", "Done", "Local typed agents"],
+      ["Portable schemas", "Done", "Runtime validation + adapter schemas"],
+      ["OpenAI + DeepSeek", "Done", "Native provider adapters"],
+      ["Loop + streaming", "Done", "Multi-step tasks and lifecycle events"],
+      ["Sessions + durable runs", "Done", "Conversation, approvals and safe recovery"],
+      ["Workflows + teams", "Done", "Durable orchestration and multiagent handoffs"],
+      ["Connections", "Done", "MCP and OpenAPI tools"],
+      ["Observability + evals", "Done", "Traces, cost and regression suites"],
+      ["Channels", "Next", "Slack, Discord, WhatsApp and external surfaces"],
+      ["Agent builder ecosystem", "Planned", "Templates, catalogs and products on top of Fevex"],
+    ] as const,
+    docsEyebrow: "Docs",
+    docsTitle: "Start from the source.",
+    docsText: "Until a docs site ships, these point to the README and repo.",
+    docsLinks: [
+      ["Quickstart", `${GITHUB}#quickstart`],
+      ["Validation", `${GITHUB}#validation`],
+      ["Events", `${GITHUB}#events`],
+      ["Sessions", `${GITHUB}#sessions-and-consultable-runs`],
+      ["Approvals", `${GITHUB}#approvals-and-durable-runs`],
+      ["Workflows", `${GITHUB}#durable-workflows`],
+      ["Teams", `${GITHUB}#advanced-teams`],
+      ["Evaluations", `${GITHUB}#evaluations`],
+      ["Observability", `${GITHUB}#observability`],
+      ["Roadmap", `${GITHUB}/blob/main/docs/fevex_core_mvp_roadmap.md`],
+    ] as const,
     footerTagline: "Open-source agent engineering for teams that need production behavior without platform lock-in.",
     footerProduct: "Product",
-    footerResources: "Resources",
+    footerDocs: "Docs",
     footerCommunity: "Community",
-    footerLegal: "Legal",
-    footerInstall: "Install",
-    footerDocs: "Documentation",
-    footerExamples: "Examples",
-    footerChangelog: "Changelog",
-    footerGuides: "Guides",
-    footerApi: "API Reference",
-    footerGithub: "GitHub",
-    footerDiscussions: "Discussions",
-    footerIssues: "Issues",
-    footerLicense: "License",
-    footerPrivacy: "Privacy",
-    footerContact: "Contact",
+    footerProject: "Project",
     footerMade: "Built for production AI agents.",
-  },
-  es: {
-    metaDescription: "FEVEX es un framework open source de ingeniería de agentes para agentes de IA en producción.",
-    title: "FEVEX - Agentes listos para producción",
-    primaryNav: "Principal",
-    home: "Inicio de FEVEX",
-    docs: "Docs",
-    examples: "Ejemplos",
-    adapters: "Adapters",
-    integrations: "Integraciones",
-    roadmap: "Roadmap",
-    cta: "Comenzar",
-    h1: "Agent Engineering Framework para TypeScript.",
-    intro: "Construye agentes code-first y neutrales al proveedor con tools tipadas, schemas portables, runs observables y contratos runtime pequeños.",
-    viewGithub: "Ver en GitHub",
-    quickstartEyebrow: "Quick Start",
-    quickstartTitle: "Empieza pequeño. Sigue portable.",
-    quickstartNote: "Empieza con un agente tipado. Agrega tools solo cuando el flujo las necesite.",
-    codeFirstTitle: "Código primero",
-    codeFirstText: "Define agentes y tools como TypeScript tipado.",
-    codeFirstNote: "Mantén el comportamiento explícito, revisable y versionable.",
-    providerTitle: "Agnóstico de proveedor",
-    providerText: "Empieza con fevex y agrega @fevex/openai o @fevex/deepseek solo cuando hagan falta.",
-    providerNote: "Los contratos core viven separados de modelos e infraestructura.",
-    productionTitle: "Contratos runtime",
-    productionText: "Valida input de tools, output de tools y output final en runtime.",
-    productionNote: "Los eventos hacen observables los runs sin convertirlo en plataforma.",
-    problemTitle: "La demo no es la parte difícil.",
-    problemText: "La mayoría de prototipos de agentes se rompen cuando prompts, herramientas, memoria, workflows y logs se vuelven responsabilidades de producción.",
-    problemItems: ["Prompts sin versión", "Tools sin permisos", "Llamadas sin test", "Logs incompletos"],
-    capabilitiesTitle: "Un framework para el sistema agentic.",
-    capabilitiesText: "FEVEX mantiene las piezas core explícitas, tipadas y portables.",
-    capabilities: ["Agents", "Models", "Tools", "Runtime", "Events", "Schemas", "Adapters"],
-    controlsTitle: "Validación en fronteras runtime.",
-    controlsText: "Fevex valida lo que entra a las tools, lo que devuelven y lo que el agente devuelve a tu app.",
-    controlsItems: ["Standard Schema validation", "JSON Schema portable", "Eventos de tools", "Eventos de run"],
-    portableTitle: "Agnóstico de proveedor. Runtime portable.",
-    portableText: "Empieza local, conecta el proveedor de modelos que necesites y deja los adapters fuera del core.",
-    portableItems: ["@fevex/openai", "@fevex/deepseek", "custom ModelGateway"],
-    footerTagline: "Ingeniería de agentes open source para equipos que necesitan comportamiento de producción sin lock-in de plataforma.",
-    footerProduct: "Producto",
-    footerResources: "Recursos",
-    footerCommunity: "Comunidad",
-    footerLegal: "Legal",
-    footerInstall: "Instalación",
-    footerDocs: "Documentación",
-    footerExamples: "Ejemplos",
-    footerChangelog: "Changelog",
-    footerGuides: "Guías",
-    footerApi: "Referencia API",
-    footerGithub: "GitHub",
-    footerDiscussions: "Discusiones",
-    footerIssues: "Issues",
-    footerLicense: "Licencia",
-    footerPrivacy: "Privacidad",
-    footerContact: "Contacto",
-    footerMade: "Construido para agentes de IA en producción.",
-  },
-}[lang];
+};
 
 const footerGroups = [
   {
     title: copy.footerProduct,
     links: [
-      [copy.footerInstall, "#quickstart"],
-      [copy.footerDocs, "#docs"],
-      [copy.footerExamples, "#examples"],
-      [copy.footerChangelog, "#quickstart"],
+      [copy.quickstartEyebrow, "#quickstart"],
+      [copy.adapters, "#adapters"],
+      [copy.integrations, "#integrations"],
+      [copy.examples, "#examples"],
+      [copy.roadmap, "#roadmap"],
     ],
   },
   {
-    title: copy.footerResources,
+    title: copy.footerDocs,
     links: [
-      [copy.footerGuides, "#quickstart"],
-      [copy.footerApi, "#docs"],
+      [copy.quickstartEyebrow, "#quickstart"],
+      ["Validation", "#production"],
+      ["Events", "#events"],
+      [copy.docs, "#docs"],
     ],
   },
   {
     title: copy.footerCommunity,
     links: [
-      [copy.footerGithub, "https://github.com/hemia-labs/fevex"],
-      [copy.footerDiscussions, "https://github.com/hemia-labs/fevex"],
-      [copy.footerIssues, "https://github.com/hemia-labs/fevex"],
+      ["GitHub", GITHUB],
+      ["Issues", `${GITHUB}/issues`],
+      ["Discussions", `${GITHUB}/discussions`],
     ],
   },
   {
-    title: copy.footerLegal,
+    title: copy.footerProject,
     links: [
-      [copy.footerLicense, "https://github.com/hemia-labs/fevex"],
-      [copy.footerPrivacy, "mailto:hello@fevex.dev"],
-      [copy.footerContact, "mailto:hello@fevex.dev"],
+      ["License", `${GITHUB}/blob/main/LICENSE`],
+      ["Contact", "mailto:hello@fevex.dev"],
     ],
   },
 ];
 
 const quickstartCards = [
-  [Terminal, copy.codeFirstTitle, copy.codeFirstText, copy.codeFirstNote],
-  [Layers, copy.providerTitle, copy.providerText, copy.providerNote],
-  [ShieldCheck, copy.productionTitle, copy.productionText, copy.productionNote],
+  [copy.codeFirstTitle, copy.codeFirstText, "npm i @fevex/core"],
+  [copy.providerTitle, copy.providerText, "npm i @fevex/openai"],
+  [copy.productionTitle, copy.productionText, "npm i @fevex/core"],
 ];
 
-const primaryButton = buttonVariants();
+const capabilityIcons = [Bot, Wrench, Cpu, Workflow, Users, History, Radio, ShieldCheck, Activity, Braces, FlaskConical, LineChart];
+const capGeo = { w: 1000, h: 760, cx: 500, cy: 380, coreHalf: 42, nodeHalf: 36, topY: 100, botY: 660, pad: 120 };
+const capPerRow = Math.ceil(copy.capabilities.length / 2);
+const capabilityNodes = copy.capabilities.map((label, i) => {
+  const top = i < capPerRow;
+  const idx = top ? i : i - capPerRow;
+  const span = capGeo.w - capGeo.pad * 2;
+  return {
+    Icon: capabilityIcons[i] ?? Bot,
+    label,
+    top,
+    x: capGeo.pad + span * (idx / (capPerRow - 1)),
+    y: top ? capGeo.topY : capGeo.botY,
+  };
+});
+const capLink = (n: { top: boolean; x: number; y: number }) => {
+  const sy = n.top ? capGeo.cy - capGeo.coreHalf : capGeo.cy + capGeo.coreHalf;
+  const ny = n.top ? n.y + capGeo.nodeHalf : n.y - capGeo.nodeHalf;
+  const my = (sy + ny) / 2;
+  return `M ${capGeo.cx} ${sy} C ${capGeo.cx} ${my} ${n.x} ${my} ${n.x} ${ny}`;
+};
+
+const adGeo = { w: 1000, h: 620, cx: 360, cy: 310, rOuter: 205, rInner: 158, nodeR: 26, labelX: 636 };
+const adapterRows: string[][] = [
+  ["OpenAI", "@fevex/openai"],
+  ["DeepSeek", "@fevex/deepseek"],
+  ["Custom", "ModelGateway"],
+];
+const integrationIcons = [Plug, Database, MessageSquare];
+
+const problemGeo = { y: 104, startX: 205, endX: 795 };
+const problemPoints = copy.problemItems.map((label, i, a) => ({
+  label,
+  x: problemGeo.startX + (problemGeo.endX - problemGeo.startX) * (i / (a.length - 1)),
+}));
+
+const flowStages = ["your app", "tool", "agent", "your app"];
+const flowGates = ["tool input", "tool output", "final output"];
+const flowStageX = (i: number) => 90 + 820 * (i / (flowStages.length - 1));
+const flowGateX = (i: number) => (flowStageX(i) + flowStageX(i + 1)) / 2;
+
+const eventsGeo = { y: 122, startX: 70, endX: 930 };
+const eventPoints = copy.eventNames.map((name, i, a) => ({
+  name,
+  x: eventsGeo.startX + (eventsGeo.endX - eventsGeo.startX) * (i / (a.length - 1)),
+  above: i % 2 === 0,
+  ruby: /failed|cancelled/.test(name),
+}));
+
+const adAngles = [-52, 0, 52];
+const adapterNodes = adapterRows.map((items, i) => {
+  const a = (adAngles[i] * Math.PI) / 180;
+  return {
+    n: i + 1,
+    items,
+    x: adGeo.cx + adGeo.rOuter * Math.cos(a),
+    y: adGeo.cy + adGeo.rOuter * Math.sin(a),
+  };
+});
+
+const statusClass = (status: string) =>
+  ["done", "hecho", "available", "disponible"].includes(status.toLowerCase())
+    ? "is-done"
+    : ["next", "siguiente"].includes(status.toLowerCase())
+      ? "is-next"
+      : "is-planned";
+
 const heroPrimaryButton = buttonVariants({ size: "lg" });
 const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
 ---
 
 <!doctype html>
-<html lang={lang} class="dark">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -181,19 +286,16 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   </head>
   <body>
     <nav class="topbar" aria-label={copy.primaryNav}>
-      <a class="brand" href={lang === "es" ? "/es/" : "/"} aria-label={copy.home}>
+      <a class="brand" href="/" aria-label={copy.home}>
         <img src="/brand/fevex-wordmark.svg" alt="FEVEX" />
       </a>
       <div class="nav-links">
-        <a href="#docs">{copy.docs}</a>
-        <a href="#examples">{copy.examples}</a>
-        <a href="#adapters">{copy.adapters}</a>
-        <a href="#integrations">{copy.integrations}</a>
-        <a href="#roadmap">{copy.roadmap}</a>
-        <a href="https://github.com/hemia-labs/fevex">GitHub</a>
-        <a href="/">EN</a>
-        <a href="/es/">ES</a>
-        <a class:list={[primaryButton, "nav-primary-button"]} href="#quickstart">{copy.cta}</a>
+        <a href="/docs">{copy.docs}</a>
+        <a href="/adapter">{copy.adapters}</a>
+        <a href="/integrations">{copy.integrations}</a>
+        <a class="nav-icon" href={GITHUB} aria-label="GitHub">
+          <Github size={20} strokeWidth={1.8} aria-hidden="true" />
+        </a>
       </div>
     </nav>
 
@@ -246,9 +348,16 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
             <p class="intro">
               {copy.intro}
             </p>
+            <div class="hero-install">
+              <span class="prompt" aria-hidden="true">$</span>
+              <code>npm install @fevex/core</code>
+              <button class="install-copy" type="button" data-command="npm install @fevex/core" aria-label="Copy npm install @fevex/core">
+                <Copy size={16} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+            </div>
             <div class="actions">
               <a href="#quickstart" class={heroPrimaryButton}>{copy.cta}</a>
-              <a href="https://github.com/hemia-labs/fevex" class:list={[heroSecondaryButton, "secondary-button"]}>{copy.viewGithub}</a>
+              <a href={GITHUB} class:list={[heroSecondaryButton, "secondary-button"]}>{copy.viewGithub}</a>
             </div>
           </div>
         </div>
@@ -264,8 +373,8 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
             <h2>{copy.quickstartTitle}</h2>
             <div class="install">
               <Terminal size={24} strokeWidth={1.8} aria-hidden="true" />
-              <code>npm install fevex</code>
-              <button class="install-copy" type="button" data-command="npm install fevex" aria-label="Copy npm install fevex">
+              <code>npm install @fevex/core</code>
+              <button class="install-copy" type="button" data-command="npm install @fevex/core" aria-label="Copy npm install @fevex/core">
                 <Copy size={18} strokeWidth={1.8} aria-hidden="true" />
               </button>
             </div>
@@ -275,14 +384,19 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
             <div class="code-title">
               <i></i><i></i><i></i>
               <strong>agent.ts</strong>
+              <button class="code-copy" type="button" aria-label="Copy code">
+                <Copy size={16} strokeWidth={1.8} aria-hidden="true" />
+              </button>
             </div>
-            <pre><code><span>import</span> &#123; createFevex, defineAgent &#125; <span>from</span> "fevex";
+            <pre><code><span>import</span> &#123; createFevex, defineAgent &#125; <span>from</span> "@fevex/core";
 <span>import</span> &#123; createOpenAI &#125; <span>from</span> "@fevex/openai";
 
+<span>const</span> openai = createOpenAI(&#123;
+  apiKey: process.env.OPENAI_API_KEY!,
+&#125;);
+
 <span>const</span> app = createFevex(&#123;
-  models: &#123;
-    default: createOpenAI(&#123; apiKey: process.env.OPENAI_API_KEY! &#125;)(<em>"gpt-5.6"</em>),
-  &#125;,
+  models: &#123; default: openai(<em>"gpt-5.6"</em>) &#125;,
   agents: [defineAgent(&#123;
     name: <em>"support"</em>,
     instructions: <em>"Answer clearly and briefly."</em>,
@@ -295,65 +409,406 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
           </div>
         </div>
         <div class="feature-grid">
-          {quickstartCards.map(([Icon, title, text, note]) => (
-            <article class="ui-card">
-              <div class="card-heading">
-                <span class="card-icon" aria-hidden="true">
-                  <Icon size={32} strokeWidth={1.8} />
-                </span>
-                <h3>{title}</h3>
-              </div>
-              <span class="card-rule" aria-hidden="true"></span>
+          {quickstartCards.map(([title, text, cmd]) => (
+            <article class="ui-card qs-card">
+              <h3>{title}</h3>
               <p>{text}</p>
-              <strong>{note}</strong>
+              <div class="card-install">
+                <span class="prompt" aria-hidden="true">$</span>
+                <code>{cmd}</code>
+                <button class="install-copy" type="button" data-command={cmd} aria-label={`Copy ${cmd}`}>
+                  <Copy size={16} strokeWidth={1.8} aria-hidden="true" />
+                </button>
+              </div>
             </article>
           ))}
         </div>
-        <div class="quickstart-mark" aria-hidden="true">
-          <img src="/brand/fevex-ruby-icon.svg" alt="" />
-        </div>
       </section>
 
-      <section id="problem" class="band split-band">
-        <div>
-          <h2>{copy.problemTitle}</h2>
-          <p class="section-lede">{copy.problemText}</p>
+      <section id="core" class="band split-band core-demo">
+        <div class="core-copy">
+          <div class="eyebrow">
+            <span></span>
+            <strong>{copy.coreEyebrow}</strong>
+          </div>
+          <h2>{copy.coreTitle}</h2>
+          <p class="section-lede">{copy.coreText}</p>
+          <a class:list={[heroSecondaryButton, "secondary-button"]} href={GITHUB}>{copy.coreDocs}</a>
+          <div class="supports">
+            <span class="supports-label">{copy.coreSupports}</span>
+            <div class="supports-row">
+              <span class="support-badge" title="OpenAI · DeepSeek"><Cpu size={18} strokeWidth={1.8} aria-hidden="true" /></span>
+              <span class="support-badge" title="MCP"><Plug size={18} strokeWidth={1.8} aria-hidden="true" /></span>
+              <span class="support-badge" title="OpenAPI"><Network size={18} strokeWidth={1.8} aria-hidden="true" /></span>
+              <span class="support-badge" title="SQLite · Postgres"><Database size={18} strokeWidth={1.8} aria-hidden="true" /></span>
+              <span class="support-badge" title="OpenTelemetry"><Activity size={18} strokeWidth={1.8} aria-hidden="true" /></span>
+              <span class="supports-more">{copy.coreMore}</span>
+            </div>
+          </div>
         </div>
-        <div class="pill-grid">
-          {copy.problemItems.map((item) => <span>{item}</span>)}
+        <div class="code-tabs">
+          <div class="code-tabs-nav" role="tablist" aria-label="Core API examples">
+            {copy.coreTabs.map(([label], i) => (
+              <button class:list={["code-tab", i === 0 && "is-active"]} type="button" data-tab={i} role="tab" aria-selected={i === 0 ? "true" : "false"}>{label}</button>
+            ))}
+          </div>
+          <div class="code-window code-tabs-window" aria-label="agent.ts">
+            <div class="code-title">
+              <i></i><i></i><i></i>
+              <strong class="code-tabs-filename">agent.ts</strong>
+              <button class="code-tabs-copy" type="button" aria-label="Copy code">
+                <Copy size={16} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+            </div>
+            <div class="code-panels">
+              <pre class="code-panel is-active" data-panel="0" data-file="agent.ts"><code><span>import</span> &#123; createFevex, defineAgent &#125; <span>from</span> "@fevex/core";
+
+<span>const</span> app = createFevex(&#123;
+  models: &#123; default: model &#125;,
+  agents: [defineAgent(&#123;
+    name: <em>"support"</em>,
+    instructions: <em>"Answer clearly and briefly."</em>,
+  &#125;)],
+&#125;);
+
+<span>const</span> result = <span>await</span> app.runAgent(<em>"support"</em>, &#123;
+  input: <em>"How do I reset my API key?"</em>,
+&#125;);</code></pre>
+              <pre class="code-panel" data-panel="1" data-file="tool.ts" hidden><code><span>import</span> &#123; defineTool &#125; <span>from</span> "@fevex/core";
+<span>import</span> &#123; z &#125; <span>from</span> "zod";
+
+<span>const</span> getAccount = defineTool(&#123;
+  name: <em>"accounts_get"</em>,
+  description: <em>"Get an account by ID."</em>,
+  inputSchema: z.object(&#123; accountId: z.number() &#125;),
+  outputSchema: z.object(&#123; status: z.literal(<em>"active"</em>) &#125;),
+  execute(&#123; accountId &#125;) &#123;
+    <span>return</span> &#123; accountId, status: <em>"active"</em> &#125;;
+  &#125;,
+&#125;);</code></pre>
+              <pre class="code-panel" data-panel="2" data-file="model.ts" hidden><code><span>import</span> &#123; createOpenAI &#125; <span>from</span> "@fevex/openai";
+<span>import</span> &#123; createDeepSeek &#125; <span>from</span> "@fevex/deepseek";
+
+<span>const</span> openai = createOpenAI(&#123;
+  apiKey: process.env.OPENAI_API_KEY!,
+&#125;)(<em>"gpt-5.6"</em>);
+
+<span>const</span> deepseek = createDeepSeek(&#123;
+  apiKey: process.env.DEEPSEEK_API_KEY!,
+&#125;)(<em>"deepseek-v4-flash"</em>);</code></pre>
+              <pre class="code-panel" data-panel="3" data-file="events.ts" hidden><code><span>const</span> app = createFevex(&#123;
+  models,
+  agents,
+  onEvent(event) &#123;
+    console.log(event.type, event.payload);
+  &#125;,
+&#125;);
+
+<span>for</span> <span>await</span> (<span>const</span> event <span>of</span> app.streamAgent(<em>"support"</em>, &#123;
+  input: <em>"Hello"</em>,
+&#125;)) &#123;
+  <span>if</span> (event.type === <em>"model.output.delta"</em>)
+    process.stdout.write(event.payload.delta);
+&#125;</code></pre>
+            </div>
+          </div>
         </div>
       </section>
 
       <section id="capabilities" class="band">
         <h2>{copy.capabilitiesTitle}</h2>
         <p class="section-lede">{copy.capabilitiesText}</p>
-        <div class="capability-grid">
-          {copy.capabilities.map((item) => <span>{item}</span>)}
+        <div class="capability-diagram">
+          <div class="cap-canvas" style={`aspect-ratio:${capGeo.w} / ${capGeo.h}`}>
+            <svg class="cap-lines" viewBox={`0 0 ${capGeo.w} ${capGeo.h}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              {capabilityNodes.map((n) => (
+                <path d={capLink(n)} class="cap-link" />
+              ))}
+            </svg>
+            <div class="cap-core" style={`left:${(capGeo.cx / capGeo.w) * 100}%;top:${(capGeo.cy / capGeo.h) * 100}%`}>
+              <img src="/brand/fevex-wordmark.svg" alt="FEVEX" />
+            </div>
+            {capabilityNodes.map(({ Icon, label, x, y, top }) => (
+              <div
+                class:list={["cap-node", top ? "is-top" : "is-bottom"]}
+                style={`left:${(x / capGeo.w) * 100}%;top:${(y / capGeo.h) * 100}%`}
+              >
+                <span class="cap-node-card" aria-hidden="true">
+                  <Icon size={24} strokeWidth={1.6} />
+                </span>
+                <span class="cap-node-label">{label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      <section id="production" class="band split-band">
-        <div>
-          <h2>{copy.controlsTitle}</h2>
-          <p class="section-lede">{copy.controlsText}</p>
+      <section id="architecture" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.archEyebrow}</strong>
         </div>
-        <div class="stack-list">
+        <h2>{copy.archTitle}</h2>
+        <p class="section-lede">{copy.archText}</p>
+        <div class="arch-split">
+          <ol class="arch-steps">
+            {copy.archFlow.map((node, i) => (
+              <li class="arch-step">
+                <span class="arch-step-num">{String(i + 1).padStart(2, "0")}</span>
+                <span class="arch-step-label">{node}</span>
+              </li>
+            ))}
+          </ol>
+          <div class="subpath-table">
+            {copy.archSubpaths.map(([name, purpose]) => (
+              <div class="subpath-row">
+                <span class="subpath-title">{purpose}</span>
+                <code class="subpath-tag">{name}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="adapters" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.adaptersEyebrow}</strong>
+        </div>
+        <h2>{copy.adaptersTitle}</h2>
+        <p class="section-lede">{copy.adaptersText}</p>
+        <div class="adapter-diagram">
+          <div class="ad-canvas" style={`aspect-ratio:${adGeo.w} / ${adGeo.h}`}>
+            <svg class="ad-svg" viewBox={`0 0 ${adGeo.w} ${adGeo.h}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <circle cx={adGeo.cx} cy={adGeo.cy} r={adGeo.rInner} class="ad-dash" />
+              <path
+                d={`M ${adGeo.cx} ${adGeo.cy - adGeo.rOuter} A ${adGeo.rOuter} ${adGeo.rOuter} 0 0 1 ${adGeo.cx} ${adGeo.cy + adGeo.rOuter}`}
+                class="ad-arc"
+              />
+              <path
+                d={`M ${adGeo.cx} ${adGeo.cy - adGeo.rOuter} C ${adGeo.cx - 78} ${adGeo.cy - adGeo.rOuter} ${adGeo.cx - 104} ${adGeo.cy - adGeo.rOuter + 34} ${adGeo.cx - 162} ${adGeo.cy - adGeo.rOuter + 20}`}
+                class="ad-arc"
+              />
+              <circle cx={adGeo.cx - 162} cy={adGeo.cy - adGeo.rOuter + 20} r="4.5" class="ad-dot" />
+              <path
+                d={`M ${adGeo.cx} ${adGeo.cy + adGeo.rOuter} C ${adGeo.cx - 66} ${adGeo.cy + adGeo.rOuter} ${adGeo.cx - 92} ${adGeo.cy + adGeo.rOuter - 4} ${adGeo.cx - 128} ${adGeo.cy + adGeo.rOuter + 12}`}
+                class="ad-arc"
+              />
+              <circle cx={adGeo.cx - 128} cy={adGeo.cy + adGeo.rOuter + 12} r="4.5" class="ad-dot" />
+              {adapterNodes.map((node) => (
+                <>
+                  <line x1={node.x + adGeo.nodeR} y1={node.y} x2={adGeo.labelX - 18} y2={node.y} class="ad-conn" />
+                  <circle cx={adGeo.labelX - 18} cy={node.y} r="4.5" class="ad-dot" />
+                  <circle cx={node.x} cy={node.y} r={adGeo.nodeR} class="ad-node" />
+                  <text x={node.x} y={node.y} class="ad-num" text-anchor="middle" dominant-baseline="central">{node.n}</text>
+                </>
+              ))}
+            </svg>
+            <div
+              class="ad-core"
+              style={`left:${(adGeo.cx / adGeo.w) * 100}%;top:${(adGeo.cy / adGeo.h) * 100}%`}
+            >
+              <strong>ONE GATEWAY</strong>
+              <span>Any provider implements the same small contract</span>
+            </div>
+            {adapterNodes.map((node) => (
+              <div
+                class="ad-label"
+                style={`left:${(adGeo.labelX / adGeo.w) * 100}%;top:${(node.y / adGeo.h) * 100}%`}
+              >
+                {node.items.map((it, i) => (
+                  <>
+                    {i > 0 && <span class="ad-sep" aria-hidden="true"></span>}
+                    <span class:list={["ad-item", i === 0 && "is-lead"]}>{it}</span>
+                  </>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="integrations" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.integrationsEyebrow}</strong>
+        </div>
+        <h2>{copy.integrationsTitle}</h2>
+        <p class="section-lede">{copy.integrationsText}</p>
+        <div class="ecosystem-grid">
+          {copy.integrationColumns.map((col, i) => {
+            const Icon = integrationIcons[i] ?? Plug;
+            return (
+              <article class="ui-card ecosystem-card">
+                <div class="ecosystem-head">
+                  <span class="ecosystem-icon" aria-hidden="true">
+                    <Icon size={20} strokeWidth={1.6} />
+                  </span>
+                  <h3>{col.title}</h3>
+                  <span class:list={["status-badge", statusClass(col.status)]}>{col.status}</span>
+                </div>
+                <p>{col.desc}</p>
+                <div class="ecosystem-items">
+                  {col.items.map((it) => <span>{it}</span>)}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        <p class="section-note">{copy.integrationsNote}</p>
+      </section>
+
+      <section id="problem" class="band">
+        <h2>{copy.problemTitle}</h2>
+        <p class="section-lede">{copy.problemText}</p>
+        <div class="flow-diagram">
+          <svg class="flow-svg" viewBox="0 0 1000 200" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <line x1="150" y1={problemGeo.y} x2="850" y2={problemGeo.y} class="flow-dash" />
+            <g class="flow-chip">
+              <rect x="30" y={problemGeo.y - 24} width="120" height="48" rx="24" />
+              <text x="90" y={problemGeo.y} text-anchor="middle" dominant-baseline="central">DEMO</text>
+            </g>
+            <g class="flow-chip flow-chip--warn">
+              <rect x="850" y={problemGeo.y - 24} width="130" height="48" rx="24" />
+              <text x="915" y={problemGeo.y} text-anchor="middle" dominant-baseline="central">PRODUCTION</text>
+            </g>
+            {problemPoints.map((p) => (
+              <>
+                <circle cx={p.x} cy={problemGeo.y} r="11" class="flow-break" />
+                <path
+                  d={`M ${p.x - 4} ${problemGeo.y - 4} L ${p.x + 4} ${problemGeo.y + 4} M ${p.x + 4} ${problemGeo.y - 4} L ${p.x - 4} ${problemGeo.y + 4}`}
+                  class="flow-x"
+                />
+                <text x={p.x} y={problemGeo.y + 42} text-anchor="middle" class="flow-label">{p.label}</text>
+              </>
+            ))}
+          </svg>
+        </div>
+      </section>
+
+      <section id="production" class="band">
+        <h2>{copy.controlsTitle}</h2>
+        <p class="section-lede">{copy.controlsText}</p>
+        <div class="flow-diagram">
+          <svg class="flow-svg" viewBox="0 0 1000 210" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <line x1="90" y1="118" x2="910" y2="118" class="flow-line" />
+            {flowGates.map((label, i) => {
+              const x = flowGateX(i);
+              return (
+                <>
+                  <text x={x} y="70" text-anchor="middle" class="flow-gate-label">{label}</text>
+                  <circle cx={x} cy="118" r="15" class="flow-gate" />
+                  <path d={`M ${x - 6} 118 L ${x - 1} 124 L ${x + 7} 111`} class="flow-check" />
+                </>
+              );
+            })}
+            {flowStages.map((label, i) => {
+              const x = flowStageX(i);
+              return (
+                <g class="flow-chip">
+                  <rect x={x - 62} y="94" width="124" height="48" rx="24" />
+                  <text x={x} y="118" text-anchor="middle" dominant-baseline="central">{label}</text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        <div class="flow-tags">
           {copy.controlsItems.map((item) => <span>{item}</span>)}
         </div>
       </section>
 
-      <section id="portable" class="band">
-        <h2>{copy.portableTitle}</h2>
-        <p class="section-lede">{copy.portableText}</p>
-        <div class="provider-row">
-          {copy.portableItems.map((item) => <span>{item}</span>)}
+      <section id="events" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.eventsEyebrow}</strong>
+        </div>
+        <h2>{copy.eventsTitle}</h2>
+        <p class="section-lede">{copy.eventsText}</p>
+        <div class="event-stream">
+          <svg class="event-svg" viewBox="0 0 1000 244" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <line x1={eventsGeo.startX} y1={eventsGeo.y} x2={eventsGeo.endX} y2={eventsGeo.y} class="event-line" />
+            {eventPoints.map((p) => {
+              const ly = p.above ? eventsGeo.y - 32 : eventsGeo.y + 32;
+              const ty = p.above ? eventsGeo.y - 46 : eventsGeo.y + 56;
+              return (
+                <>
+                  <line x1={p.x} y1={eventsGeo.y} x2={p.x} y2={ly} class="event-tick" />
+                  <circle cx={p.x} cy={eventsGeo.y} r="5" class:list={["event-dot", p.ruby && "is-ruby"]} />
+                  <text x={p.x} y={ty} text-anchor="middle" class:list={["event-name", p.ruby && "is-ruby"]}>{p.name}</text>
+                </>
+              );
+            })}
+          </svg>
         </div>
       </section>
+
+      <section id="examples" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.examplesEyebrow}</strong>
+        </div>
+        <h2>{copy.examplesTitle}</h2>
+        <p class="section-lede">{copy.examplesText}</p>
+        <div class="feature-grid">
+          {copy.examplesItems.map(([name, purpose, href]) => (
+            <a class="ui-card example-card" href={href}>
+              <div class="card-heading">
+                <span class="card-icon" aria-hidden="true">
+                  <Terminal size={28} strokeWidth={1.8} />
+                </span>
+                <h3>{name}</h3>
+              </div>
+              <span class="card-rule" aria-hidden="true"></span>
+              <p>{purpose}</p>
+              <strong class="example-link">GitHub →</strong>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <section id="use-cases" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.useCasesEyebrow}</strong>
+        </div>
+        <h2>{copy.useCasesTitle}</h2>
+        <p class="section-lede">{copy.useCasesText}</p>
+        <div class="usecase-grid">
+          {copy.useCasesItems.map(([title, text]) => (
+            <article class="ui-card">
+              <h3>{title}</h3>
+              <span class="card-rule" aria-hidden="true"></span>
+              <p>{text}</p>
+            </article>
+          ))}
+        </div>
+        <p class="section-note">{copy.useCasesNote}</p>
+      </section>
+
+      <section id="roadmap" class="band">
+        <div class="eyebrow">
+          <span></span>
+          <strong>{copy.roadmapEyebrow}</strong>
+        </div>
+        <h2>{copy.roadmapTitle}</h2>
+        <p class="section-lede">{copy.roadmapText}</p>
+        <div class="roadmap-list">
+          {copy.roadmapRows.map(([phase, status, value]) => (
+            <div class="roadmap-row">
+              <span class:list={["status-badge", statusClass(status)]}>{status}</span>
+              <strong>{phase}</strong>
+              <span class="roadmap-value">{value}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
     </main>
 
     <footer class="site-footer">
       <div class="footer-brand">
-        <a class="brand" href={lang === "es" ? "/es/" : "/"} aria-label={copy.home}>
+        <a class="brand" href="/" aria-label={copy.home}>
           <img src="/brand/fevex-wordmark.svg" alt="FEVEX" />
         </a>
         <p>{copy.footerTagline}</p>
@@ -387,6 +842,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
 
   main {
     min-height: 100vh;
+    counter-reset: section;
   }
 
   .hero {
@@ -417,6 +873,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     inset: 7% 0 5% auto;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     width: min(58vw, 880px);
+    opacity: 0.4;
     mask-image: linear-gradient(90deg, transparent, black 24%, black 92%, transparent);
   }
 
@@ -525,7 +982,12 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   .brand img {
     width: clamp(104px, 9vw, 136px);
     height: auto;
-    filter: invert(96%) sepia(12%) saturate(351%) hue-rotate(343deg) brightness(103%) contrast(91%);
+    filter: brightness(0) invert(1);
+    transition: opacity 240ms var(--ease-soft);
+  }
+
+  .brand:hover img {
+    opacity: 0.82;
   }
 
   .nav-links {
@@ -539,10 +1001,29 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   .nav-links a {
     color: color-mix(in oklab, var(--brand-warm-ivory) 78%, transparent);
     text-decoration: none;
+    transition: color 200ms var(--ease-soft);
   }
 
   .nav-links a:hover {
     color: var(--brand-warm-ivory);
+  }
+
+  .nav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 20%, transparent);
+    color: #fff;
+    transition: border-color 200ms var(--ease-soft), background-color 200ms var(--ease-soft);
+  }
+
+  .nav-icon:hover {
+    color: #fff;
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 40%, transparent);
+    background: color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
   }
 
   .hero-content {
@@ -550,12 +1031,62 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     z-index: 1;
     display: flex;
     align-items: center;
-    min-height: min(760px, calc(100svh - 72px));
-    padding: clamp(var(--space-64), 10vw, var(--space-128)) clamp(var(--space-24), 12vw, var(--space-128));
+    min-height: min(680px, calc(100svh - 72px));
+    padding: clamp(var(--space-64), 10vw, var(--space-128)) clamp(var(--space-24), 12vw, var(--space-128)) var(--space-48);
   }
 
   .copy {
     max-width: 860px;
+  }
+
+  .copy > * {
+    animation: hero-rise 0.9s var(--ease-out-soft) both;
+  }
+
+  .copy h1 {
+    animation-delay: 0.06s;
+  }
+
+  .copy .intro {
+    animation-delay: 0.16s;
+  }
+
+  .copy .hero-install {
+    animation-delay: 0.24s;
+  }
+
+  .copy .actions {
+    animation-delay: 0.32s;
+  }
+
+  @keyframes hero-rise {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 16px, 0);
+    }
+  }
+
+  .hero-install {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-16);
+    margin: var(--space-32) 0 0;
+    padding: 10px 16px 10px var(--space-24);
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 70%, var(--brand-graphite));
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+  }
+
+  .hero-install .prompt {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 55%, transparent);
+  }
+
+  .hero-install code {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 92%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
   }
 
   h1 {
@@ -579,9 +1110,9 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .intro {
-    max-width: 500px;
+    max-width: 540px;
     margin: var(--space-24) 0 0;
-    color: color-mix(in oklab, var(--brand-warm-ivory) 64%, transparent);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 60%, transparent);
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
   }
@@ -593,10 +1124,23 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     margin-top: var(--space-32);
   }
 
+  .actions a {
+    transition: transform 220ms var(--ease-out-soft), background-color 220ms var(--ease-soft), border-color 220ms var(--ease-soft), box-shadow 220ms var(--ease-soft);
+  }
+
+  .actions a:hover {
+    transform: translateY(-2px);
+  }
+
   .secondary-button {
     color: var(--brand-warm-ivory);
     background: transparent;
     border-color: color-mix(in oklab, var(--brand-warm-ivory) 22%, transparent);
+  }
+
+  .secondary-button:hover {
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 42%, transparent);
+    background: color-mix(in oklab, var(--brand-warm-ivory) 6%, transparent);
   }
 
   .nav-primary-button {
@@ -605,10 +1149,15 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     border-color: var(--brand-ruby-red);
   }
 
+  .actions a:first-child:hover {
+    background: color-mix(in oklab, var(--brand-ruby-red) 86%, black);
+  }
+
   .band {
-    padding: 56px clamp(20px, 6vw, 88px) 72px;
+    padding: clamp(var(--space-64), 7vw, var(--space-96)) clamp(20px, 6vw, 88px);
     background: var(--brand-obsidian);
     color: var(--brand-warm-ivory);
+    border-top: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 8%, transparent);
   }
 
   .band h2,
@@ -633,8 +1182,8 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     position: relative;
     z-index: 1;
     display: grid;
-    grid-template-columns: minmax(0, 0.95fr) minmax(360px, 0.9fr);
-    gap: clamp(var(--space-48), 8vw, var(--space-96));
+    grid-template-columns: minmax(0, 0.85fr) minmax(440px, 1.05fr);
+    gap: clamp(var(--space-32), 6vw, var(--space-64));
     align-items: start;
   }
 
@@ -643,29 +1192,36 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .eyebrow {
-    display: grid;
-    grid-template-columns: 64px auto;
-    gap: var(--space-24);
+    counter-increment: section;
+    display: inline-flex;
     align-items: center;
+    gap: var(--space-16);
     width: fit-content;
-    margin-bottom: var(--space-32);
-    color: var(--brand-ruby-red);
+    margin-bottom: var(--space-24);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 58%, transparent);
     font-family: var(--font-mono);
     font-size: var(--text-caption);
     line-height: var(--text-caption--line-height);
-    letter-spacing: 0;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
+  .eyebrow::before {
+    content: counter(section, decimal-leading-zero);
+    color: var(--brand-ruby-red);
+    font-weight: 500;
+  }
+
   .eyebrow span {
-    content: "";
     display: inline-block;
-    height: 5px;
-    background: var(--brand-ruby-red);
+    width: 32px;
+    height: 1px;
+    background: color-mix(in oklab, var(--brand-warm-ivory) 24%, transparent);
   }
 
   .eyebrow strong {
     font-weight: 500;
+    letter-spacing: 0.08em;
   }
 
   .quickstart h2 {
@@ -681,12 +1237,11 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     align-items: center;
     gap: var(--space-16);
     width: min(100%, 560px);
-    min-height: 72px;
     margin: var(--space-32) 0 var(--space-24);
-    padding: 0 var(--space-24) 0 var(--space-32);
-    border-radius: var(--radius);
-    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
-    background: var(--brand-obsidian);
+    padding: 8px 8px 8px var(--space-24);
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 70%, var(--brand-graphite));
     color: var(--brand-warm-ivory);
     font-family: var(--font-mono);
     font-size: var(--text-code);
@@ -701,15 +1256,26 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     line-height: var(--text-body--line-height);
   }
 
+  .section-note {
+    max-width: 760px;
+    margin: var(--space-32) 0 0;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 50%, transparent);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+  }
+
   .install svg {
     color: var(--brand-ruby-red);
   }
 
   .install code {
+    min-width: 0;
     color: var(--brand-warm-ivory);
     font-family: var(--font-mono);
     font-size: var(--text-code);
     font-weight: 400;
+    white-space: nowrap;
+    overflow-x: auto;
   }
 
   .install-copy {
@@ -720,17 +1286,17 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     width: 34px;
     height: 34px;
     padding: 0;
-    border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 22%, transparent);
-    border-radius: var(--radius);
-    background: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
-    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 60%, transparent);
     cursor: pointer;
-    transition: border-color 160ms ease, color 160ms ease, transform 160ms ease;
+    transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
   }
 
   .install-copy:hover,
   .install-copy.is-copied {
-    border-color: var(--brand-ruby-red);
+    background: color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
     color: var(--brand-warm-ivory);
   }
 
@@ -755,7 +1321,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .install-copy svg {
-    color: var(--brand-ruby-red);
+    color: inherit;
   }
 
   .code-window {
@@ -766,6 +1332,22 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 22%, transparent);
     border-radius: calc(var(--radius) * 1.6);
     background: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
+  }
+
+  .quickstart .code-window {
+    display: flex;
+    flex-direction: column;
+    min-height: 460px;
+    max-width: none;
+    justify-self: stretch;
+  }
+
+  .quickstart .code-window pre {
+    flex: 1;
+  }
+
+  .quickstart .code-title {
+    grid-template-columns: auto auto auto 1fr auto;
   }
 
   .code-title {
@@ -806,6 +1388,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     font-family: var(--font-mono);
     font-size: var(--text-code);
     line-height: 1.7;
+    overflow-x: auto;
   }
 
   .code-window span {
@@ -813,6 +1396,159 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .code-window em {
+    color: var(--brand-silver-mist);
+    font-style: normal;
+  }
+
+  /* Core API tabbed demo */
+  .core-demo {
+    align-items: center;
+  }
+
+  .core-copy .eyebrow {
+    margin-bottom: var(--space-24);
+  }
+
+  .core-copy .secondary-button {
+    margin-top: var(--space-8);
+  }
+
+  .supports {
+    margin-top: var(--space-48);
+  }
+
+  .supports-label {
+    display: block;
+    margin-bottom: var(--space-16);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 52%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .supports-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .support-badge {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 78%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 78%, transparent);
+    transition: transform 220ms var(--ease-out-soft), border-color 220ms var(--ease-soft), color 220ms var(--ease-soft);
+  }
+
+  .support-badge:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 30%, transparent);
+    color: var(--brand-warm-ivory);
+  }
+
+  .supports-more {
+    margin-left: 6px;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 52%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+  }
+
+  .code-tabs {
+    min-width: 0;
+  }
+
+  .code-tabs-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: var(--space-16);
+  }
+
+  .code-tab {
+    padding: 8px 14px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 56%, transparent);
+    font-family: var(--font-sans);
+    font-size: var(--text-caption);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 200ms var(--ease-soft), color 200ms var(--ease-soft);
+  }
+
+  .code-tab:hover {
+    color: var(--brand-warm-ivory);
+  }
+
+  .code-tab.is-active {
+    color: var(--brand-warm-ivory);
+    background: color-mix(in oklab, var(--brand-obsidian) 72%, var(--brand-graphite));
+  }
+
+  .code-tabs-window {
+    max-width: none;
+    justify-self: stretch;
+  }
+
+  .code-tabs-window .code-title {
+    grid-template-columns: auto auto auto 1fr auto;
+  }
+
+  .code-tabs-copy,
+  .code-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: transparent;
+    color: color-mix(in oklab, var(--brand-silver-mist) 82%, transparent);
+    cursor: pointer;
+    transition: color 160ms ease, border-color 160ms ease;
+  }
+
+  .code-tabs-copy:hover,
+  .code-tabs-copy.is-copied,
+  .code-copy:hover,
+  .code-copy.is-copied {
+    color: var(--brand-warm-ivory);
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 18%, transparent);
+  }
+
+  .code-panels {
+    position: relative;
+  }
+
+  .code-panel {
+    margin: 0;
+    padding: var(--space-16);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+    line-height: 1.7;
+    overflow-x: auto;
+    min-height: 268px;
+  }
+
+  .code-panel[hidden] {
+    display: none;
+  }
+
+  .code-panel span {
+    color: var(--brand-ruby-red);
+  }
+
+  .code-panel em {
     color: var(--brand-silver-mist);
     font-style: normal;
   }
@@ -832,10 +1568,17 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     gap: var(--space-16);
     min-height: 220px;
     padding: var(--space-24);
-    border-radius: calc(var(--radius) * 1.6);
-    background: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
+    border-radius: calc(var(--radius) * 1.2);
+    background: color-mix(in oklab, var(--brand-obsidian) 86%, var(--brand-graphite));
     color: var(--brand-warm-ivory);
-    border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 18%, transparent);
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
+    transition: transform 260ms var(--ease-out-soft), border-color 260ms var(--ease-soft), background-color 260ms var(--ease-soft);
+  }
+
+  .ui-card:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 28%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 80%, var(--brand-graphite));
   }
 
   .card-heading {
@@ -876,11 +1619,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     place-items: center;
     width: 40px;
     aspect-ratio: 1;
-    color: var(--brand-ruby-red);
-  }
-
-  .card-icon::after {
-    content: none;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 74%, transparent);
   }
 
   .card-rule {
@@ -888,6 +1627,45 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     width: 40px;
     height: 1px;
     background: var(--brand-ruby-red);
+  }
+
+  .qs-card {
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .qs-card h3 {
+    font-size: var(--text-h3);
+    line-height: var(--text-h3--line-height);
+  }
+
+  .card-install {
+    display: flex;
+    align-items: center;
+    gap: var(--space-16);
+    margin-top: var(--space-16);
+    padding: 8px 8px 8px var(--space-24);
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 70%, var(--brand-graphite));
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+  }
+
+  .card-install .prompt {
+    flex-shrink: 0;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 55%, transparent);
+  }
+
+  .card-install code {
+    flex: 1;
+    min-width: 0;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 92%, transparent);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .card-install .install-copy {
+    flex-shrink: 0;
   }
 
   .quickstart-mark {
@@ -918,7 +1696,6 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   }
 
   .pill-grid,
-  .capability-grid,
   .provider-row {
     display: grid;
     gap: 12px;
@@ -928,37 +1705,749 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .capability-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    max-width: 1100px;
-  }
-
   .provider-row {
     grid-template-columns: repeat(6, minmax(0, 1fr));
     max-width: 1100px;
   }
 
   .pill-grid span,
-  .capability-grid span,
   .provider-row span,
   .stack-list span {
+    display: flex;
+    align-items: center;
     min-height: 52px;
     padding: 15px 16px;
+    border-radius: var(--radius);
     border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
     background: color-mix(in oklab, var(--brand-graphite) 18%, transparent);
     color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
+    transition: transform 220ms var(--ease-out-soft), border-color 220ms var(--ease-soft), background-color 220ms var(--ease-soft), color 220ms var(--ease-soft);
   }
 
-  .capability-grid span {
-    font-family: var(--font-mono);
-    font-size: var(--text-code);
+  .pill-grid span:hover,
+  .provider-row span:hover,
+  .stack-list span:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 26%, transparent);
+    background: color-mix(in oklab, var(--brand-graphite) 30%, transparent);
+    color: var(--brand-warm-ivory);
+  }
+
+  /* Capability diagram */
+  .capability-diagram {
+    margin-top: clamp(var(--space-48), 6vw, var(--space-96));
+    overflow-x: auto;
+  }
+
+  .cap-canvas {
+    position: relative;
+    width: 100%;
+    max-width: 960px;
+    min-width: 640px;
+    margin: 0 auto;
+  }
+
+  .cap-lines {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .cap-link {
+    fill: none;
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 20%, transparent);
+    stroke-width: 1;
+    stroke-linecap: round;
+  }
+
+  .cap-core {
+    position: absolute;
+    display: grid;
+    place-items: center;
+    width: 200px;
+    height: 84px;
+    padding: 0 28px;
+    transform: translate(-50%, -50%);
+    border-radius: 20px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 16%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 88%, var(--brand-graphite));
+  }
+
+  .cap-core img {
+    width: 132px;
+    height: auto;
+    filter: brightness(0) invert(1);
+  }
+
+  .cap-node {
+    position: absolute;
+    display: block;
+    width: 72px;
+    height: 72px;
+    transform: translate(-50%, -50%);
+  }
+
+  .cap-node-card {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    border-radius: 18px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    background:
+      linear-gradient(160deg,
+        color-mix(in oklab, var(--brand-warm-ivory) 6%, transparent),
+        transparent 45%),
+      color-mix(in oklab, var(--brand-obsidian) 88%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 84%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    transition: border-color 220ms var(--ease-soft), color 220ms var(--ease-soft), transform 220ms var(--ease-out-soft);
+  }
+
+  .cap-node:hover .cap-node-card {
+    border-color: color-mix(in oklab, var(--brand-ruby-red) 52%, transparent);
+    color: var(--brand-warm-ivory);
+    transform: translateY(-3px);
+  }
+
+  .cap-node-label {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+    color: color-mix(in oklab, var(--brand-warm-ivory) 62%, transparent);
+    transition: color 220ms var(--ease-soft);
+  }
+
+  .cap-node.is-top .cap-node-label {
+    bottom: calc(100% + 12px);
+  }
+
+  .cap-node.is-bottom .cap-node-label {
+    top: calc(100% + 12px);
+  }
+
+  .cap-node:hover .cap-node-label {
+    color: var(--brand-warm-ivory);
   }
 
   .stack-list {
     display: grid;
     gap: 12px;
+  }
+
+  /* Architecture */
+  .arch-split {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: clamp(var(--space-32), 6vw, var(--space-96));
+    align-items: start;
+    margin-top: clamp(var(--space-32), 5vw, var(--space-64));
+  }
+
+  .arch-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .arch-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
+    gap: var(--space-24);
+    align-items: center;
+  }
+
+  .arch-step:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 31px;
+    top: 62px;
+    width: 1px;
+    height: 26px;
+    background: color-mix(in oklab, var(--brand-warm-ivory) 26%, transparent);
+  }
+
+  .arch-step-num {
+    display: grid;
+    place-items: center;
+    width: 62px;
+    height: 62px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 32%, transparent);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 88%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+    letter-spacing: 0.04em;
+    transition: border-color 220ms var(--ease-soft), color 220ms var(--ease-soft);
+  }
+
+  .arch-step-label {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+
+  .arch-step:hover .arch-step-num {
+    border-color: var(--brand-ruby-red);
+    color: var(--brand-ruby-red);
+  }
+
+  .subpath-table {
+    display: grid;
+    width: 100%;
+    border-top: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
+  }
+
+  .subpath-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-24);
+    align-items: center;
+    padding: 18px 4px;
+    border-bottom: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
+  }
+
+  .subpath-title {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 90%, transparent);
+    font-size: var(--text-h4);
+    line-height: var(--text-h4--line-height);
+    font-weight: 400;
+    transition: color 200ms var(--ease-soft);
+  }
+
+  .subpath-row:hover .subpath-title {
+    color: var(--brand-ruby-red);
+  }
+
+  .subpath-tag {
+    justify-self: end;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 14%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 70%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 70%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    white-space: nowrap;
+  }
+
+  /* Adapters */
+  .adapter-diagram {
+    margin-top: clamp(var(--space-32), 5vw, var(--space-64));
+    overflow-x: auto;
+  }
+
+  .ad-canvas {
+    position: relative;
+    width: 100%;
+    max-width: 1000px;
+    min-width: 760px;
+    margin: 0 auto;
+  }
+
+  .ad-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .ad-arc {
+    fill: none;
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 32%, transparent);
+    stroke-width: 1;
+    stroke-linecap: round;
+  }
+
+  .ad-dash {
+    fill: none;
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 16%, transparent);
+    stroke-width: 1;
+    stroke-dasharray: 3 8;
+  }
+
+  .ad-conn {
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 30%, transparent);
+    stroke-width: 1;
+  }
+
+  .ad-dot {
+    fill: color-mix(in oklab, var(--brand-warm-ivory) 48%, transparent);
+  }
+
+  .ad-node {
+    fill: var(--brand-obsidian);
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 55%, transparent);
+    stroke-width: 1;
+  }
+
+  .ad-num {
+    fill: color-mix(in oklab, var(--brand-warm-ivory) 92%, transparent);
+    font-family: var(--font-mono);
+    font-size: 22px;
+  }
+
+  .ad-core {
+    position: absolute;
+    width: min(240px, 40%);
+    transform: translate(-50%, -50%);
+    text-align: center;
+  }
+
+  .ad-core strong {
+    display: block;
+    margin-bottom: 10px;
+    font-size: var(--text-h4);
+    line-height: var(--text-h4--line-height);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--brand-warm-ivory);
+  }
+
+  .ad-core span {
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 60%, transparent);
+  }
+
+  .ad-label {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transform: translateY(-50%);
+    white-space: nowrap;
+  }
+
+  .ad-item {
+    font-size: var(--text-caption);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 72%, transparent);
+  }
+
+  .ad-item.is-lead {
+    color: var(--brand-warm-ivory);
+    font-weight: 500;
+  }
+
+  .ad-sep {
+    position: relative;
+    width: 26px;
+    height: 1px;
+    background: color-mix(in oklab, var(--brand-warm-ivory) 30%, transparent);
+  }
+
+  .ad-sep::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--brand-warm-ivory) 48%, transparent);
+    transform: translate(-50%, -50%);
+  }
+
+  .adapter-installs {
+    display: grid;
+    gap: 12px;
+    max-width: 560px;
+  }
+
+  .adapter-installs--center {
+    margin: clamp(var(--space-32), 5vw, var(--space-64)) auto 0;
+  }
+
+  /* Flow diagrams (problem / validation) */
+  .flow-diagram {
+    margin-top: clamp(var(--space-32), 5vw, var(--space-64));
+    overflow-x: auto;
+  }
+
+  .flow-svg {
+    display: block;
+    width: 100%;
+    min-width: 720px;
+    max-width: 1000px;
+    height: auto;
+    margin: 0 auto;
+    overflow: visible;
+  }
+
+  .flow-dash {
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 18%, transparent);
+    stroke-width: 1;
+    stroke-dasharray: 4 8;
+  }
+
+  .flow-line {
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 24%, transparent);
+    stroke-width: 1;
+  }
+
+  .flow-chip rect {
+    fill: var(--brand-obsidian);
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 26%, transparent);
+    stroke-width: 1;
+  }
+
+  .flow-chip text {
+    fill: color-mix(in oklab, var(--brand-warm-ivory) 88%, transparent);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    letter-spacing: 0.02em;
+  }
+
+  .flow-chip--warn rect {
+    stroke: color-mix(in oklab, var(--brand-ruby-red) 48%, transparent);
+  }
+
+  .flow-chip--warn text {
+    fill: var(--brand-warm-ivory);
+  }
+
+  .flow-break {
+    fill: var(--brand-obsidian);
+    stroke: color-mix(in oklab, var(--brand-ruby-red) 65%, transparent);
+    stroke-width: 1;
+  }
+
+  .flow-x {
+    stroke: var(--brand-ruby-red);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+  }
+
+  .flow-label {
+    fill: color-mix(in oklab, var(--brand-warm-ivory) 66%, transparent);
+    font-size: 15px;
+  }
+
+  .flow-gate {
+    fill: var(--brand-obsidian);
+    stroke: color-mix(in oklab, var(--brand-ruby-red) 55%, transparent);
+    stroke-width: 1;
+  }
+
+  .flow-check {
+    fill: none;
+    stroke: var(--brand-ruby-red);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .flow-gate-label {
+    fill: color-mix(in oklab, var(--brand-warm-ivory) 62%, transparent);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+  }
+
+  .flow-tags {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin: clamp(var(--space-32), 5vw, var(--space-48)) auto 0;
+  }
+
+  .flow-tags span {
+    padding: 8px 16px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 72%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 78%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    transition: border-color 200ms var(--ease-soft), color 200ms var(--ease-soft);
+  }
+
+  .flow-tags span:hover {
+    border-color: color-mix(in oklab, var(--brand-ruby-red) 40%, transparent);
+    color: var(--brand-warm-ivory);
+  }
+
+  .mini-install {
+    display: flex;
+    align-items: center;
+    gap: var(--space-16);
+    min-height: 52px;
+    padding: 0 var(--space-24);
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
+    background: var(--brand-obsidian);
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+  }
+
+  .mini-install svg {
+    color: var(--brand-ruby-red);
+    flex-shrink: 0;
+  }
+
+  .mini-install code {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 88%, transparent);
+    overflow-x: auto;
+  }
+
+  /* Integrations ecosystem */
+  .ecosystem-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(var(--space-16), 2.4vw, var(--space-32));
+  }
+
+  .ecosystem-card {
+    grid-template-rows: auto 1fr auto;
+    gap: var(--space-24);
+    will-change: transform;
+    transition:
+      transform 420ms var(--ease-out-soft),
+      border-color 420ms var(--ease-out-soft),
+      background-color 420ms var(--ease-out-soft);
+  }
+
+  .ecosystem-card:hover {
+    transform: translateY(-4px);
+  }
+
+  .ecosystem-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-16);
+  }
+
+  .ecosystem-icon {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 16%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 80%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    transition: border-color 420ms var(--ease-out-soft), color 420ms var(--ease-out-soft);
+  }
+
+  .ecosystem-card:hover .ecosystem-icon {
+    border-color: color-mix(in oklab, var(--brand-ruby-red) 50%, transparent);
+    color: var(--brand-ruby-red);
+  }
+
+  .ecosystem-card h3 {
+    transition: color 420ms var(--ease-out-soft);
+  }
+
+  .ecosystem-card:hover h3 {
+    color: var(--brand-ruby-red);
+  }
+
+  .ecosystem-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-self: end;
+  }
+
+  .ecosystem-items span {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
+    background: color-mix(in oklab, var(--brand-obsidian) 72%, var(--brand-graphite));
+    color: color-mix(in oklab, var(--brand-warm-ivory) 78%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    transition: border-color 420ms var(--ease-out-soft), color 420ms var(--ease-out-soft);
+  }
+
+  .ecosystem-items span:hover {
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 28%, transparent);
+    color: var(--brand-warm-ivory);
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .status-badge.is-done {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 26%, transparent);
+    background: color-mix(in oklab, var(--brand-warm-ivory) 8%, transparent);
+  }
+
+  .status-badge.is-next {
+    color: var(--brand-warm-ivory);
+    border: 1px solid color-mix(in oklab, var(--brand-ruby-red) 50%, transparent);
+    background: color-mix(in oklab, var(--brand-ruby-red) 20%, transparent);
+  }
+
+  .status-badge.is-planned {
+    color: var(--brand-silver-mist);
+    border: 1px solid color-mix(in oklab, var(--brand-silver-mist) 30%, transparent);
+    background: color-mix(in oklab, var(--brand-silver-mist) 10%, transparent);
+  }
+
+  /* Events */
+  .event-stream {
+    margin-top: clamp(var(--space-32), 5vw, var(--space-64));
+    overflow-x: auto;
+  }
+
+  .event-svg {
+    display: block;
+    width: 100%;
+    min-width: 860px;
+    max-width: 1000px;
+    height: auto;
+    margin: 0 auto;
+    overflow: visible;
+  }
+
+  .event-line {
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 22%, transparent);
+    stroke-width: 1;
+  }
+
+  .event-tick {
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 16%, transparent);
+    stroke-width: 1;
+  }
+
+  .event-dot {
+    fill: var(--brand-obsidian);
+    stroke: color-mix(in oklab, var(--brand-warm-ivory) 55%, transparent);
+    stroke-width: 1.4;
+  }
+
+  .event-dot.is-ruby {
+    stroke: var(--brand-ruby-red);
+    fill: color-mix(in oklab, var(--brand-ruby-red) 28%, var(--brand-obsidian));
+  }
+
+  .event-name {
+    fill: color-mix(in oklab, var(--brand-warm-ivory) 72%, transparent);
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  .event-name.is-ruby {
+    fill: var(--brand-ruby-red);
+  }
+
+  /* Examples */
+  .example-card {
+    text-decoration: none;
+  }
+
+  .example-link {
+    color: var(--brand-ruby-red) !important;
+  }
+
+  /* Use cases */
+  .usecase-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(var(--space-16), 2.4vw, var(--space-32));
+    max-width: 1100px;
+  }
+
+  .usecase-grid .ui-card {
+    grid-template-rows: auto auto 1fr;
+    min-height: 160px;
+  }
+
+  /* Roadmap */
+  .roadmap-list {
+    display: grid;
+    max-width: 960px;
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
+    border-radius: calc(var(--radius) * 1.4);
+    overflow: hidden;
+  }
+
+  .roadmap-row {
+    display: grid;
+    grid-template-columns: 108px minmax(160px, 0.9fr) minmax(0, 2fr);
+    gap: var(--space-24);
+    align-items: center;
+    padding: 16px var(--space-24);
+    border-top: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 8%, transparent);
+    transition: background-color 200ms var(--ease-soft);
+  }
+
+  .roadmap-row:first-child {
+    border-top: 0;
+  }
+
+  .roadmap-row:hover {
+    background: color-mix(in oklab, var(--brand-graphite) 22%, transparent);
+  }
+
+  .roadmap-row strong {
+    font-weight: 500;
+    font-size: var(--text-body);
+  }
+
+  .roadmap-value {
+    color: color-mix(in oklab, var(--brand-warm-ivory) 60%, transparent);
+    font-size: var(--text-body);
+  }
+
+  /* Docs */
+  .docs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+    max-width: 1100px;
+  }
+
+  .docs-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-16);
+    min-height: 56px;
+    padding: 0 var(--space-24);
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in oklab, var(--brand-warm-ivory) 10%, transparent);
+    background: color-mix(in oklab, var(--brand-graphite) 18%, transparent);
+    color: color-mix(in oklab, var(--brand-warm-ivory) 82%, transparent);
+    font-size: var(--text-body);
+    text-decoration: none;
+    transition: transform 220ms var(--ease-out-soft), border-color 220ms var(--ease-soft), color 220ms var(--ease-soft);
+  }
+
+  .docs-link span {
+    color: var(--brand-ruby-red);
+  }
+
+  .docs-link:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--brand-warm-ivory) 26%, transparent);
+    color: var(--brand-warm-ivory);
   }
 
   .site-footer {
@@ -1006,10 +2495,12 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
     text-decoration: none;
+    transition: color 200ms var(--ease-soft), transform 200ms var(--ease-out-soft);
   }
 
   .footer-links a:hover {
     color: var(--brand-warm-ivory);
+    transform: translateX(3px);
   }
 
   .footer-bottom {
@@ -1027,7 +2518,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
   @keyframes section-enter {
     from {
       opacity: 0;
-      transform: translateY(20px);
+      transform: translate3d(0, 14px, 0);
     }
   }
 
@@ -1037,9 +2528,9 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     .quickstart-mark,
     .band > *,
     .site-footer > * {
-      animation: section-enter 1s ease-out both;
+      animation: section-enter 1.1s var(--ease-out-soft) both;
       animation-timeline: view();
-      animation-range: entry 5% cover 30%;
+      animation-range: entry 2% cover 34%;
     }
   }
 
@@ -1100,8 +2591,18 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
       font-size: var(--text-body);
     }
 
-    .feature-grid {
+    .feature-grid,
+    .ecosystem-grid,
+    .usecase-grid {
       grid-template-columns: 1fr;
+    }
+
+    .hero-install {
+      max-width: 100%;
+    }
+
+    .hero-install code {
+      overflow-x: auto;
     }
 
     .quickstart {
@@ -1126,20 +2627,39 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
       width: 56px;
     }
 
-    .code-window pre {
+    .code-window pre,
+    .code-panel {
       overflow-x: auto;
       padding: var(--space-16);
       font-size: 13px;
     }
 
-    .split-band {
+    .code-panel {
+      min-height: 0;
+    }
+
+    .split-band,
+    .arch-split {
       grid-template-columns: 1fr;
     }
 
     .pill-grid,
-    .capability-grid,
     .provider-row {
       grid-template-columns: 1fr;
+    }
+
+    .subpath-row {
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+
+    .roadmap-row {
+      grid-template-columns: auto 1fr;
+      row-gap: 8px;
+    }
+
+    .roadmap-value {
+      grid-column: 1 / -1;
     }
 
     .site-footer {
@@ -1166,6 +2686,7 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     }
 
     .hero-content,
+    .copy > *,
     .quickstart-head,
     .ui-card,
     .quickstart-mark,
@@ -1173,15 +2694,29 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     .site-footer > * {
       animation: none;
     }
-  }
 
+    .ui-card:hover,
+    .actions a:hover,
+    .pill-grid span:hover,
+    .provider-row span:hover,
+    .stack-list span:hover,
+    .cap-node:hover .cap-node-card,
+    .docs-link:hover,
+    .footer-links a:hover {
+      transform: none;
+    }
+  }
 </style>
 
 <script>
   const copyCommand = async (command: string) => {
-    if (navigator.clipboard) {
-      await navigator.clipboard.writeText(command);
-      return;
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(command);
+        return;
+      }
+    } catch {
+      // Clipboard API can reject without a trusted gesture; fall back below.
     }
 
     const textarea = document.createElement("textarea");
@@ -1201,11 +2736,69 @@ const heroSecondaryButton = buttonVariants({ variant: "outline", size: "lg" });
     button.addEventListener("click", async () => {
       await copyCommand(command);
       button.classList.add("is-copied");
-      button.setAttribute("aria-label", "Copied npm install fevex");
+      button.setAttribute("aria-label", "Copied");
 
       window.setTimeout(() => {
         button.classList.remove("is-copied");
-        button.setAttribute("aria-label", "Copy npm install fevex");
+        button.setAttribute("aria-label", `Copy ${command}`);
+      }, 1600);
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>(".code-copy").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const code = button.closest(".code-window")?.querySelector("code");
+      if (!code) return;
+
+      await copyCommand(code.innerText);
+      button.classList.add("is-copied");
+      button.setAttribute("aria-label", "Copied");
+
+      window.setTimeout(() => {
+        button.classList.remove("is-copied");
+        button.setAttribute("aria-label", "Copy code");
+      }, 1600);
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>(".code-tabs").forEach((container) => {
+    const tabs = container.querySelectorAll<HTMLButtonElement>(".code-tab");
+    const panels = container.querySelectorAll<HTMLElement>(".code-panel");
+    const filename = container.querySelector<HTMLElement>(".code-tabs-filename");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const index = tab.dataset.tab;
+
+        tabs.forEach((other) => {
+          const active = other === tab;
+          other.classList.toggle("is-active", active);
+          other.setAttribute("aria-selected", active ? "true" : "false");
+        });
+
+        panels.forEach((panel) => {
+          const active = panel.dataset.panel === index;
+          panel.classList.toggle("is-active", active);
+          panel.hidden = !active;
+          if (active && filename && panel.dataset.file) {
+            filename.textContent = panel.dataset.file;
+          }
+        });
+      });
+    });
+
+    const copyButton = container.querySelector<HTMLButtonElement>(".code-tabs-copy");
+    copyButton?.addEventListener("click", async () => {
+      const active = container.querySelector<HTMLElement>(".code-panel:not([hidden])");
+      if (!active) return;
+
+      await copyCommand(active.innerText);
+      copyButton.classList.add("is-copied");
+      copyButton.setAttribute("aria-label", "Copied");
+
+      window.setTimeout(() => {
+        copyButton.classList.remove("is-copied");
+        copyButton.setAttribute("aria-label", "Copy code");
       }, 1600);
     });
   });

@@ -84,6 +84,8 @@
   --brand-ruby-red: #b92432;
   --brand-graphite: #1d2024;
   --brand-silver-mist: #9ca3af;
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
   --space-4: 4px;
   --space-8: 8px;
   --space-16: 16px;
@@ -165,6 +167,13 @@
 
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 
   body {

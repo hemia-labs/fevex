@@ -814,6 +814,42 @@ human evaluation workflows.
 - [Release guide](docs/fevex_release_guide.md)
 - [Foundational brief](docs/fevex_brief_fundacional.md)
 
+## Deploy de `fevex.dev`
+
+El workflow [`deploy-fevex`](.github/workflows/deploy-fevex.yml) construye el
+sitio estático de `apps/web` con Bun y lo publica en el VPS mediante SSH. Usa
+el Environment de GitHub `fevex`.
+
+Variables del Environment:
+
+```text
+VPS_HOST
+VPS_SSH_KNOWN_HOSTS
+```
+
+Secret:
+
+```text
+VPS_DEPLOY_SSH_PRIVATE_KEY
+```
+
+`VPS_DEPLOY_SSH_PRIVATE_KEY` es la llave privada cuyo par público se instala
+en el usuario `deploy` del VPS desde el repositorio de infraestructura. Usa
+una llave exclusiva para GitHub Actions; no reutilices la llave administrativa.
+
+Para registrar la identidad SSH del VPS, ejecuta desde una máquina confiable:
+
+```bash
+ssh-keyscan -H TU_HOST_O_IP
+```
+
+Verifica la huella obtenida contra la consola del proveedor y copia la salida
+completa en `VPS_SSH_KNOWN_HOSTS`. Usa en `VPS_HOST` exactamente el mismo host
+o IP que pasaste a `ssh-keyscan`.
+
+El DNS `fevex.dev` debe apuntar a `VPS_HOST`. Como el sitio es estático, Nginx
+lo sirve directamente y no requiere PM2.
+
 ## Development
 
 ```bash
