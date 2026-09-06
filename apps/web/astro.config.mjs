@@ -24,6 +24,18 @@ export default defineConfig({
         },
       ],
       customCss: ['./src/styles/starlight-brand.css'],
+      components: {
+        ThemeProvider: './src/components/DocsThemeProvider.astro',
+      },
+      expressiveCode: {
+        styleOverrides: {
+          borderRadius: '0.5rem',
+          borderColor: 'var(--sl-color-hairline-light)',
+          codeFontFamily: 'var(--brand-font-mono)',
+          codeFontSize: '0.8125rem',
+          codeLineHeight: '1.7',
+        },
+      },
       sidebar: [
         {
           label: 'Getting started',

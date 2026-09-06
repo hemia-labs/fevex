@@ -20,6 +20,12 @@ const review = defineWorkflow({
   version: '2',
   inputSchema: z.object({ draft: z.string() }),
   outputSchema: z.string(),
+  events: {
+    'review.approved': {
+      payloadSchema: z.object({ approved: z.literal(true) }),
+      requireActor: true,
+    },
+  },
   limits: { maxSteps: 8, maxToolCalls: 12 },
   async run(step, input) {
     const draft = await step.agent('draft', 'writer', { input });
@@ -33,6 +39,8 @@ Input is validated before the initial checkpoint is stored, and output is always
 validated with the definition schema — including after a pause or recovery.
 `stepId` is the durable identity of a step: keep it stable while its meaning is
 stable, and increment `version` when replay order or step meanings change.
+External events must be declared. This example requires an approval payload of
+`{ approved: true }` and an actor when the workflow resumes.
 
 ## Recovery
 

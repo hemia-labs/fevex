@@ -1,0 +1,35 @@
+---
+import Pause from 'lucide-astro/Pause';
+import Play from 'lucide-astro/Play';
+---
+
+<div class="thinking-globe">
+  <div class="globe-stage" aria-hidden="true">
+    <canvas class="globe-canvas" data-particle-globe width="540" height="540" hidden></canvas>
+  </div>
+  <div class="globe-caption">
+    <span class="globe-phase" data-globe-phase aria-hidden="true">Idle</span>
+    <button class="globe-toggle" type="button" data-globe-toggle aria-label="Pause globe animation" aria-pressed="false" hidden>
+      <Pause size={13} class="globe-pause-icon" aria-hidden="true" />
+      <Play size={13} class="globe-play-icon" aria-hidden="true" />
+    </button>
+  </div>
+</div>
+
+<script>
+  import '../scripts/particle-globe';
+</script>
+
+<style>
+  .thinking-globe { width: 100%; max-width: 540px; margin-inline: auto; }
+  .globe-stage { position: relative; width: 100%; aspect-ratio: 1; }
+  .globe-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .globe-caption { display: flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; margin-top: -12px; }
+  .globe-phase { min-width: 118px; text-align: center; color: var(--brand-silver-mist); font: 11px var(--brand-font-mono); }
+  .globe-toggle { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; color: var(--brand-silver-mist); cursor: pointer; }
+  .globe-toggle:hover { color: #FFFFFF; background: var(--brand-surface); }
+  .globe-toggle :global(.globe-play-icon) { display: none; }
+  .globe-toggle[aria-pressed='true'] :global(.globe-pause-icon) { display: none; }
+  .globe-toggle[aria-pressed='true'] :global(.globe-play-icon) { display: block; }
+  @media (prefers-reduced-motion: reduce) { .globe-toggle { display: none; } }
+</style>

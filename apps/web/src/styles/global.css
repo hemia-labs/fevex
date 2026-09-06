@@ -1,15 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
-@import "@fontsource/ibm-plex-mono/400.css";
+@import "./brand.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: "Inter Variable", Inter, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: var(--brand-font-sans);
+  --font-mono: var(--brand-font-mono);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -45,17 +44,9 @@
   --color-obsidian: var(--brand-obsidian);
   --color-warm-ivory: var(--brand-warm-ivory);
   --color-ruby: var(--brand-ruby-red);
+  --color-ruby-text: var(--brand-ruby-text);
   --color-graphite: var(--brand-graphite);
   --color-silver-mist: var(--brand-silver-mist);
-  --spacing-4: var(--space-4);
-  --spacing-8: var(--space-8);
-  --spacing-16: var(--space-16);
-  --spacing-24: var(--space-24);
-  --spacing-32: var(--space-32);
-  --spacing-48: var(--space-48);
-  --spacing-64: var(--space-64);
-  --spacing-96: var(--space-96);
-  --spacing-128: var(--space-128);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -79,11 +70,6 @@
 }
 
 :root {
-  --brand-obsidian: #020202;
-  --brand-warm-ivory: #f4f4f5;
-  --brand-ruby-red: #b92432;
-  --brand-graphite: #1d2024;
-  --brand-silver-mist: #9ca3af;
   --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
   --space-4: 4px;
@@ -133,23 +119,23 @@
 .dark {
   --background: var(--brand-obsidian);
   --foreground: var(--brand-warm-ivory);
-  --card: color-mix(in oklab, var(--brand-obsidian) 88%, var(--brand-graphite));
+  --card: var(--brand-surface);
   --card-foreground: var(--brand-warm-ivory);
-  --popover: color-mix(in oklab, var(--brand-obsidian) 88%, var(--brand-graphite));
+  --popover: var(--brand-raised);
   --popover-foreground: var(--brand-warm-ivory);
   --primary: var(--brand-ruby-red);
   --primary-foreground: var(--brand-warm-ivory);
   --secondary: var(--brand-graphite);
   --secondary-foreground: var(--brand-warm-ivory);
-  --muted: color-mix(in oklab, var(--brand-obsidian) 82%, var(--brand-graphite));
+  --muted: var(--brand-surface);
   --muted-foreground: var(--brand-silver-mist);
   --accent: var(--brand-ruby-red);
   --accent-foreground: var(--brand-warm-ivory);
   --destructive: var(--brand-ruby-red);
   --destructive-foreground: var(--brand-warm-ivory);
-  --border: color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
-  --input: color-mix(in oklab, var(--brand-obsidian) 84%, var(--brand-graphite));
-  --ring: var(--brand-ruby-red);
+  --border: var(--brand-border);
+  --input: var(--brand-control-border);
+  --ring: var(--brand-ruby-text);
   --sidebar: var(--brand-obsidian);
   --sidebar-foreground: var(--brand-warm-ivory);
   --sidebar-primary: var(--brand-ruby-red);
@@ -157,7 +143,7 @@
   --sidebar-accent: var(--brand-graphite);
   --sidebar-accent-foreground: var(--brand-warm-ivory);
   --sidebar-border: var(--border);
-  --sidebar-ring: var(--brand-ruby-red);
+  --sidebar-ring: var(--brand-ruby-text);
 }
 
 @layer base {

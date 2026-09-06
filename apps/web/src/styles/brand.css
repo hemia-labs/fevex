@@ -1,0 +1,17 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource/ibm-plex-mono/400.css";
+
+:root {
+  --brand-obsidian: #020202;
+  --brand-warm-ivory: #f4f4f5;
+  --brand-ruby-red: #e0113b;
+  --brand-graphite: #1d2024;
+  --brand-silver-mist: #9ca3af;
+  --brand-ruby-text: #ff526f;
+  --brand-surface: color-mix(in oklab, var(--brand-obsidian) 70%, var(--brand-graphite));
+  --brand-raised: color-mix(in oklab, var(--brand-obsidian) 40%, var(--brand-graphite));
+  --brand-border: color-mix(in oklab, var(--brand-warm-ivory) 12%, transparent);
+  --brand-control-border: color-mix(in oklab, var(--brand-silver-mist) 65%, transparent);
+  --brand-font-sans: "Inter Variable", Inter, system-ui, sans-serif;
+  --brand-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
