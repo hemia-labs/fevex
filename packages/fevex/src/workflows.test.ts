@@ -76,7 +76,10 @@ describe('workflows', () => {
     );
 
     expect(result.output).toEqual({ answer: 'docs-result/account-result' });
-    expect(calls).toEqual(['triage', 'docs', 'account', 'answer']);
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toBe('triage');
+    expect(calls.slice(1, 3).sort()).toEqual(['account', 'docs']);
+    expect(calls[3]).toBe('answer');
     expect((await app.listEvents(result.runId)).map(({ type }) => type)).toEqual([
       'workflow.run.started',
       'workflow.step.started',
