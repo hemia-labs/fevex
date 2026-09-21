@@ -18,6 +18,9 @@ import { createPostgresRunStore } from './index';
 import { createFakePool } from './fake-pool';
 
 const connectionString = process.env.FEVEX_POSTGRES_URL;
+if (process.env.FEVEX_REQUIRE_POSTGRES === '1' && !connectionString?.trim()) {
+  throw new Error('FEVEX_POSTGRES_URL is required for PostgreSQL integration tests');
+}
 const integration = connectionString ? describe : describe.skip;
 
 const now = new Date().toISOString();

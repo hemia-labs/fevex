@@ -41,7 +41,7 @@
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
     "prepack": "bun run build",
-    "test": "bun test src/index.test.ts",
+    "test": "bun test --cwd src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "publishConfig": {
