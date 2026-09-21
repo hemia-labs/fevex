@@ -1,4 +1,4 @@
-name: Fevex Quality Gate
+name: Framework validation
 
 on:
   pull_request:
