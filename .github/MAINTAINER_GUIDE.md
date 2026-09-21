@@ -41,7 +41,7 @@ In **Settings → Rules → Rulesets**, create an **Active** branch ruleset name
 | --- | --- |
 | Require a pull request before merging | Enabled |
 | Require status checks to pass | Enabled |
-| Required check | `Framework validation · PostgreSQL 16`, from GitHub Actions |
+| Required check | `Framework validation`, from GitHub Actions |
 | Require branches to be up to date before merging | Enabled |
 | Require conversation resolution | Enabled |
 | Require linear history | Enabled |
