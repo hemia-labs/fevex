@@ -16,7 +16,7 @@ already enabled.
 | [`bug_report.yml`](ISSUE_TEMPLATE/bug_report.yml) | Package versions, environment, behavior and reproduction | Merge into the default branch |
 | [`feature_request.yml`](ISSUE_TEMPLATE/feature_request.yml) | Use case, proposed behavior and alternatives | Merge into the default branch |
 | [`config.yml`](ISSUE_TEMPLATE/config.yml) | Security policy link and allowance for blank issues | Merge into the default branch |
-| [`test-framework.yml`](workflows/test-framework.yml) | Fevex Quality Gate with temporary PostgreSQL 16 | Workflow exists; make its check required separately |
+| [`test-framework.yml`](workflows/test-framework.yml) | Framework validation with temporary PostgreSQL 16 | Workflow exists; make its check required separately |
 | [`deploy-fevex.yml`](workflows/deploy-fevex.yml) | Website validation and deployment | Deployment requires the configured environment and credentials |
 
 The guide lives under `.github/` because root `docs/` is currently ignored by Git.
@@ -41,7 +41,7 @@ In **Settings → Rules → Rulesets**, create an **Active** branch ruleset name
 | --- | --- |
 | Require a pull request before merging | Enabled |
 | Require status checks to pass | Enabled |
-| Required check | `Framework validation · PostgreSQL 16`, from GitHub Actions |
+| Required check | `Framework validation`, from GitHub Actions |
 | Require branches to be up to date before merging | Enabled |
 | Require conversation resolution | Enabled |
 | Require linear history | Enabled |
@@ -50,8 +50,8 @@ In **Settings → Rules → Rulesets**, create an **Active** branch ruleset name
 | Bypass list | Empty by default; narrowly assigned emergency access only if needed |
 
 Run the workflow once before selecting its check. Select the actual reported job
-name, not just the workflow title `Fevex Quality Gate`. Keep the job name stable:
-renaming it also requires updating the ruleset.
+name `Framework validation` and keep it stable; renaming it requires updating
+the ruleset.
 
 With at least two active maintainers, require one approval and dismiss stale
 approvals when new commits modify the reviewed code. For a solo maintainer,

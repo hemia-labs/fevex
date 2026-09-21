@@ -49,7 +49,7 @@ bare `bun test` can discover generated files left by example builds.
 
 ## PostgreSQL and browser tests
 
-The `Fevex Quality Gate` workflow starts a temporary PostgreSQL 16 service.
+The `Framework validation` workflow starts a temporary PostgreSQL 16 service.
 It sets `FEVEX_POSTGRES_URL` and `FEVEX_REQUIRE_POSTGRES=1`, so the integration
 suite cannot silently skip because its connection URL is missing.
 

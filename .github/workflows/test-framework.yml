@@ -1,4 +1,4 @@
-name: Fevex Quality Gate
+name: Framework validation
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   framework:
-    name: Framework validation · PostgreSQL 16
+    name: Framework validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
