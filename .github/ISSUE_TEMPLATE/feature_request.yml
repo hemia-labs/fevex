@@ -1,0 +1,30 @@
+name: Feature proposal
+description: Describe a concrete use case and the smallest useful improvement.
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe who needs this and what they cannot do with Fevex today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include a small API example or observable acceptance criteria if useful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing alternatives
+      description: Can existing tools, adapters or host application code solve this? Explain their limitations.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Scope and compatibility
+      description: Optional. Consider core versus adapter ownership, dependencies and impact on current users.

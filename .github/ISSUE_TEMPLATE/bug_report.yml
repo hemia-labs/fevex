@@ -1,0 +1,42 @@
+name: Bug report
+description: Report unexpected behavior with a reproducible example.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. For vulnerabilities, follow [SECURITY.md](https://github.com/hemia-labs/fevex/blob/main/SECURITY.md) instead of posting details here.
+  - type: input
+    id: versions
+    attributes:
+      label: Package versions or commit
+      description: List affected @fevex packages and their exact versions, or a commit SHA.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Node/Bun versions and relevant store, model adapter or sandbox. Omit credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Explain what should happen and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide runnable code, steps or a public reproduction repository using synthetic data.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or error codes
+      description: Optional. Remove tokens, connection strings and private prompts or outputs.
+      render: text

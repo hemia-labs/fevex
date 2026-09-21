@@ -862,6 +862,14 @@ bun run build
 Bug reports and focused proposals are welcome in
 [GitHub Issues](https://github.com/hemia-labs/fevex/issues).
 
+## Contributing and community
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and pull requests, and
+follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities through
+[SECURITY.md](SECURITY.md) instead of public issues. Repository rules, releases
+and template activation are documented in the
+[maintainer guide](.github/MAINTAINER_GUIDE.md).
+
 ## License
 
 [Apache License 2.0](LICENSE)
