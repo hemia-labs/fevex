@@ -23,6 +23,9 @@ export interface McpToolProviderOptions {
   protocolVersion?: string;
   clientInfo?: McpClientInfo;
   requestTimeoutMs?: number;
+  maxDiscoveryPages?: number;
+  maxDiscoveryTools?: number;
+  maxDiscoveryBytes?: number;
 }
 
 interface JsonRpcRequest {
@@ -60,6 +63,22 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   const requestedVersion = options.protocolVersion ?? FEVEX_MCP_PROTOCOL_VERSION;
   const clientInfo = options.clientInfo ?? { name: 'fevex', version: '0.1.0-alpha.1' };
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxPages = options.maxDiscoveryPages ?? 100;
+  const maxTools = options.maxDiscoveryTools ?? 1_000;
+  const maxBytes = options.maxDiscoveryBytes ?? 4 * 1024 * 1024;
+  for (const value of [requestTimeoutMs, maxPages, maxTools, maxBytes]) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError('MCP limits must be positive safe integers');
+  }
+  let identity: string | undefined;
+  async function connectionHeaders(context?: ToolProviderContext): Promise<Headers> {
+    const headers = new Headers(await resolveHeaders(options.headers, context));
+    const key = JSON.stringify([...headers.entries()].sort(([a], [b]) => a.localeCompare(b)));
+    if (identity !== undefined && identity !== key) {
+      throw integrationError('MCP_IDENTITY_CHANGED', 'auth', false, 'Use a separate MCP provider for each identity or credential set');
+    }
+    identity = key;
+    return headers;
+  }
   let nextId = 1;
   let state: McpState | undefined;
   let initializing: Promise<McpState> | undefined;
@@ -68,14 +87,22 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     kind: 'mcp',
 
     async listTools(context) {
-      await ensureInitialized(context);
+      const headers = await connectionHeaders(context);
+      const connection = await ensureInitialized(context, headers);
       const tools: ToolProviderTool[] = [];
       let cursor: string | undefined;
+      const cursors = new Set<string>();
+      const budget = { remaining: maxBytes };
+      let pages = 0;
+      let count = 0;
       do {
-        const result = await request('tools/list', cursor ? { cursor } : {}, context);
+        if (++pages > maxPages) throw discoveryLimit();
+        const result = await request('tools/list', cursor ? { cursor } : {}, context, headers, connection, budget);
         if (!isRecord(result) || !Array.isArray(result.tools)) {
           throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tools/list result');
         }
+        count += result.tools.length;
+        if (count > maxTools) throw discoveryLimit();
         for (const tool of result.tools) {
           if (!isRecord(tool) || typeof tool.name !== 'string' || !tool.name.trim()) continue;
           tools.push({
@@ -86,13 +113,18 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
           });
         }
         cursor = typeof result.nextCursor === 'string' ? result.nextCursor : undefined;
+        if (cursor) {
+          if (cursors.has(cursor)) throw integrationError('MCP_CURSOR_REPEATED', 'remote', false, 'MCP discovery repeated a cursor');
+          cursors.add(cursor);
+        }
       } while (cursor);
       return tools;
     },
 
     async callTool(name, input, context) {
-      await ensureInitialized(context);
-      const result = await request('tools/call', { name, arguments: input }, context);
+      const headers = await connectionHeaders(context);
+      const connection = await ensureInitialized(context, headers);
+      const result = await request('tools/call', { name, arguments: input }, context, headers, connection);
       if (!isRecord(result)) {
         throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tools/call result');
       }
@@ -105,7 +137,7 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     },
   };
 
-  async function ensureInitialized(context?: ToolProviderContext): Promise<McpState> {
+  async function ensureInitialized(context: ToolProviderContext | undefined, headers: Headers): Promise<McpState> {
     if (state) return state;
     initializing ??= (async () => {
       const response = await send({
@@ -117,7 +149,7 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
           capabilities: {},
           clientInfo: clientInfo as unknown as JsonObject,
         },
-      }, context, false);
+      }, context, headers);
       const result = response.result;
       if (!isRecord(result) || typeof result.protocolVersion !== 'string') {
         throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid initialize result');
@@ -128,44 +160,53 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
       if (!isRecord(result.capabilities) || !isRecord(result.capabilities.tools)) {
         throw integrationError('MCP_CAPABILITY_UNSUPPORTED', 'validation', false, 'MCP server does not expose tools capability');
       }
-      state = {
+      const initialized: McpState = {
         protocolVersion: result.protocolVersion,
         ...(response.sessionId ? { sessionId: response.sessionId } : {}),
       };
-      await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, context, true);
-      return state;
-    })();
+      await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, context, headers, initialized);
+      state = initialized;
+      return initialized;
+    })().catch((error) => {
+      initializing = undefined;
+      throw error;
+    });
     return initializing;
   }
 
   async function request(
     method: string,
     params: JsonObject,
-    context?: ToolProviderContext,
+    context: ToolProviderContext | undefined,
+    headers: Headers,
+    connection: McpState,
+    budget?: { remaining: number },
   ): Promise<unknown> {
     const response = await send({
       jsonrpc: '2.0',
       id: nextId++,
       method,
       params,
-    }, context, true);
+    }, context, headers, connection, budget);
     return response.result;
   }
 
   async function send(
     message: JsonRpcRequest | JsonRpcNotification,
     context: ToolProviderContext | undefined,
-    initialized: boolean,
+    baseHeaders: Headers,
+    connection?: McpState,
+    budget = { remaining: maxBytes },
   ): Promise<JsonRpcResponse & { sessionId?: string }> {
     const signal = timeoutSignal(context?.signal, requestTimeoutMs);
     try {
-      const headers = new Headers(await resolveHeaders(options.headers, context));
+      const headers = new Headers(baseHeaders);
       headers.set('accept', 'application/json, text/event-stream');
       headers.set('content-type', 'application/json');
-      if (initialized && state?.protocolVersion) {
-        headers.set('mcp-protocol-version', state.protocolVersion);
+      if (connection?.protocolVersion) {
+        headers.set('mcp-protocol-version', connection.protocolVersion);
       }
-      if (state?.sessionId) headers.set('mcp-session-id', state.sessionId);
+      if (connection?.sessionId) headers.set('mcp-session-id', connection.sessionId);
 
       const response = await fetchImpl(endpoint, {
         method: 'POST',
@@ -174,6 +215,7 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
         signal: signal.signal,
       });
       if (!response.ok) {
+        await response.body?.cancel();
         throw integrationError(
           response.status === 401 || response.status === 403 ? 'MCP_AUTH_REQUIRED' : 'MCP_HTTP_ERROR',
           response.status === 401 || response.status === 403 ? 'auth' : 'network',
@@ -182,9 +224,10 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
         );
       }
       if (!('id' in message)) {
+        await response.body?.cancel();
         return { jsonrpc: '2.0', result: undefined };
       }
-      const rpc = await readJsonRpcResponse(response, message.id);
+      const rpc = await readJsonRpcResponse(response, message.id, budget);
       if (rpc.error) {
         throw integrationError('MCP_REMOTE_ERROR', 'remote', false, 'MCP server returned an error');
       }
@@ -215,10 +258,10 @@ async function resolveHeaders(
   return typeof headers === 'function' ? headers(context) : (headers ?? {});
 }
 
-async function readJsonRpcResponse(response: Response, id: number): Promise<JsonRpcResponse> {
+async function readJsonRpcResponse(response: Response, id: number, budget: { remaining: number }): Promise<JsonRpcResponse> {
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('text/event-stream')) {
-    for await (const event of readSse(response)) {
+    for await (const event of readSse(response, budget)) {
       if (!event.data.trim()) continue;
       const parsed = parseJsonRpc(event.data);
       if (parsed.id === id) return parsed;
@@ -228,17 +271,41 @@ async function readJsonRpcResponse(response: Response, id: number): Promise<Json
   if (!contentType.includes('application/json')) {
     throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned unsupported content type');
   }
-  return parseJsonRpc(await response.text());
+  let text = '';
+  for await (const chunk of readText(response, budget)) text += chunk;
+  const rpc = parseJsonRpc(text);
+  if (rpc.id !== id) throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP response ID does not match request');
+  return rpc;
 }
 
-async function* readSse(response: Response): AsyncGenerator<{ data: string }> {
+function discoveryLimit(): IntegrationError {
+  return integrationError('MCP_DISCOVERY_LIMIT', 'validation', false, 'MCP response or discovery limit exceeded');
+}
+
+async function* readText(response: Response, budget: { remaining: number }): AsyncGenerator<string> {
   if (!response.body) return;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) {
+        budget.remaining -= value.byteLength;
+        if (budget.remaining < 0) throw discoveryLimit();
+      }
+      yield decoder.decode(value, { stream: !done });
+      if (done) break;
+    }
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+}
+
+async function* readSse(response: Response, budget: { remaining: number }): AsyncGenerator<{ data: string }> {
   let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
+  for await (const chunk of readText(response, budget)) {
+    buffer += chunk;
     buffer = buffer.replace(/\r\n/g, '\n');
     let index = buffer.indexOf('\n\n');
     while (index !== -1) {
@@ -252,7 +319,6 @@ async function* readSse(response: Response): AsyncGenerator<{ data: string }> {
       yield { data };
       index = buffer.indexOf('\n\n');
     }
-    if (done) break;
   }
 }
 
@@ -270,7 +336,8 @@ function timeoutSignal(parent: AbortSignal | undefined, timeoutMs: number) {
   const controller = new AbortController();
   const onAbort = () => controller.abort(parent?.reason);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  parent?.addEventListener('abort', onAbort, { once: true });
+  if (parent?.aborted) onAbort();
+  else parent?.addEventListener('abort', onAbort, { once: true });
   return {
     signal: controller.signal,
     dispose() {

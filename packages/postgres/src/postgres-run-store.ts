@@ -1,3 +1,4 @@
+import { validateListEventsOptions } from '@fevex/core/runtime';
 import { Pool, type PoolClient } from 'pg';
 import { FevexRunError, type AgentEvent, type RunId } from '@fevex/core';
 import type {
@@ -112,20 +113,22 @@ class PgRunStore implements PostgresRunStore {
   }
 
   async listEvents(runId: RunId, options: ListEventsOptions = {}): Promise<AgentEvent[]> {
-    const result = await this.#pool.query<{ data: AgentEvent }>(
-      'SELECT data FROM fevex.events WHERE run_id = $1 ORDER BY sequence',
-      [runId],
-    );
+    validateListEventsOptions(options);
     if (!(await this.getRun(runId))) throw new Error(`Run "${runId}" does not exist`);
-    let start = 0;
+    let sequence = -1;
     if (options.after !== undefined) {
-      const cursor = result.rows.findIndex(({ data }) => data.id === options.after);
-      if (cursor < 0) {
-        throw new Error(`Event cursor "${options.after}" does not exist in run "${runId}"`);
-      }
-      start = cursor + 1;
+      const cursor = await this.#pool.query<{ sequence: number }>(
+        'SELECT sequence FROM fevex.events WHERE run_id = $1 AND id = $2', [runId, options.after],
+      );
+      if (!cursor.rows[0]) throw new FevexRunError('INVALID_CURSOR', 'Event cursor does not belong to this run', runId);
+      sequence = cursor.rows[0].sequence;
     }
-    return clone(result.rows.slice(start).map(({ data }) => data));
+    const order = options.order === 'desc' ? 'DESC' : 'ASC';
+    const result = await this.#pool.query<{ data: AgentEvent }>(
+      `SELECT data FROM fevex.events WHERE run_id = $1 AND sequence > $2 ORDER BY sequence ${order} LIMIT $3`,
+      [runId, sequence, options.limit ?? null],
+    );
+    return clone(result.rows.map(({ data }) => data));
   }
 
   async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(

@@ -231,14 +231,18 @@ export function createFakePool(): FakePool {
         return rows([{ id }]);
       }
 
-      case 'SELECT data FROM fevex.events WHERE run_id = $1 ORDER BY sequence': {
-        const runId = values[0] as string;
-        return rows(
-          tables.events
-            .filter((event) => event.runId === runId)
-            .sort((a, b) => a.sequence - b.sequence)
-            .map((event) => ({ data: JSON.parse(event.data) })),
-        );
+      case 'SELECT sequence FROM fevex.events WHERE run_id = $1 AND id = $2': {
+        const event = tables.events.find((event) => event.runId === values[0] && event.id === values[1]);
+        return event ? rows([{ sequence: event.sequence }]) : NONE;
+      }
+      case 'SELECT data FROM fevex.events WHERE run_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3':
+      case 'SELECT data FROM fevex.events WHERE run_id = $1 AND sequence > $2 ORDER BY sequence DESC LIMIT $3': {
+        const direction = statement.includes('DESC') ? -1 : 1;
+        return rows(tables.events
+          .filter((event) => event.runId === values[0] && event.sequence > (values[1] as number))
+          .sort((a, b) => direction * (a.sequence - b.sequence))
+          .slice(0, values[2] == null ? undefined : values[2] as number)
+          .map((event) => ({ data: JSON.parse(event.data) })));
       }
 
       case 'SELECT data FROM fevex.checkpoints WHERE run_id = $1': {

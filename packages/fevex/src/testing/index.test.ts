@@ -951,3 +951,20 @@ describe('fakeModel', () => {
     ).rejects.toThrow('ModelGateway must return one tool call');
   });
 });
+
+for (const defect of ['ignores limit', 'ignores order', 'generic cursor error'] as const) {
+  test(`store contract detects a custom adapter that ${defect}`, async () => {
+    const store = new InMemoryRunStore();
+    const list = store.listEvents.bind(store);
+    store.listEvents = async (runId, options = {}) => {
+      if (defect === 'ignores limit') return list(runId, { ...options, limit: undefined });
+      if (defect === 'ignores order') return list(runId, { ...options, order: undefined });
+      try { return await list(runId, options); }
+      catch { throw new Error('Cursor not found'); }
+    };
+    const message = defect === 'ignores limit' ? 'must honor limit and start'
+      : defect === 'ignores order' ? 'must honor limit and find'
+      : 'must reject a cursor from another run with INVALID_CURSOR';
+    await expect(testRunStore(store)).rejects.toThrow(message);
+  });
+}

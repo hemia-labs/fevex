@@ -49,6 +49,8 @@ export interface FevexHttpHandlerContext {
 export interface FevexHttpHandlerOptions {
   fevex: Fevex;
   pollIntervalMs?: number;
+  /** Events per SSE read (default 100, maximum 1000). */
+  eventPageSize?: number;
   onError?: (error: unknown, problem: FevexProblemDetails) => void;
 }
 

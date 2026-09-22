@@ -18,6 +18,7 @@ const JSON_TYPE = 'application/json';
 const PROBLEM_TYPE = 'application/problem+json';
 const SSE_TYPE = 'text/event-stream';
 const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
+  'INVALID_CURSOR',
   'AGENT_NOT_FOUND',
   'WORKFLOW_NOT_FOUND',
   'TEAM_NOT_FOUND',
@@ -41,6 +42,10 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
 /** Exposes a Fevex instance through the versioned HTTP protocol. */
 export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexHttpHandler {
   const pollIntervalMs = options.pollIntervalMs ?? 100;
+  const eventPageSize = options.eventPageSize ?? 100;
+  if (!Number.isSafeInteger(eventPageSize) || eventPageSize < 1 || eventPageSize > 1000) {
+    throw new TypeError('eventPageSize must be an integer between 1 and 1000');
+  }
   if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 1) {
     throw new TypeError('pollIntervalMs must be a positive number');
   }
@@ -105,19 +110,18 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const runId = decodeURIComponent(events[1]!);
         if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
         const after = request.headers.get('last-event-id')?.trim() || undefined;
-        const all = await options.fevex.listEvents(runId);
-        const index = after ? all.findIndex(({ id }) => id === after) : -1;
-        if (after && index < 0) throw badRequest('Last-Event-ID is not valid', 'INVALID_CURSOR');
-        const initial = after ? all.slice(index + 1) : all;
+        const initial = await options.fevex.listEvents(runId, { after, limit: eventPageSize });
+        const disconnected = new AbortController();
         const iterator = observeEvents(
           options.fevex,
           runId,
           initial,
           after,
           pollIntervalMs,
-          request.signal,
+          AbortSignal.any([request.signal, disconnected.signal]),
+          eventPageSize,
         );
-        return versioned(new Response(iteratorStream(iterator), {
+        return versioned(new Response(iteratorStream(iterator, () => disconnected.abort()), {
           headers: {
             'content-type': `${SSE_TYPE}; charset=utf-8`,
             'cache-control': 'no-cache, no-transform',
@@ -262,6 +266,7 @@ async function* observeEvents(
   after: string | undefined,
   pollIntervalMs: number,
   signal: AbortSignal,
+  pageSize: number,
 ): AsyncGenerator<Uint8Array> {
   const encoder = new TextEncoder();
   let pending = initial;
@@ -270,6 +275,7 @@ async function* observeEvents(
 
   while (!signal.aborted) {
     for (const event of pending) {
+      if (signal.aborted) return;
       cursor = event.id;
       yield encoder.encode(formatEvent(event));
     }
@@ -284,13 +290,13 @@ async function* observeEvents(
       closedEmptyReads = 0;
     }
 
-    await wait(pollIntervalMs, signal);
+    if (pending.length < pageSize) await wait(pollIntervalMs, signal);
     if (signal.aborted) return;
-    pending = await fevex.listEvents(runId, cursor ? { after: cursor } : undefined);
+    pending = await fevex.listEvents(runId, { after: cursor, limit: pageSize });
   }
 }
 
-function iteratorStream(iterator: AsyncGenerator<Uint8Array>) {
+function iteratorStream(iterator: AsyncGenerator<Uint8Array>, cancel: () => void) {
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -302,6 +308,7 @@ function iteratorStream(iterator: AsyncGenerator<Uint8Array>) {
       }
     },
     async cancel() {
+      cancel();
       await iterator.return(undefined);
     },
   });
@@ -584,7 +591,7 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
     code === 'TEAM_NOT_FOUND' ||
     code === 'SESSION_NOT_FOUND'
   ) return 404;
-  if (code === 'APPROVAL_INVALID') return 400;
+  if (code === 'APPROVAL_INVALID' || code === 'INVALID_CURSOR') return 400;
   if (code === 'POLICY_DENIED') return 403;
   return 409;
 }
@@ -604,6 +611,7 @@ function wait(ms: number, signal: AbortSignal) {
       signal.removeEventListener('abort', finish);
       resolve();
     }
-    signal.addEventListener('abort', finish, { once: true });
+    if (signal.aborted) finish();
+    else signal.addEventListener('abort', finish, { once: true });
   });
 }

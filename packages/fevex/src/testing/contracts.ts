@@ -40,10 +40,13 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new TypeError(message);
 }
 
-async function assertRejects(operation: () => Promise<unknown>, message: string): Promise<void> {
+async function assertRejects(operation: () => Promise<unknown>, message: string, code?: string): Promise<void> {
   try {
     await operation();
-  } catch {
+  } catch (error) {
+    if (code !== undefined) {
+      assert(error instanceof Error && 'code' in error && error.code === code, message);
+    }
     return;
   }
   throw new TypeError(message);
@@ -553,6 +556,27 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
     })),
     'RunStore must reject stale revisions',
   );
+  const firstPage = await store.listEvents(runId, { limit: 1 });
+  assert(firstPage.length === 1 && firstPage[0]?.id === firstEvent.id,
+    'Event pagination must honor limit and start at the first sequence');
+  assert((await store.listEvents(runId, { after: firstEvent.id, limit: 1 }))[0]?.id === secondEvent.id,
+    'Event pagination must continue after the cursor');
+  assert((await store.listEvents(runId, { after: secondEvent.id, limit: 1 })).length === 0,
+    'Event pagination after the last event must be empty');
+  const latestPage = await store.listEvents(runId, { order: 'desc', limit: 1 });
+  assert(latestPage.length === 1 && latestPage[0]?.id === secondEvent.id,
+    'Descending pagination must honor limit and find the latest event');
+  const descending = await store.listEvents(runId, { order: 'desc', limit: 2 });
+  assert(descending.length === 2 && descending[0]?.id === secondEvent.id && descending[1]?.id === firstEvent.id,
+    'Event pagination must order by sequence');
+  const descendingAfter = await store.listEvents(runId, { after: firstEvent.id, order: 'desc', limit: 2 });
+  assert(descendingAfter.length === 1 && descendingAfter[0]?.id === secondEvent.id,
+    'Event cursors must select strictly newer sequences even in descending order');
+  await assertRejects(() => store.listEvents(runId, { after: atomicStarted.id, limit: 1 }),
+    'Event pagination must reject a cursor from another run with INVALID_CURSOR', 'INVALID_CURSOR');
+  for (const limit of [0, -1, NaN, Infinity, 1.5]) {
+    await assertRejects(() => store.listEvents(runId, { limit }), 'Event pagination must validate limits');
+  }
   const events = await store.listEvents(runId, { after: firstEvent.id });
   assert(
     events.length === 1 && events[0]?.id === secondEvent.id,
@@ -564,7 +588,7 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   );
   await assertRejects(
     () => store.listEvents(runId, { after: `missing-cursor-${suffix}` }),
-    'RunStore listEvents must reject unknown cursors',
+    'RunStore listEvents must reject unknown cursors with INVALID_CURSOR', 'INVALID_CURSOR',
   );
 
   assert(

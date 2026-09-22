@@ -63,3 +63,12 @@ lock; release expires the token without removing its generation.
 
 Stop old workers before upgrading. Legacy leases start at generation zero;
 they cannot commit or renew and must expire before a new worker recovers the run.
+
+### Event pagination
+
+Use `listEvents(runId, { after: eventId, limit: 100 })` to read incremental pages.
+The store resolves the cursor's sequence and uses the existing `(run_id, sequence)`
+index to filter and limit rows in SQL before decoding event payloads. An unknown
+cursor or one from another run raises `INVALID_CURSOR`. To read only the latest
+event, pass `{ order: 'desc', limit: 1 }`. Without a limit, existing full-log reads
+remain supported. No schema migration is needed for pagination.

@@ -928,3 +928,36 @@ human evaluation workflows.
 ## License
 
 Apache-2.0
+
+### Connection discovery isolation
+
+Connection tool metadata is discovered for each resolution using that caller's
+context. The core does not cache catalogs or rejected discovery promises across
+calls. A failed discovery can therefore recover on the next attempt without
+recreating the runtime. Providers must scope their own state to an identity;
+`@fevex/mcp` binds each instance to its first resolved header set and rejects
+changes. Use a separate MCP provider/connection per identity and recreate it when
+credentials rotate. This adds discovery requests in exchange for avoiding stale
+or cross-identity catalogs. Tool calls are not automatically replayed by MCP.
+
+### Paged event reads and SSE
+
+`listEvents(runId, { after, limit, order })` returns events whose sequence is
+strictly greater than the cursor's sequence. `order` is `asc` by default;
+`{ order: 'desc', limit: 1 }` retrieves the latest event. `limit` must be a positive
+safe integer. Omitting it preserves the existing complete-result behavior.
+Unknown cursors and cursors belonging to another run reject with
+`FevexRunError` code `INVALID_CURSOR` (HTTP 400).
+
+SQLite and PostgreSQL resolve the cursor by ID and filter, order and limit in
+SQL using the existing `(run_id, sequence)` index. Prior event payloads are not
+loaded to find the cursor. Custom run stores must implement these options and
+the cursor error contract before being used with the updated HTTP handler.
+
+The HTTP handler accepts `eventPageSize` (default 100, range 1–1000). It uses this
+limit for the initial SSE read and every subsequent read. Full pages drain
+without the polling delay; short pages wait for `pollIntervalMs`. Stream demand
+controls progress, so a slow consumer retains at most one page plus the stream's
+single queued frame, rather than buffering the run's entire history. Disconnecting
+cancels polling. This bounds event counts, not the byte size of an individual event;
+per-event payload limits and data retention remain host responsibilities.
