@@ -2,6 +2,7 @@ import type { RunId } from './core';
 import type { RunPause } from './runtime';
 
 export type FevexRunErrorCode =
+  | 'INVALID_CURSOR'
   | 'AGENT_NOT_FOUND'
   | 'WORKFLOW_NOT_FOUND'
   | 'TEAM_NOT_FOUND'

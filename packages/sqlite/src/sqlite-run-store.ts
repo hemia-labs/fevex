@@ -1,3 +1,4 @@
+import { validateListEventsOptions } from '@fevex/core/runtime';
 import { FevexRunError, type AgentEvent, type RunId } from '@fevex/core';
 import type {
   AgentRun,
@@ -91,16 +92,20 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
   }
 
   async listEvents(runId: RunId, options: ListEventsOptions = {}): Promise<AgentEvent[]> {
+    validateListEventsOptions(options);
     if (!(await this.getRun(runId))) throw new Error(`Run "${runId}" does not exist`);
-    const events = (this.#database.prepare(
-      'SELECT data FROM events WHERE run_id = ? ORDER BY sequence',
-    ).all(runId) as Array<{ data: string }>).map(({ data }) => parse<AgentEvent>(data));
-    if (options.after === undefined) return events;
-    const cursor = events.findIndex(({ id }) => id === options.after);
-    if (cursor < 0) {
-      throw new Error(`Event cursor "${options.after}" does not exist in run "${runId}"`);
+    let sequence = -1;
+    if (options.after !== undefined) {
+      const cursor = this.#database.prepare('SELECT sequence FROM events WHERE run_id = ? AND id = ?')
+        .get(runId, options.after) as { sequence: number } | undefined;
+      if (!cursor) throw new FevexRunError('INVALID_CURSOR', 'Event cursor does not belong to this run', runId);
+      sequence = cursor.sequence;
     }
-    return events.slice(cursor + 1);
+    const order = options.order === 'desc' ? 'DESC' : 'ASC';
+    const rows = this.#database.prepare(
+      `SELECT data FROM events WHERE run_id = ? AND sequence > ? ORDER BY sequence ${order} LIMIT ?`,
+    ).all(runId, sequence, options.limit ?? -1) as Array<{ data: string }>;
+    return rows.map(({ data }) => parse<AgentEvent>(data));
   }
 
   async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(

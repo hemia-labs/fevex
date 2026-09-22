@@ -101,3 +101,50 @@ versions or publish as part of an unrelated PR. Contributions use the repository
 
 Maintainers can find branch rules, release recommendations and template activation
 instructions in the [maintainer guide](.github/MAINTAINER_GUIDE.md).
+
+## Custom run store pagination
+
+Before using a custom store with the HTTP handler, update its `listEvents` method
+and run the public `testRunStore` contract. The built-in memory, SQLite and
+PostgreSQL stores implement this contract; adapters maintained outside this
+repository must be updated by their owners.
+
+- Accept `ListEventsOptions` with `after`, `limit` and `order`.
+- Validate options with `validateListEventsOptions` from `@fevex/core/runtime`.
+- Resolve `after` within the requested run; reject unknown or foreign cursors
+  with `new FevexRunError('INVALID_CURSOR', 'Invalid event cursor', runId)`.
+- Select sequences strictly greater than the cursor, then sort ascending by
+  default or descending for `order: 'desc'`, and apply the limit.
+- Return at most `limit` events, or the full matching result when it is omitted.
+  A cursor at the latest event returns an empty page in either order.
+- Filter and limit in the backing database before decoding payloads. Slicing a
+  complete log after loading it does not provide bounded storage reads.
+
+Add this test to the adapter's source suite using an isolated test store:
+
+```ts
+import { expect, test } from 'bun:test';
+import { testRunStore } from '@fevex/core/testing';
+import { createCustomStore } from './custom-store';
+
+test('implements the durable run store contract', async () => {
+  const store = await createCustomStore();
+  try {
+    await expect(testRunStore(store)).resolves.toBeUndefined();
+  } finally {
+    await store.close();
+  }
+});
+```
+
+Adapt construction and cleanup to the adapter. `testRunStore` creates synthetic
+sessions, runs and events and checks durability as well as pagination; it needs
+a disposable database. It verifies exact page size, order, cursor continuation,
+invalid limits and `INVALID_CURSOR`. Add backend-specific checks that queries
+use indexes and limits; the shared contract verifies behavior, not query cost.
+
+`Framework validation` runs source tests for every package, including MCP
+recovery/isolation, HTTP pagination and this store contract against PostgreSQL 16.
+CI only validates committed code on GitHub: open a PR targeting `main` (or use
+`workflow_dispatch` on a published branch) and check the run's commit SHA. A green
+run on an earlier commit does not validate local H4/H5 changes.

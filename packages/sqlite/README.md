@@ -37,3 +37,12 @@ Migration v3 adds the lease generation counter. Commits and renewals check the
 owner, generation and expiry inside `BEGIN IMMEDIATE`; the expiry check happens
 after obtaining the write lock. Release preserves the counter for the next
 acquisition. Legacy generation-zero leases must expire before recovery.
+
+### Event pagination
+
+Use `listEvents(runId, { after: eventId, limit: 100 })` to read incremental pages.
+The store resolves the cursor's sequence and uses the existing `(run_id, sequence)`
+index to filter and limit rows in SQL before decoding event payloads. An unknown
+cursor or one from another run raises `INVALID_CURSOR`. To read only the latest
+event, pass `{ order: 'desc', limit: 1 }`. Without a limit, existing full-log reads
+remain supported. No schema migration is needed for pagination.

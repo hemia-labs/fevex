@@ -185,6 +185,19 @@ export interface Session {
 
 export interface ListEventsOptions {
   after?: AgentEvent['id'];
+  /** Maximum results; omitted preserves the complete result for existing consumers. */
+  limit?: number;
+  /** Sequence order. Use descending with limit: 1 for the latest event. */
+  order?: 'asc' | 'desc';
+}
+
+export function validateListEventsOptions(options: ListEventsOptions): void {
+  if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
+    throw new TypeError('Event limit must be a positive safe integer');
+  }
+  if (options.order !== undefined && options.order !== 'asc' && options.order !== 'desc') {
+    throw new TypeError('Event order must be asc or desc');
+  }
 }
 
 export interface RunStore {

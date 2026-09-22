@@ -512,3 +512,51 @@ function waitForAbort(signal: AbortSignal) {
     signal.addEventListener('abort', () => reject(signal.reason), { once: true });
   });
 }
+
+test('SSE reads bounded pages, reconnects across pages, and respects slow readers', async () => {
+  const app = createFevex({
+    models: { default: fakeModel({ output: 'done' }) },
+    agents: [defineAgent({ name: 'assistant', instructions: 'Answer.' })],
+  });
+  const result = await app.runAgent('assistant', { input: 'hello' });
+  const runId = result.runId;
+  const expected = await app.listEvents(runId);
+  expect(expected.length).toBeGreaterThan(2);
+  const reads: Array<{ after?: string; limit?: number }> = [];
+  const handler = createFevexHttpHandler({
+    fevex: { ...app, async listEvents(id, options) {
+      reads.push({ ...options });
+      return app.listEvents(id, options);
+    } },
+    eventPageSize: 2, pollIntervalMs: 1,
+  });
+  const response = await handler(new Request(`http://local/v1/runs/${runId}/events`));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(reads).toEqual([{ after: undefined, limit: 2 }]);
+  await response.body!.cancel();
+  const client = createFevexHttpClient({ baseUrl: 'http://local', fetch: (input, init) => handler(new Request(input, init)) });
+  expect(await collect(client.observeRun(runId))).toEqual(expected);
+  expect(await collect(client.observeRun(runId, { after: expected[1]!.id }))).toEqual(expected.slice(2));
+  expect(await collect(client.observeRun(runId, { after: expected.at(-1)!.id }))).toEqual([]);
+  expect(reads.every(({ limit }) => limit === 2)).toBe(true);
+});
+
+test('cancelling an idle SSE response interrupts polling', async () => {
+  const app = createFevex({ models: {}, agents: [] });
+  let reads = 0;
+  const handler = createFevexHttpHandler({ fevex: { ...app,
+    async getRun<TOutput>() { return { id: 'idle', status: 'running' } as AgentRun<TOutput>; },
+    async listEvents() { reads++; return []; },
+  }, pollIntervalMs: 60_000 });
+  const response = await handler(new Request('http://local/v1/runs/idle/events'));
+  // Let ReadableStream start its first pull and enter the poll wait.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      response.body!.cancel(),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('cancel did not interrupt polling')), 250); }),
+    ]);
+    expect(reads).toBe(1);
+  } finally { clearTimeout(timeout); }
+});

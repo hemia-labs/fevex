@@ -1,3 +1,4 @@
+import { validateListEventsOptions } from './run-store';
 import type { AgentEvent, RunId } from '../core';
 import { FevexRunError } from '../run-error';
 import type {
@@ -62,6 +63,7 @@ export class InMemoryRunStore implements DurableRunStore {
   }
 
   async listEvents(runId: RunId, options: ListEventsOptions = {}): Promise<AgentEvent[]> {
+    validateListEventsOptions(options);
     const events = this.#events.get(runId);
     if (!events) throw new Error(`Run "${runId}" does not exist`);
 
@@ -69,12 +71,15 @@ export class InMemoryRunStore implements DurableRunStore {
     if (options.after !== undefined) {
       const cursor = events.findIndex(({ id }) => id === options.after);
       if (cursor < 0) {
-        throw new Error(`Event cursor "${options.after}" does not exist in run "${runId}"`);
+        throw new FevexRunError('INVALID_CURSOR', `Event cursor "${options.after}" does not exist in run "${runId}"`, runId);
       }
       start = cursor + 1;
     }
 
-    return structuredClone(events.slice(start).sort((a, b) => a.sequence - b.sequence));
+    const sequence = start ? events[start - 1]!.sequence : -1;
+    const ordered = events.filter((event) => event.sequence > sequence)
+      .sort((a, b) => options.order === 'desc' ? b.sequence - a.sequence : a.sequence - b.sequence);
+    return structuredClone(ordered.slice(0, options.limit));
   }
 
   async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(

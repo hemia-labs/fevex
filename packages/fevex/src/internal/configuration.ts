@@ -22,7 +22,6 @@ import {
   type ConnectionDefinition,
   type ConnectionToolPolicy,
   type ToolProviderContext,
-  type ToolProviderTool,
   type ToolDefinition,
 } from '../tools';
 import type { WorkflowDefinition } from '../workflows';
@@ -225,14 +224,10 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
   );
 
   const seen = new Set<string>();
-  let remoteTools: Promise<Map<string, ToolProviderTool>> | undefined;
+  // Discovery depends on the caller's identity; never cache it across contexts.
   const listRemoteTools = async (context?: ToolProviderContext) => {
-    remoteTools ??= connection.provider.listTools(context).then((tools) => {
-      const map = new Map<string, ToolProviderTool>();
-      for (const tool of tools) map.set(tool.name, tool);
-      return map;
-    });
-    return remoteTools;
+    const tools = await connection.provider.listTools(context);
+    return new Map(tools.map((tool) => [tool.name, tool]));
   };
 
   return allowlist.map((remoteName) => {

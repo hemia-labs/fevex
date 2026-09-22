@@ -385,3 +385,16 @@ integration('PostgresRunStore', () => {
     }
   });
 });
+
+test('event pages filter and limit in PostgreSQL instead of loading the log', async () => {
+  const pool = createFakePool();
+  const store = createPostgresRunStore({ pool });
+  await store.saveRun(buildRun('pages'));
+  await store.appendEvent(buildEvent('pages', 1));
+  await store.appendEvent(buildEvent('pages', 2));
+  const before = pool.statements.length;
+  expect(await store.listEvents('pages', { after: buildEvent('pages', 2).id, limit: 1 })).toEqual([]);
+  expect(pool.statements.slice(before)).toContain('SELECT sequence FROM fevex.events WHERE run_id = $1 AND id = $2');
+  expect(pool.statements.slice(before)).toContain('SELECT data FROM fevex.events WHERE run_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3');
+  await store.close();
+});
