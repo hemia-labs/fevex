@@ -351,6 +351,7 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
     pendingIndex: 0,
   };
   const atomicLease = {
+    generation: 0,
     runId: atomicRunId,
     ownerId: `atomic-owner-${suffix}`,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
@@ -390,13 +391,50 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   assert(
     !(await store.createExecution({
       run: { ...atomicRun, revision: 0 },
+      session: (await store.getSession(atomicRun.sessionId))!,
       checkpoint: atomicCheckpoint,
       lease: atomicLease,
       events: [atomicStarted],
     })),
     'RunStore createExecution must reject duplicate run ids',
   );
-  await store.releaseLease(atomicRunId, atomicLease.ownerId);
+  const ownedSession = (await store.getSession(atomicRun.sessionId))!;
+  const competitorId = `competitor-${suffix}`;
+  const competitor = () => ({
+    run: { ...atomicRun, id: competitorId, revision: 0, status: 'running' as const },
+    session: structuredClone(ownedSession),
+    checkpoint: { ...atomicCheckpoint, runId: competitorId },
+    lease: { ...atomicLease, runId: competitorId },
+    events: [],
+  });
+  assert(!(await store.createExecution(competitor())), 'Active sessions must reject another run');
+  await assertRejects(() => store.saveSession(structuredClone(ownedSession)),
+    'Compaction must reject an active session');
+  assert(await store.commitExecution({
+    lease: atomicLease, expectedRevision: atomicRun.revision, run: Object.assign(atomicRun, { status: 'paused' as const }),
+  }), 'Owner must be able to pause');
+  await store.releaseLease(atomicRunId, atomicLease.ownerId, atomicLease.generation);
+  assert(!(await store.createExecution(competitor())), 'Paused sessions remain reserved without a worker lease');
+  await assertRejects(() => store.saveSession(structuredClone(ownedSession)),
+    'Compaction must reject a paused session');
+  assert(await store.acquireLease(atomicLease), 'Resume must acquire a new lease generation');
+  assert(await store.commitExecution({
+    lease: atomicLease, expectedRevision: atomicRun.revision, run: Object.assign(atomicRun, { status: 'completed' as const }),
+    session: ownedSession,
+  }), 'Terminal commit must release the session');
+  const staleSession = structuredClone(ownedSession);
+  await store.saveSession(ownedSession);
+  await assertRejects(() => store.saveSession(staleSession), 'Stale compaction must not overwrite history');
+  assert(!(await store.createExecution({ ...competitor(), session: staleSession })),
+    'Run creation must reject history read before compaction');
+  const next = competitor();
+  assert(await store.createExecution(next), 'Terminal sessions can be reserved again');
+  assert(!(await store.commitExecution({
+    lease: next.lease, expectedRevision: next.run.revision, run: next.run, session: staleSession,
+  })), 'A stale history commit must fail atomically');
+  assert((await store.getRun(next.run.id))?.revision === next.run.revision,
+    'Rejected history commits must not advance the run');
+
 
   const session: Session = {
     id: sessionId,
@@ -415,6 +453,8 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   };
   await store.saveSession(session);
   await store.saveRun(run);
+  const commitLease = { generation: 0, runId, ownerId: `writer-${suffix}`, expiresAt: new Date(Date.now() + 30_000).toISOString() };
+  assert(await store.acquireLease(commitLease), 'Writer must acquire a lease');
 
   const snapshot = await store.getRun(runId);
   assert(snapshot?.status === 'running', 'RunStore must return saved runs');
@@ -480,7 +520,7 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   };
   assert(
     await store.commitExecution({
-      expectedRevision: 0,
+      lease: commitLease, expectedRevision: 0,
       run,
       session,
       checkpoint,
@@ -498,7 +538,7 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   );
   assert(
     !(await store.commitExecution({
-      expectedRevision: 0,
+      lease: commitLease, expectedRevision: 0,
       run: { ...run, status: 'failed' },
       events: [
         {
@@ -528,7 +568,7 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   );
 
   assert(
-    await store.commitExecution({ expectedRevision: 1, run, checkpoint: null }),
+    await store.commitExecution({ lease: commitLease, expectedRevision: 1, run, checkpoint: null }),
     'RunStore must commit a checkpoint deletion',
   );
   assert(
@@ -540,12 +580,15 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
     'RunStore must keep the tool ledger when a checkpoint is deleted',
   );
 
+  await store.releaseLease(runId, commitLease.ownerId, commitLease.generation);
   const lease1 = {
+    generation: 0,
     runId,
     ownerId: `owner-1-${suffix}`,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
   };
   const lease2 = {
+    generation: 0,
     runId,
     ownerId: `owner-2-${suffix}`,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
@@ -554,9 +597,9 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   assert(!(await store.acquireLease(lease2)), 'RunStore must reject a competing lease');
   assert(!(await store.renewLease(lease2)), 'RunStore must reject renewal by another owner');
   assert(await store.renewLease(lease1), 'RunStore must renew a matching lease');
-  await store.releaseLease(runId, lease1.ownerId);
+  await store.releaseLease(runId, lease1.ownerId, lease1.generation);
   assert(await store.acquireLease(lease2), 'RunStore must release a lease for another owner');
-  await store.releaseLease(runId, lease2.ownerId);
+  await store.releaseLease(runId, lease2.ownerId, lease2.generation);
 
   assert(
     !(await store.renewLease(lease1)),
@@ -564,19 +607,69 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   );
 
   const expiredLease = {
+    generation: 0,
     runId,
     ownerId: `owner-3-${suffix}`,
     expiresAt: new Date(Date.now() - 1_000).toISOString(),
   };
   const takeoverLease = {
+    generation: 0,
     runId,
     ownerId: `owner-4-${suffix}`,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
   };
   assert(await store.acquireLease(expiredLease), 'RunStore must acquire a free lease');
+  const beforeTakeover = (await store.getRun(runId))!;
+  assert(!(await store.commitExecution({
+    lease: expiredLease, expectedRevision: beforeTakeover.revision,
+    run: { ...beforeTakeover, status: 'failed' },
+  })), 'An expired lease must not commit even before takeover');
+  assert(!(await store.renewLease({ ...expiredLease, expiresAt: takeoverLease.expiresAt })),
+    'An expired lease cannot be revived by renewal');
+
   assert(
     await store.acquireLease(takeoverLease),
     'RunStore must let another owner take over an expired lease',
   );
-  await store.releaseLease(runId, takeoverLease.ownerId);
+  await store.releaseLease(runId, takeoverLease.ownerId, takeoverLease.generation);
+  const oldToken = { ...takeoverLease };
+  assert(await store.acquireLease(takeoverLease), 'A released owner can acquire a new generation');
+  assert(takeoverLease.generation > oldToken.generation, 'Generation must increase even for the same owner');
+  const currentRun = (await store.getRun(runId))!;
+  const currentSession = (await store.getSession(sessionId))!;
+  const currentEvents = await store.listEvents(runId);
+  const currentTool = await store.getToolExecution(runId, 'tool-call');
+  assert(currentRun.revision === beforeTakeover.revision, 'Takeover must be tested before revision changes');
+  const staleCommit = {
+    lease: oldToken, expectedRevision: currentRun.revision,
+    run: { ...currentRun, status: 'failed' as const },
+    session: { ...currentSession, history: [] },
+    checkpoint,
+    toolExecution: { ...toolExecution, output: 'stale' },
+    events: [{ ...firstEvent, id: `stale-owner-${suffix}`, sequence: 3 }],
+  };
+  assert(!(await store.commitExecution(staleCommit)),
+    'A previous generation must not commit with a still-current run revision');
+  assert(!(await store.commitExecution({ ...staleCommit, lease: {
+    ...takeoverLease, ownerId: 'wrong-owner',
+  } })), 'Generation alone must not authorize a commit');
+  assert(!(await store.renewLease({ ...oldToken, expiresAt: takeoverLease.expiresAt })),
+    'A stale generation must not renew a new lease owned by the same owner');
+  await store.releaseLease(runId, oldToken.ownerId, oldToken.generation);
+  assert(await store.renewLease(takeoverLease), 'A stale release must not revoke the new generation');
+  assert(JSON.stringify(await store.getRun(runId)) === JSON.stringify(currentRun),
+    'Rejected lease commits must not change the run');
+  assert(JSON.stringify(await store.getSession(sessionId)) === JSON.stringify(currentSession),
+    'Rejected lease commits must not change history');
+  assert(JSON.stringify(await store.listEvents(runId)) === JSON.stringify(currentEvents),
+    'Rejected lease commits must not append events');
+  assert(JSON.stringify(await store.getToolExecution(runId, 'tool-call')) === JSON.stringify(currentTool),
+    'Rejected lease commits must not change the tool ledger');
+  assert(await store.getCheckpoint(runId) === undefined, 'Rejected lease commits must not create checkpoints');
+  assert(await store.commitExecution({
+    lease: takeoverLease, expectedRevision: currentRun.revision,
+    run: { ...currentRun, status: 'completed' },
+  }), 'The current generation must be able to commit');
+  await store.releaseLease(runId, takeoverLease.ownerId, takeoverLease.generation);
+
 }

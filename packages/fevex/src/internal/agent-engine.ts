@@ -184,21 +184,21 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           effectiveToolChoice: effectiveToolChoice(agent, request),
         };
         const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+        const lease = {
+          generation: 0, runId: run.id, ownerId,
+          expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+        };
         const started = createEvent(state, 'run.started', undefined) as AgentEvent;
         const created = await runStore.createExecution({
           run,
           checkpoint,
-          ...(newSession ? { session } : {}),
-          lease: {
-            runId: run.id,
-            ownerId,
-            expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-          },
+          session,
+          lease,
           events: [started],
         });
-        if (!created) throw new FevexRunError('RUN_CONFLICT', `Run "${run.id}" exists`, run.id);
+        if (!created) throw new FevexRunError('RUN_CONFLICT', `Run or session "${session.id}" is active or was modified`, run.id);
         state.checkpoint = checkpoint;
-        state.leaseOwner = ownerId;
+        state.lease = lease;
         state.initialEvents = [started];
         notifyObserver(started);
         startLease(state, runStore);
@@ -1344,11 +1344,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" is active`, runId);
     }
     const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
-    const acquired = await runStore.acquireLease({
+    const lease = {
+      generation: 0,
       runId,
       ownerId,
       expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-    });
+    };
+    const acquired = await runStore.acquireLease(lease);
     if (!acquired) throw new FevexRunError('RUN_CONFLICT', `Run "${runId}" is leased`, runId);
 
     try {
@@ -1369,7 +1371,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
         advancing: false,
         checkpoint,
-        leaseOwner: ownerId,
+        lease,
         ...(resolution?.type === 'approval'
           ? {
               approvedToolCallId:
@@ -1405,7 +1407,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         return structuredClone(run) as AgentRun<TOutput>;
       }
       if (!resolution.actor?.id?.trim()) {
-        await runStore.releaseLease(runId, ownerId);
+        await runStore.releaseLease(runId, ownerId, lease.generation);
         throw new FevexRunError(
           resolution.type === 'elicitation' ? 'ELICITATION_INVALID' : 'APPROVAL_INVALID',
           'Resolution actor is required',
@@ -1416,7 +1418,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       if (resolution.type === 'elicitation') {
         const pause = run.pause;
         if (pause?.type !== 'elicitation' || pause.request.id !== resolution.requestId) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError(
             'ELICITATION_INVALID',
             'Elicitation does not match the run',
@@ -1424,7 +1426,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           );
         }
         if (pause.request.expiresAt && Date.now() > Date.parse(pause.request.expiresAt)) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError('ELICITATION_INVALID', 'Elicitation has expired', runId);
         }
         let value: JsonValue;
@@ -1433,7 +1435,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             resolution.value,
           );
         } catch (error) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError(
             'ELICITATION_INVALID',
             `Elicitation value does not match responseSchema: ${toErrorMessage(error)}`,
@@ -1469,13 +1471,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
       if (resolution.type === 'approval') {
         if (run.pause?.type !== 'approval' || run.pause.approval.id !== resolution.approvalId) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError('APPROVAL_INVALID', 'Approval does not match the run', runId);
         }
         const pending = checkpoint.pendingTools[checkpoint.pendingIndex];
         const tool = pending && tools.get(pending.call.name);
         if (!pending || !tool) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError('APPROVAL_INVALID', 'Approval tool is unavailable', runId);
         }
         if (resolution.decision === 'approve') {
@@ -1518,7 +1520,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           pending?.call.id === resolution.toolCallId &&
           (record?.status === 'started' || record?.status === 'completed');
         if (!matchesUnknownPause && !matchesInterruptedAttempt) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError(
             'RUN_NOT_RESUMABLE',
             'Tool execution resolution does not match a pending attempt',
@@ -1531,7 +1533,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         const pending = checkpoint.pendingTools[checkpoint.pendingIndex]!;
         const tool = tools.get(pending.call.name);
         if (!tool) {
-          await runStore.releaseLease(runId, ownerId);
+          await runStore.releaseLease(runId, ownerId, lease.generation);
           throw new FevexRunError('RUN_DEFINITION_CHANGED', 'Pending tool is unavailable', runId);
         }
         const validated =
@@ -1587,7 +1589,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       }
       return structuredClone(run) as AgentRun<TOutput>;
     } catch (error) {
-      await runStore.releaseLease(runId, ownerId).catch(() => {});
+      await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
       throw error;
     }
   };
@@ -1620,11 +1622,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       return true;
     }
     const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
-    const acquired = await runStore.acquireLease({
+    const lease = {
+      generation: 0,
       runId,
       ownerId,
       expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-    });
+    };
+    const acquired = await runStore.acquireLease(lease);
     if (!acquired) return false;
     try {
       const session = await runStore.getSession(run.sessionId);
@@ -1637,7 +1641,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         controller,
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
         advancing: false,
-        leaseOwner: ownerId,
+        lease,
       };
       run.status = 'cancelled';
       run.pause = undefined;
@@ -1649,7 +1653,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       if (error instanceof FevexRunError && error.code === 'RUN_CONFLICT') return false;
       throw error;
     } finally {
-      await runStore.releaseLease(runId, ownerId).catch(() => {});
+      await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
     }
   };
 

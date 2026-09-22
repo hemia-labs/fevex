@@ -53,7 +53,7 @@ The `Framework validation` workflow starts a temporary PostgreSQL 16 service.
 It sets `FEVEX_POSTGRES_URL` and `FEVEX_REQUIRE_POSTGRES=1`, so the integration
 suite cannot silently skip because its connection URL is missing.
 
-Locally, three PostgreSQL integration tests skip when `FEVEX_POSTGRES_URL` is
+Locally, PostgreSQL integration tests skip when `FEVEX_POSTGRES_URL` is
 absent. You do not need Docker to contribute: GitHub Actions runs that service.
 To reproduce the integration locally, point the variable at a dedicated test
 database and run the PostgreSQL package tests. Tests create the `fevex` schema

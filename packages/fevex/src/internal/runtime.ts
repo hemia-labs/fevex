@@ -248,11 +248,13 @@ export function createRuntime(composition: FevexComposition): Fevex {
         const checkpoint = await runStore.getCheckpoint<CoordinatorCheckpoint>(runId);
         if (!checkpoint) return false;
         const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
-        const acquired = await runStore.acquireLease({
+        const lease = {
+          generation: 0,
           runId,
           ownerId,
           expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-        });
+        };
+        const acquired = await runStore.acquireLease(lease);
         if (!acquired) return false;
         try {
           const childRunIds = Object.values(checkpoint.steps)
@@ -281,7 +283,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
             eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
             checkpoint,
             advancing: false,
-            leaseOwner: ownerId,
+            lease,
             commitQueue: Promise.resolve(),
           };
           run.status = 'cancelled';
@@ -305,7 +307,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
             return false;
           throw error;
         } finally {
-          await runStore.releaseLease(runId, ownerId).catch(() => {});
+          await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
         }
       }
       return cancelStoredAgent(runId);

@@ -1,4 +1,4 @@
-import type { AgentEvent, RunId } from '@fevex/core';
+import { FevexRunError, type AgentEvent, type RunId } from '@fevex/core';
 import type {
   AgentRun,
   DurableRunStore,
@@ -70,14 +70,18 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
   }
 
   async getSession(sessionId: SessionId): Promise<Session | undefined> {
-    const row = this.#database.prepare(
-      'SELECT data FROM sessions WHERE id = ?',
-    ).get(sessionId) as { data: string } | undefined;
-    return row ? parse(row.data) : undefined;
+    return this.#readSession(sessionId);
   }
 
   async saveSession(session: Session): Promise<void> {
-    this.#saveSession(session);
+    immediateTransaction(this.#database, () => {
+      const current = this.#readSession(session.id);
+      if (this.#sessionBusy(session.id) || (current?.revision ?? 0) !== (session.revision ?? 0)) {
+        throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" is active or was modified`);
+      }
+      this.#saveSession({ ...session, revision: (session.revision ?? 0) + 1 });
+    });
+    session.revision = (session.revision ?? 0) + 1;
   }
 
   async appendEvent(event: AgentEvent): Promise<void> {
@@ -124,7 +128,11 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
         'SELECT 1 FROM runs WHERE id = ?',
       ).get(create.run.id);
       if (existing) return false;
-      if (create.session) this.#saveSession(create.session);
+      const session = create.session;
+      if (!session || session.id !== create.run.sessionId
+        || this.#sessionBusy(session.id)
+        || (this.#readSession(session.id)?.revision ?? 0) !== (session.revision ?? 0)) return false;
+      this.#saveSession({ ...session, revision: (session.revision ?? 0) + 1 });
       const run = { ...create.run, revision: 1 };
       this.#database.prepare(
         'INSERT INTO runs (id, session_id, revision, data) VALUES (?, ?, ?, ?)',
@@ -139,11 +147,15 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
         insertEvent.run(event.id, event.runId, event.sequence, json(event));
       }
       this.#database.prepare(
-        'INSERT INTO leases (run_id, owner_id, expires_at) VALUES (?, ?, ?)',
+        'INSERT INTO leases (run_id, owner_id, expires_at, generation) VALUES (?, ?, ?, 1)',
       ).run(create.lease.runId, create.lease.ownerId, create.lease.expiresAt);
       return true;
     });
-    if (created) create.run.revision = 1;
+    if (created) {
+      create.run.revision = 1;
+      create.lease.generation = 1;
+      create.session.revision = (create.session.revision ?? 0) + 1;
+    }
     return created;
   }
 
@@ -154,13 +166,25 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
         'SELECT revision FROM runs WHERE id = ?',
       ).get(commit.run.id) as { revision: number } | undefined;
       if (!current || current.revision !== commit.expectedRevision) return false;
+      if (!commit.lease || !(commit.lease.generation > 0)) return false;
+      const lease = this.#database.prepare(
+        'SELECT owner_id, generation, expires_at FROM leases WHERE run_id = ?',
+      ).get(commit.run.id) as { owner_id: string; generation: number; expires_at: string } | undefined;
+      if (!lease || lease.owner_id !== commit.lease.ownerId
+        || lease.generation !== commit.lease.generation || !(Date.parse(lease.expires_at) > Date.now())) return false;
 
+
+      if (commit.session && (commit.session.id !== commit.run.sessionId
+        || this.#sessionBusy(commit.session.id, commit.run.id)
+        || (this.#readSession(commit.session.id)?.revision ?? 0) !== (commit.session.revision ?? 0))) return false;
       revision = commit.expectedRevision + 1;
       const run = { ...commit.run, revision };
       this.#database.prepare(
         'UPDATE runs SET session_id = ?, revision = ?, data = ? WHERE id = ?',
       ).run(run.sessionId, revision, json(run), run.id);
-      if (commit.session) this.#saveSession(commit.session);
+      if (commit.session) this.#saveSession({
+        ...commit.session, revision: (commit.session.revision ?? 0) + 1,
+      });
       if (commit.checkpoint === null) {
         this.#database.prepare('DELETE FROM checkpoints WHERE run_id = ?').run(run.id);
       } else if (commit.checkpoint) {
@@ -189,34 +213,54 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
       return true;
     });
 
-    if (committed) commit.run.revision = revision!;
+    if (committed) {
+      commit.run.revision = revision!;
+      if (commit.session) commit.session.revision = (commit.session.revision ?? 0) + 1;
+    }
     return committed;
   }
 
   async acquireLease(lease: RunLease): Promise<boolean> {
-    const row = this.#database.prepare(
-      `INSERT INTO leases (run_id, owner_id, expires_at)
-       VALUES (?, ?, ?)
+    const row = immediateTransaction(this.#database, () => this.#database.prepare(
+      `INSERT INTO leases (run_id, owner_id, expires_at, generation)
+       VALUES (?, ?, ?, 1)
        ON CONFLICT (run_id) DO UPDATE SET
          owner_id = excluded.owner_id,
-         expires_at = excluded.expires_at
-       WHERE leases.expires_at <= ? OR leases.owner_id = excluded.owner_id
-       RETURNING run_id`,
-    ).get(lease.runId, lease.ownerId, lease.expiresAt, new Date().toISOString());
-    return row != null;
+         expires_at = excluded.expires_at,
+         generation = leases.generation + 1
+       WHERE leases.expires_at <= ?
+       RETURNING generation`,
+    ).get(lease.runId, lease.ownerId, lease.expiresAt, new Date().toISOString()) as { generation: number } | undefined);
+    if (!row) return false;
+    lease.generation = row.generation;
+    return true;
   }
 
   async renewLease(lease: RunLease): Promise<boolean> {
-    return this.#database.prepare(
+    if (!(lease.generation > 0)) return false;
+    return immediateTransaction(this.#database, () => this.#database.prepare(
       `UPDATE leases SET expires_at = ?
-       WHERE run_id = ? AND owner_id = ?`,
-    ).run(lease.expiresAt, lease.runId, lease.ownerId).changes === 1;
+       WHERE run_id = ? AND owner_id = ? AND generation = ? AND expires_at > ?`,
+    ).run(lease.expiresAt, lease.runId, lease.ownerId, lease.generation, new Date().toISOString()).changes === 1);
   }
 
-  async releaseLease(runId: RunId, ownerId: string): Promise<void> {
+  async releaseLease(runId: RunId, ownerId: string, generation: number): Promise<void> {
+    if (!(generation > 0)) return;
     this.#database.prepare(
-      'DELETE FROM leases WHERE run_id = ? AND owner_id = ?',
-    ).run(runId, ownerId);
+      'UPDATE leases SET expires_at = ? WHERE run_id = ? AND owner_id = ? AND generation = ?',
+    ).run(new Date(0).toISOString(), runId, ownerId, generation);
+  }
+
+  #readSession(id: string): Session | undefined {
+    const row = this.#database.prepare('SELECT data FROM sessions WHERE id = ?')
+      .get(id) as { data: string } | undefined;
+    return row ? parse<Session>(row.data) : undefined;
+  }
+
+  #sessionBusy(sessionId: string, exceptRunId = ''): boolean {
+    return this.#database.prepare(
+      "SELECT 1 FROM runs WHERE session_id = ? AND id != ? AND json_extract(data, '$.status') IN ('running', 'paused') LIMIT 1",
+    ).get(sessionId, exceptRunId) != null;
   }
 
   #saveSession(session: Session): void {

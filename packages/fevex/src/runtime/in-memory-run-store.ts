@@ -1,4 +1,5 @@
 import type { AgentEvent, RunId } from '../core';
+import { FevexRunError } from '../run-error';
 import type {
   AgentRun,
   DurableRunStore,
@@ -46,6 +47,11 @@ export class InMemoryRunStore implements DurableRunStore {
   }
 
   async saveSession(session: Session): Promise<void> {
+    const current = this.#sessions.get(session.id);
+    if (this.#sessionBusy(session.id) || (current?.revision ?? 0) !== (session.revision ?? 0)) {
+      throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" is active or was modified`);
+    }
+    session.revision = (session.revision ?? 0) + 1;
     this.#sessions.set(session.id, structuredClone(session));
   }
 
@@ -88,13 +94,20 @@ export class InMemoryRunStore implements DurableRunStore {
 
   async createExecution(create: ExecutionCreate): Promise<boolean> {
     if (this.#runs.has(create.run.id)) return false;
+    const session = create.session;
+    const currentSession = this.#sessions.get(create.run.sessionId);
+    if (!session || session.id !== create.run.sessionId
+      || this.#sessionBusy(session.id)
+      || (currentSession?.revision ?? 0) !== (session.revision ?? 0)) return false;
     const run = structuredClone(create.run);
     run.revision = 1;
     this.#runs.set(run.id, run);
     create.run.revision = 1;
-    if (create.session) this.#sessions.set(create.session.id, structuredClone(create.session));
+    session.revision = (session.revision ?? 0) + 1;
+    this.#sessions.set(session.id, structuredClone(session));
     this.#events.set(run.id, structuredClone(create.events));
     this.#checkpoints.set(run.id, structuredClone(create.checkpoint));
+    create.lease.generation = 1;
     this.#leases.set(run.id, structuredClone(create.lease));
     return true;
   }
@@ -102,12 +115,21 @@ export class InMemoryRunStore implements DurableRunStore {
   async commitExecution(commit: ExecutionCommit): Promise<boolean> {
     const current = this.#runs.get(commit.run.id);
     if (!current || current.revision !== commit.expectedRevision) return false;
+    const lease = this.#leases.get(commit.run.id);
+    if (!lease || !commit.lease || !(commit.lease.generation > 0) || lease.ownerId !== commit.lease.ownerId
+      || lease.generation !== commit.lease.generation || !(Date.parse(lease.expiresAt) > Date.now())) return false;
 
+    if (commit.session && (commit.session.id !== current.sessionId
+      || (this.#sessions.get(current.sessionId)?.revision ?? 0) !== (commit.session.revision ?? 0)
+      || this.#sessionBusy(current.sessionId, current.id))) return false;
     const run = structuredClone(commit.run);
     run.revision = commit.expectedRevision + 1;
     this.#runs.set(run.id, run);
     commit.run.revision = run.revision;
-    if (commit.session) this.#sessions.set(commit.session.id, structuredClone(commit.session));
+    if (commit.session) {
+      commit.session.revision = (commit.session.revision ?? 0) + 1;
+      this.#sessions.set(commit.session.id, structuredClone(commit.session));
+    }
     if (commit.checkpoint === null) this.#checkpoints.delete(run.id);
     else if (commit.checkpoint) this.#checkpoints.set(run.id, structuredClone(commit.checkpoint));
     if (commit.toolExecution) {
@@ -122,25 +144,32 @@ export class InMemoryRunStore implements DurableRunStore {
     return true;
   }
 
+  #sessionBusy(sessionId: string, exceptRunId?: string): boolean {
+    return [...this.#runs.values()].some((run) => run.sessionId === sessionId
+      && run.id !== exceptRunId && (run.status === 'running' || run.status === 'paused'));
+  }
+
   async acquireLease(lease: RunLease): Promise<boolean> {
     const current = this.#leases.get(lease.runId);
-    if (
-      current
-      && current.ownerId !== lease.ownerId
-      && Date.parse(current.expiresAt) > Date.now()
-    ) return false;
+    if (current && Date.parse(current.expiresAt) > Date.now()) return false;
+    lease.generation = (current?.generation ?? 0) + 1;
     this.#leases.set(lease.runId, structuredClone(lease));
     return true;
   }
 
   async renewLease(lease: RunLease): Promise<boolean> {
     const current = this.#leases.get(lease.runId);
-    if (!current || current.ownerId !== lease.ownerId) return false;
+    if (!current || current.ownerId !== lease.ownerId
+      || current.generation !== lease.generation || !(Date.parse(current.expiresAt) > Date.now())) return false;
     this.#leases.set(lease.runId, structuredClone(lease));
     return true;
   }
 
-  async releaseLease(runId: RunId, ownerId: string): Promise<void> {
-    if (this.#leases.get(runId)?.ownerId === ownerId) this.#leases.delete(runId);
+  async releaseLease(runId: RunId, ownerId: string, generation: number): Promise<void> {
+    if (!(generation > 0)) return;
+    const current = this.#leases.get(runId);
+    if (current?.ownerId === ownerId && current.generation === generation) {
+      current.expiresAt = new Date(0).toISOString();
+    }
   }
 }

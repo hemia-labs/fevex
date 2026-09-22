@@ -333,11 +333,14 @@ describe('durable runs', () => {
     const legacyRun = (await store.getRun(paused.runId))!;
     const legacyCheckpoint = (await store.getCheckpoint<RunCheckpoint>(paused.runId))!;
     delete legacyCheckpoint.modelName;
+    const editLease = { generation: 0, runId: legacyRun.id, ownerId: 'test-editor', expiresAt: new Date(Date.now() + 30_000).toISOString() };
+    expect(await store.acquireLease(editLease)).toBe(true);
     expect(await store.commitExecution({
-      expectedRevision: legacyRun.revision,
+      lease: editLease, expectedRevision: legacyRun.revision,
       run: legacyRun,
       checkpoint: legacyCheckpoint,
     })).toBe(true);
+    await store.releaseLease(legacyRun.id, editLease.ownerId, editLease.generation);
 
     const second = makeApp();
     await second.resumeRun(paused.runId, {
@@ -742,9 +745,11 @@ describe('durable runs', () => {
     const run = (await store.getRun(paused.runId))!;
     const checkpoint = (await store.getCheckpoint(paused.runId))!;
     const pending = checkpoint.pendingTools[checkpoint.pendingIndex]!;
+    const ledgerLease = { generation: 0, runId: run.id, ownerId: 'ledger-editor', expiresAt: new Date(Date.now() + 30_000).toISOString() };
+    expect(await store.acquireLease(ledgerLease)).toBe(true);
     expect(
       await store.commitExecution({
-        expectedRevision: run.revision,
+        lease: ledgerLease, expectedRevision: run.revision,
         run,
         toolExecution: {
           runId: run.id,
@@ -760,6 +765,7 @@ describe('durable runs', () => {
       }),
     ).toBe(true);
 
+    await store.releaseLease(run.id, ledgerLease.ownerId, ledgerLease.generation);
     let finish!: () => void;
     const completed = new Promise<void>((resolve) => {
       finish = resolve;
@@ -840,7 +846,7 @@ describe('durable runs', () => {
       limits: { maxOutputTokens: 3 },
     });
     await crashedModelStarted;
-    await store.releaseLease(run.id, store.leaseOwner!);
+    await store.releaseLease(run.id, store.leaseOwner!, 1);
 
     let recoveredLimit: number | undefined;
     const recoveredRuntime = createFevex({
@@ -937,7 +943,7 @@ describe('durable runs', () => {
       });
       const run = await first.startAgent('tool-recovery', { input: 'go' });
       await started;
-      await store.releaseLease(run.id, store.leaseOwner!);
+      await store.releaseLease(run.id, store.leaseOwner!, 1);
 
       const second = createFevex({
         models: { default: model },

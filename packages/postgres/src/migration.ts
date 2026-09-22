@@ -13,6 +13,9 @@ export const migration = `
     data jsonb NOT NULL
   );
 
+  CREATE INDEX IF NOT EXISTS runs_active_session ON fevex.runs(session_id)
+    WHERE data->>'status' IN ('running', 'paused');
+
   CREATE TABLE IF NOT EXISTS fevex.checkpoints (
     run_id text PRIMARY KEY REFERENCES fevex.runs(id) ON DELETE CASCADE,
     data jsonb NOT NULL
@@ -38,4 +41,6 @@ export const migration = `
     owner_id text NOT NULL,
     expires_at timestamptz NOT NULL
   );
+
+  ALTER TABLE fevex.leases ADD COLUMN IF NOT EXISTS generation bigint NOT NULL DEFAULT 0;
 `;

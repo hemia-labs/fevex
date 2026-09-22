@@ -183,8 +183,11 @@ export function createRunCore({
     activeRuns.delete(state.run.id);
     activeSessions.delete(state.session.id);
     if (state.leaseTimer) clearInterval(state.leaseTimer);
-    if (state.leaseOwner && isDurableRunStore(runStore)) {
-      await runStore.releaseLease(state.run.id, state.leaseOwner).catch(() => {});
+    if (state.leaseExpiryTimer) clearTimeout(state.leaseExpiryTimer);
+    state.leaseTimer = undefined;
+    state.leaseExpiryTimer = undefined;
+    if (state.lease && isDurableRunStore(runStore)) {
+      await runStore.releaseLease(state.run.id, state.lease.ownerId, state.lease.generation).catch(() => {});
     }
   };
 
@@ -204,35 +207,65 @@ export function createRunCore({
         state.run.id,
       );
     }
+    if (state.leaseLost && state.controller.signal.reason instanceof FevexRunError) {
+      throw state.controller.signal.reason;
+    }
+    if (!state.lease || state.leaseLost) {
+      throw new FevexRunError('RUN_CONFLICT', 'Run lease is unavailable', state.run.id);
+    }
     state.run.updatedAt = new Date().toISOString();
     const ok = await runStore.commitExecution({
       expectedRevision: state.run.revision,
+      lease: state.lease,
       run: state.run,
       ...options,
     });
     if (!ok) {
-      throw new FevexRunError('RUN_CONFLICT', `Run "${state.run.id}" was modified`, state.run.id);
+      state.leaseLost = true;
+      const error = new FevexRunError('RUN_CONFLICT', `Run "${state.run.id}" ownership or revision was lost`, state.run.id);
+      state.controller.abort(error);
+      throw error;
     }
     for (const event of options.events ?? []) notifyObserver(event);
   };
 
   const startLease = (state: ExecutionState | WorkflowExecutionState, store: DurableRunStore): void => {
+    let renewing = false;
+    const loseLease = (cause: unknown) => {
+      state.leaseLost = true;
+      if (state.leaseTimer) clearInterval(state.leaseTimer);
+      if (state.leaseExpiryTimer) clearTimeout(state.leaseExpiryTimer);
+      state.leaseTimer = undefined;
+      state.leaseExpiryTimer = undefined;
+      state.controller.abort(new FevexRunError(
+        'RUN_CONFLICT', `Run lease lost: ${cause instanceof Error ? cause.message : String(cause)}`, state.run.id, { cause },
+      ));
+    };
+    const watchExpiry = () => {
+      if (state.leaseExpiryTimer) clearTimeout(state.leaseExpiryTimer);
+      state.leaseExpiryTimer = setTimeout(
+        () => loseLease(new Error('Lease expired before renewal completed')),
+        Math.max(0, Date.parse(state.lease!.expiresAt) - Date.now()),
+      );
+    };
+    watchExpiry();
     state.leaseTimer = setInterval(() => {
-      if (!state.leaseOwner || state.request.signal.aborted) return;
-      const expiresAt = new Date(Date.now() + LEASE_MS).toISOString();
-      void store
-        .renewLease({
-          runId: state.run.id,
-          ownerId: state.leaseOwner,
-          expiresAt,
-        })
+      if (!state.lease || state.leaseLost || state.request.signal.aborted || renewing) return;
+      renewing = true;
+      const lease = { ...state.lease, expiresAt: new Date(Date.now() + LEASE_MS).toISOString() };
+      void Promise.resolve()
+        .then(() => store.renewLease(lease))
         .then((renewed) => {
+          if (state.leaseLost || state.request.signal.aborted || !state.leaseTimer) return;
           if (!renewed) {
-            if (state.leaseTimer) clearInterval(state.leaseTimer);
-            state.leaseTimer = undefined;
-            state.controller.abort(new Error('Run lease was lost'));
+            loseLease(new Error('Lease ownership changed'));
+          } else {
+            state.lease!.expiresAt = lease.expiresAt;
+            watchExpiry();
           }
-        });
+        })
+        .catch((error) => { if (state.leaseTimer) loseLease(error); })
+        .finally(() => { renewing = false; });
     }, LEASE_RENEW_MS);
   };
 
@@ -242,6 +275,10 @@ export function createRunCore({
       state.request.signal,
     ),
   ): Promise<AgentEvent<'run.cancelled'> | undefined> => {
+    if (state.leaseLost) {
+      await releaseExecution(state);
+      throw state.controller.signal.reason;
+    }
     if (
       state.run.status === 'completed' ||
       state.run.status === 'failed' ||
@@ -271,8 +308,11 @@ export function createRunCore({
     activeWorkflowRuns.delete(state.run.id);
     activeSessions.delete(state.session.id);
     if (state.leaseTimer) clearInterval(state.leaseTimer);
-    if (state.leaseOwner && isDurableRunStore(runStore)) {
-      await runStore.releaseLease(state.run.id, state.leaseOwner).catch(() => {});
+    if (state.leaseExpiryTimer) clearTimeout(state.leaseExpiryTimer);
+    state.leaseTimer = undefined;
+    state.leaseExpiryTimer = undefined;
+    if (state.lease && isDurableRunStore(runStore)) {
+      await runStore.releaseLease(state.run.id, state.lease.ownerId, state.lease.generation).catch(() => {});
     }
   };
 

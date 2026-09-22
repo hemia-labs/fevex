@@ -44,6 +44,7 @@ interface EventRow {
 }
 
 interface LeaseRow {
+  generation: number;
   ownerId: string;
   expiresAt: string;
 }
@@ -187,9 +188,24 @@ export function createFakePool(): FakePool {
         return rows([{ id }]);
       }
 
+      case 'SELECT data FROM fevex.sessions WHERE id = $1 FOR UPDATE':
       case 'SELECT data FROM fevex.sessions WHERE id = $1': {
         const data = tables.sessions.get(values[0] as string);
         return data ? rows([{ data: JSON.parse(data) }]) : NONE;
+      }
+
+      case 'INSERT INTO fevex.sessions (id, data) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING': {
+        const id = values[0] as string;
+        if (tables.sessions.has(id)) return NONE;
+        tables.sessions.set(id, json(values[1]));
+        return rows([{ id }]);
+      }
+
+      case "SELECT 1 FROM fevex.runs WHERE session_id = $1 AND id != $2 AND data->>'status' IN ('running', 'paused') LIMIT 1": {
+        const busy = [...tables.runs.entries()].some(([id, row]) =>
+          row.sessionId === values[0] && id !== values[1]
+          && ['running', 'paused'].includes(JSON.parse(row.data).status));
+        return busy ? rows([{ '?column?': 1 }]) : NONE;
       }
 
       case 'INSERT INTO fevex.sessions (id, data) VALUES ($1, $2) '
@@ -266,51 +282,49 @@ export function createFakePool(): FakePool {
         return rows([{ run_id: values[0] }]);
       }
 
-      case 'INSERT INTO fevex.leases (run_id, owner_id, expires_at) VALUES ($1, $2, $3)': {
+      case 'INSERT INTO fevex.leases (run_id, owner_id, expires_at, generation) VALUES ($1, $2, $3, 1)': {
         const runId = values[0] as string;
-        if (tables.leases.has(runId)) {
-          throw new Error(
-            `duplicate key value violates unique constraint "leases_pkey" (${runId})`,
-          );
-        }
-        tables.leases.set(runId, {
-          ownerId: values[1] as string,
-          expiresAt: values[2] as string,
-        });
+        if (tables.leases.has(runId)) throw new Error('duplicate lease');
+        tables.leases.set(runId, { ownerId: values[1] as string, expiresAt: values[2] as string, generation: 1 });
         return rows([{ run_id: runId }]);
       }
 
-      case 'INSERT INTO fevex.leases (run_id, owner_id, expires_at) VALUES ($1, $2, $3) '
-        + 'ON CONFLICT (run_id) DO UPDATE SET owner_id = EXCLUDED.owner_id, '
-        + 'expires_at = EXCLUDED.expires_at WHERE fevex.leases.expires_at <= now() '
-        + 'OR fevex.leases.owner_id = EXCLUDED.owner_id RETURNING run_id': {
+      case 'SELECT run_id FROM fevex.leases WHERE run_id = $1 FOR UPDATE': {
+        return tables.leases.has(values[0] as string) ? rows([{ run_id: values[0] }]) : NONE;
+      }
+
+      case 'SELECT run_id FROM fevex.leases WHERE run_id = $1 AND owner_id = $2 AND generation = $3 AND expires_at > clock_timestamp()': {
+        const lease = tables.leases.get(values[0] as string);
+        return lease && lease.ownerId === values[1] && lease.generation === values[2]
+          && Date.parse(lease.expiresAt) > Date.now() ? rows([{ run_id: values[0] }]) : NONE;
+      }
+
+      case 'INSERT INTO fevex.leases (run_id, owner_id, expires_at, generation) VALUES ($1, $2, $3, 1) '
+        + 'ON CONFLICT (run_id) DO UPDATE SET owner_id = EXCLUDED.owner_id, expires_at = EXCLUDED.expires_at, '
+        + 'generation = fevex.leases.generation + 1 WHERE fevex.leases.expires_at <= clock_timestamp() RETURNING generation': {
         const runId = values[0] as string;
-        const ownerId = values[1] as string;
-        const expiresAt = values[2] as string;
         const current = tables.leases.get(runId);
-        if (current) {
-          const expired = Date.parse(current.expiresAt) <= Date.now();
-          if (!expired && current.ownerId !== ownerId) return NONE;
-        }
-        tables.leases.set(runId, { ownerId, expiresAt });
+        if (current && Date.parse(current.expiresAt) > Date.now()) return NONE;
+        const generation = (current?.generation ?? 0) + 1;
+        tables.leases.set(runId, { ownerId: values[1] as string, expiresAt: values[2] as string, generation });
+        return rows([{ generation: String(generation) }]);
+      }
+
+      case 'UPDATE fevex.leases SET expires_at = $3 WHERE run_id = $1 AND owner_id = $2 AND generation = $4 '
+        + 'AND expires_at > clock_timestamp() RETURNING run_id': {
+        const runId = values[0] as string;
+        const current = tables.leases.get(runId);
+        if (!current || current.ownerId !== values[1] || current.generation !== values[3]
+          || Date.parse(current.expiresAt) <= Date.now()) return NONE;
+        tables.leases.set(runId, { ...current, expiresAt: values[2] as string });
         return rows([{ run_id: runId }]);
       }
 
-      case 'UPDATE fevex.leases SET expires_at = $3 WHERE run_id = $1 AND owner_id = $2 '
-        + 'RETURNING run_id': {
-        const runId = values[0] as string;
-        const ownerId = values[1] as string;
-        const current = tables.leases.get(runId);
-        if (!current || current.ownerId !== ownerId) return NONE;
-        tables.leases.set(runId, { ownerId, expiresAt: values[2] as string });
-        return rows([{ run_id: runId }]);
-      }
-
-      case 'DELETE FROM fevex.leases WHERE run_id = $1 AND owner_id = $2': {
+      case "UPDATE fevex.leases SET expires_at = 'epoch' WHERE run_id = $1 AND owner_id = $2 AND generation = $3": {
         const runId = values[0] as string;
         const current = tables.leases.get(runId);
-        if (!current || current.ownerId !== (values[1] as string)) return NONE;
-        tables.leases.delete(runId);
+        if (!current || current.ownerId !== values[1] || current.generation !== values[2]) return NONE;
+        tables.leases.set(runId, { ...current, expiresAt: new Date(0).toISOString() });
         return rows([{ run_id: runId }]);
       }
 

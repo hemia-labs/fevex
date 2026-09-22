@@ -87,6 +87,10 @@ export function createWorkflowEngine(
       state.request.signal,
     ),
   ): Promise<AgentEvent | undefined> => {
+    if (state.leaseLost) {
+      await releaseWorkflowExecution(state);
+      throw state.controller.signal.reason;
+    }
     if (
       state.run.status === 'completed' ||
       state.run.status === 'failed' ||
@@ -252,6 +256,10 @@ export function createWorkflowEngine(
     };
     try {
       const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+      const lease = {
+        generation: 0, runId: run.id, ownerId,
+        expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+      };
       const started = createCoordinatorEvent(
         state,
         'workflow.run.started',
@@ -261,16 +269,12 @@ export function createWorkflowEngine(
       const created = await runStore.createExecution({
         run,
         checkpoint,
-        ...(newSession ? { session } : {}),
-        lease: {
-          runId: run.id,
-          ownerId,
-          expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-        },
+        session,
+        lease,
         events: [started],
       });
-      if (!created) throw new FevexRunError('RUN_CONFLICT', `Run "${run.id}" exists`, run.id);
-      state.leaseOwner = ownerId;
+      if (!created) throw new FevexRunError('RUN_CONFLICT', `Run or session "${session.id}" is active or was modified`, run.id);
+      state.lease = lease;
       state.initialEvents = [started];
       notifyObserver(started);
       startLease(state, runStore);
@@ -1188,11 +1192,13 @@ export function createWorkflowEngine(
       throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" is active`, runId);
     }
     const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
-    const acquired = await runStore.acquireLease({
+    const lease = {
+      generation: 0,
       runId,
       ownerId,
       expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-    });
+    };
+    const acquired = await runStore.acquireLease(lease);
     if (!acquired) throw new FevexRunError('RUN_CONFLICT', `Run "${runId}" is leased`, runId);
 
     try {
@@ -1221,7 +1227,7 @@ export function createWorkflowEngine(
           eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
           checkpoint,
           advancing: false,
-          leaseOwner: ownerId,
+          lease,
           commitQueue: Promise.resolve(),
           recoveryActor,
         };
@@ -1318,7 +1324,7 @@ export function createWorkflowEngine(
           eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
           checkpoint,
           advancing: false,
-          leaseOwner: ownerId,
+          lease,
           commitQueue: Promise.resolve(),
         };
         run.status = 'running';
@@ -1393,7 +1399,7 @@ export function createWorkflowEngine(
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
         checkpoint,
         advancing: false,
-        leaseOwner: ownerId,
+        lease,
         commitQueue: Promise.resolve(),
       };
       if (childRun.status === 'cancelled') {
@@ -1427,7 +1433,7 @@ export function createWorkflowEngine(
       void drainWorkflowExecution(name, state, false).catch(() => {});
       return structuredClone(run) as CoordinatorRun<TOutput>;
     } catch (error) {
-      await runStore.releaseLease(runId, ownerId).catch(() => {});
+      await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
       throw error;
     }
   };

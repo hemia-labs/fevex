@@ -175,6 +175,8 @@ export type RunRecord<TOutput = unknown> =
   | TeamRun<TOutput>;
 
 export interface Session {
+  /** Optimistic history revision. Missing on legacy sessions means zero. Store-managed. */
+  revision?: number;
   id: SessionId;
   history: AgentMessage[];
   createdAt: string;
@@ -189,6 +191,7 @@ export interface RunStore {
   getRun<TRun extends RunRecord<unknown> = AgentRun>(runId: RunId): Promise<TRun | undefined>;
   saveRun(run: RunRecord): Promise<void>;
   getSession(sessionId: SessionId): Promise<Session | undefined>;
+  /** Compare and advance revision; reject active/paused sessions and stale snapshots. */
   saveSession(session: Session): Promise<void>;
   appendEvent(event: AgentEvent): Promise<void>;
   listEvents(runId: RunId, options?: ListEventsOptions): Promise<AgentEvent[]>;
@@ -330,13 +333,17 @@ export interface ToolExecutionRecord {
   updatedAt: string;
 }
 
+/** Store assigns a new generation on creation/acquisition; callers must retain it. */
 export interface RunLease {
+  generation: number;
   runId: RunId;
   ownerId: string;
   expiresAt: string;
 }
 
 export interface ExecutionCommit {
+  /** Current lease identity; ownership, generation and expiry are checked atomically. */
+  lease: Pick<RunLease, 'ownerId' | 'generation'>;
   expectedRevision: number;
   run: RunRecord;
   checkpoint?: StoredRunCheckpoint | null;
@@ -345,10 +352,12 @@ export interface ExecutionCommit {
   events?: AgentEvent[];
 }
 
+/** Atomically reserve the session until this run is terminal, including across pause/crash. */
 export interface ExecutionCreate {
   run: RunRecord;
   checkpoint: StoredRunCheckpoint;
-  session?: Session;
+  /** Snapshot used to prepare the run; revision must match the stored history. */
+  session: Session;
   lease: RunLease;
   events: AgentEvent[];
 }
@@ -358,11 +367,15 @@ export interface DurableRunStore extends RunStore {
     runId: RunId,
   ): Promise<TCheckpoint | undefined>;
   getToolExecution(runId: RunId, toolCallId: string): Promise<ToolExecutionRecord | undefined>;
+  /** On success, assigns run/session revisions and lease generation 1. */
   createExecution(create: ExecutionCreate): Promise<boolean>;
   commitExecution(commit: ExecutionCommit): Promise<boolean>;
+  /** Acquires only absent/expired leases and assigns a strictly newer generation. */
   acquireLease(lease: RunLease): Promise<boolean>;
+  /** Requires matching owner/generation and an unexpired stored lease. */
   renewLease(lease: RunLease): Promise<boolean>;
-  releaseLease(runId: RunId, ownerId: string): Promise<void>;
+  /** Expires a matching token while retaining its generation for future acquisitions. */
+  releaseLease(runId: RunId, ownerId: string, generation: number): Promise<void>;
 }
 
 export function isDurableRunStore(store: RunStore): store is DurableRunStore {

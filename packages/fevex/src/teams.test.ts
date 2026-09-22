@@ -371,8 +371,8 @@ describe('teams', () => {
     await childStarted;
     const checkpoint = await store.getCheckpoint<any>(parent.id);
     const childRunId = checkpoint?.steps['only-child'].childRunId as string;
-    await store.releaseLease(parent.id, store.leaseOwners.get(parent.id)!);
-    await store.releaseLease(childRunId, store.leaseOwners.get(childRunId)!);
+    await store.releaseLease(parent.id, store.leaseOwners.get(parent.id)!, 1);
+    await store.releaseLease(childRunId, store.leaseOwners.get(childRunId)!, 1);
 
     const recoveredRuntime = createFevex({
       models: { default: modelWithOutput('recovered') },
