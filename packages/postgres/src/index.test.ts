@@ -58,6 +58,7 @@ function buildCheckpoint(id: string): RunCheckpoint {
 
 function buildLease(id: string) {
   return {
+    generation: 0,
     runId: id,
     ownerId: `${id}-owner`,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
@@ -153,11 +154,12 @@ describe('PostgresRunStore (fake pool)', () => {
     const store = createPostgresRunStore({ pool });
     const run = buildRun('commit-run');
     const session = buildSession('commit-run');
+    const lease = buildLease('commit-run');
     await store.createExecution({
       run,
       session,
       checkpoint: buildCheckpoint('commit-run'),
-      lease: buildLease('commit-run'),
+      lease,
       events: [buildEvent('commit-run', 1)],
     });
 
@@ -175,7 +177,7 @@ describe('PostgresRunStore (fake pool)', () => {
     };
     expect(
       await store.commitExecution({
-        expectedRevision: 1,
+        lease, expectedRevision: 1,
         run,
         session,
         checkpoint: buildCheckpoint('commit-run'),
@@ -197,6 +199,7 @@ describe('PostgresRunStore (fake pool)', () => {
     const run = buildRun('stale-run');
     await store.createExecution({
       run,
+      session: buildSession('stale-run'),
       checkpoint: buildCheckpoint('stale-run'),
       lease: buildLease('stale-run'),
       events: [buildEvent('stale-run', 1)],
@@ -204,7 +207,7 @@ describe('PostgresRunStore (fake pool)', () => {
 
     expect(
       await store.commitExecution({
-        expectedRevision: 0,
+        lease: { ownerId: 'stale-run-owner', generation: 1 }, expectedRevision: 0,
         run: { ...run, status: 'failed' },
         events: [buildEvent('stale-run', 2)],
       }),
@@ -217,7 +220,7 @@ describe('PostgresRunStore (fake pool)', () => {
   test('rejects a commit for a run that does not exist', async () => {
     const store = createPostgresRunStore({ pool: createFakePool() });
     expect(
-      await store.commitExecution({ expectedRevision: 0, run: buildRun('ghost-run') }),
+      await store.commitExecution({ lease: buildLease('ghost-run'), expectedRevision: 0, run: buildRun('ghost-run') }),
     ).toBe(false);
   });
 

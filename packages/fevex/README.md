@@ -502,6 +502,46 @@ Unknown cursors fail instead of silently replaying events.
 it. The default survives only while the process lives, and one run at a time
 may update a session.
 
+The built-in durable stores reserve each session atomically when creating an
+agent, workflow or team run. A competing run receives `RUN_CONFLICT` before
+calling its model or tools. A paused or orphaned run keeps its reservation:
+resume, recover or cancel that run before starting another. Lease expiry permits
+recovery of the same run; it does not free its conversation for a new run.
+
+`Session.revision` is store-managed. Creation, history commits and compaction
+check the snapshot revision and advance it atomically. Compaction rejects active
+or paused sessions and stale snapshots. On conflict, reload the session and
+decide whether to retry; never automatically retry external effects.
+
+Custom durable adapters must implement these guarantees in `createExecution`,
+`commitExecution` and `saveSession`, and pass `testRunStore`.
+`ExecutionCreate.session` is now required for existing sessions as well as new
+ones. A legacy session without a revision is treated as revision zero.
+The low-level `saveRun` API is for trusted storage maintenance; it must not be
+used to bypass runtime reservation or overwrite active runs.
+
+Upgrade all workers and adapters together; old workers do not enforce session
+reservation. Every durable commit also validates the lease owner, generation and expiry in
+the same transaction as the run revision. Acquisition advances the generation,
+including when an owner ID is reused. Release expires the lease without deleting
+that counter; stale workers cannot commit, renew or release a newer generation.
+
+Custom adapters must accept `ExecutionCommit.lease` and the generation argument
+to `releaseLease`. Initialize `RunLease.generation` to zero for creation or
+acquisition and retain the generation assigned by the store on success.
+Renewal keeps the same generation and cannot revive an expired lease.
+
+Renewal errors surface as `FevexRunError` with code `RUN_CONFLICT` and the original
+error in `cause`. Local cleanup does not persist cancellation after ownership is lost.
+A lost, failed or blocked renewal aborts local execution; the runtime will not
+start further work or persist results under that token. The orphaned run remains
+available for recovery. External effects already in flight still need
+idempotency or fencing in the external system.
+
+Migrate storage before restarting workers. Legacy leases get generation zero
+and cannot commit or renew; recovery can acquire a new generation after they
+expire. Never run old and new workers together during this upgrade.
+
 ## HTTP protocol
 
 `@fevex/core/http` exposes the runtime through versioned JSON and SSE using

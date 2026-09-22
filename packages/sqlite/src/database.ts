@@ -17,7 +17,7 @@ export interface SQLiteDatabase {
 type SQLiteDatabaseConstructor = new (filename: string) => SQLiteDatabase;
 
 const require = createRequire(import.meta.url);
-const schemaVersion = 1;
+const schemaVersion = 3;
 const schema = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -30,6 +30,9 @@ const schema = `
     revision INTEGER NOT NULL,
     data TEXT NOT NULL
   );
+
+  CREATE INDEX IF NOT EXISTS runs_active_session ON runs(session_id)
+    WHERE json_extract(data, '$.status') IN ('running', 'paused');
 
   CREATE TABLE IF NOT EXISTS checkpoints (
     run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
@@ -106,6 +109,7 @@ function migrate(database: SQLiteDatabase): void {
   if (version === schemaVersion) return;
   immediateTransaction(database, () => {
     database.exec(schema);
+    if (version < 3) database.exec("ALTER TABLE leases ADD COLUMN generation INTEGER NOT NULL DEFAULT 0");
     database.exec(`PRAGMA user_version = ${schemaVersion}`);
   });
 }

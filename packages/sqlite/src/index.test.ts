@@ -161,9 +161,11 @@ describe('SQLiteRunStore', () => {
       const run = (await firstStore.getRun(paused.runId))!;
       const checkpoint = (await firstStore.getCheckpoint(paused.runId))!;
       const pending = checkpoint.pendingTools[checkpoint.pendingIndex]!;
+      const ledgerLease = { generation: 0, runId: run.id, ownerId: 'ledger-editor', expiresAt: new Date(Date.now() + 30_000).toISOString() };
+      expect(await firstStore.acquireLease(ledgerLease)).toBe(true);
       expect(
         await firstStore.commitExecution({
-          expectedRevision: run.revision,
+          lease: ledgerLease, expectedRevision: run.revision,
           run,
           toolExecution: {
             runId: run.id,
@@ -178,6 +180,7 @@ describe('SQLiteRunStore', () => {
           },
         }),
       ).toBe(true);
+      await firstStore.releaseLease(run.id, ledgerLease.ownerId, ledgerLease.generation);
       await firstStore.close();
 
       const secondStore = createSQLiteRunStore({ filename });

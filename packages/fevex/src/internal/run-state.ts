@@ -5,6 +5,7 @@ import type {
   CoordinatorRun,
   RunCheckpoint,
   RunRequest,
+  RunLease,
   Session,
 } from '../runtime';
 
@@ -19,7 +20,9 @@ export interface ExecutionState<TInput = unknown, TOutput = unknown> {
   checkpoint?: RunCheckpoint;
   approvedToolCallId?: string;
   forcedRetryToolCallId?: string;
-  leaseOwner?: string;
+  lease?: RunLease;
+  leaseLost?: boolean;
+  leaseExpiryTimer?: ReturnType<typeof setTimeout>;
   leaseTimer?: ReturnType<typeof setInterval>;
   initialEvents?: AgentEvent[];
 }
@@ -33,7 +36,9 @@ export interface WorkflowExecutionState<TInput = unknown, TOutput = unknown> {
   eventSequence: number;
   checkpoint: CoordinatorCheckpoint;
   advancing: boolean;
-  leaseOwner?: string;
+  lease?: RunLease;
+  leaseLost?: boolean;
+  leaseExpiryTimer?: ReturnType<typeof setTimeout>;
   leaseTimer?: ReturnType<typeof setInterval>;
   commitQueue: Promise<void>;
   initialEvents?: AgentEvent[];
