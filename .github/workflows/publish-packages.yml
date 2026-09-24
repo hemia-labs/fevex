@@ -85,7 +85,7 @@ jobs:
     needs: [release-plan, rehearse]
     if: github.event_name == 'push' && needs.release-plan.outputs.pending == 'true' && needs.release-plan.outputs.publishable == 'true' && vars.ENABLE_NPM_PUBLISH == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 100
     environment: npm
     permissions:
       contents: read

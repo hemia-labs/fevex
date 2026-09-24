@@ -322,6 +322,18 @@ and channel is a no-op; differing content requires a new version or manual revie
 and retryable, so failure to create a tag never rolls back npm. An existing tag with
 a different target (or an annotated tag needing review) is not overwritten.
 
+An accepted `npm publish` may appear as **Validating** while npm scans it, before
+the version becomes installable. The publish job waits up to 30 minutes per
+package for the exact tarball integrity and `latest` dist-tag, with a 100-minute
+job limit for up to three sequential packages. It records GitHub releases only
+after every selected package is visible. If npm holds a version longer or
+blocks it, inspect its status in npm; rerun the failed job only after the
+version is available.
+The script will verify an already published matching version without uploading
+it again. **Staged** is a different state requiring maintainer approval with
+2FA; a stage-only Trusted Publisher rejects this workflow's direct `npm publish`
+instead of silently staging it.
+
 An activation change alone does not publish an old batch, and manual dispatch is
 always read-only. If a version PR was rehearsed while publishing was disabled,
 prepare a new version PR once activation is complete. Do not mix source changes

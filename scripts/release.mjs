@@ -10,6 +10,8 @@ import { setTimeout } from 'node:timers/promises';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const registry = 'https://registry.npmjs.org';
 const repository = 'git+https://github.com/hemia-labs/fevex.git';
+const visibilityTimeoutMs = 30 * 60_000;
+const visibilityPollMs = 30_000;
 export const npmPackages = new Set(['@fevex/core', '@fevex/deepseek', '@fevex/openai']);
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const run = (command, args, cwd = root) => execFileSync(command, args, { cwd, stdio: 'inherit' });
@@ -193,7 +195,7 @@ export async function readRegistry(name, fetcher = fetch) {
   return response.json();
 }
 
-export async function registryStatus(selected, release, lookup = readRegistry, planned = []) {
+export async function registryStatus(selected, release, lookup = readRegistry, planned = [], allowPendingTag = false) {
   const metadata = await lookup(selected.manifest.name);
   assert(metadata, 'Package does not exist in npm. Complete its initial authenticated publication and Trusted Publisher setup first.');
   const current = metadata['dist-tags']?.[selected.npmTag];
@@ -211,9 +213,22 @@ export async function registryStatus(selected, release, lookup = readRegistry, p
   const existing = metadata.versions?.[selected.manifest.version];
   if (existing) {
     assert.equal(existing.dist?.integrity, release.integrity, 'Version already exists with different content; bump the version');
-    assert.equal(current, selected.manifest.version, 'Version exists but its channel differs; review dist-tags manually');
+    if (current !== selected.manifest.version) {
+      if (allowPendingTag) return false;
+      assert.equal(current, selected.manifest.version, 'Version exists but its channel differs; review dist-tags manually');
+    }
   }
   return Boolean(existing);
+}
+
+export async function waitForRegistryVisibility(selected, release, { lookup = readRegistry, sleep = setTimeout, now = Date.now, timeoutMs = visibilityTimeoutMs } = {}) {
+  const deadline = now() + timeoutMs;
+  while (true) {
+    if (await registryStatus(selected, release, lookup, [], true)) return true;
+    const remaining = deadline - now();
+    if (remaining <= 0) return false;
+    await sleep(Math.min(visibilityPollMs, remaining));
+  }
 }
 
 async function publish(selected, release) {
@@ -226,15 +241,13 @@ async function publish(selected, release) {
     return;
   }
   run('npm', ['publish', release.tarball, '--ignore-scripts', '--access', 'public', '--tag', selected.npmTag, '--registry', registry]);
-  for (let attempt = 0; attempt < 6; attempt++) {
-    // Only poll visibility after success; never retry a publish with an uncertain outcome.
-    if (await registryStatus(selected, release)) {
-      summary(`Published and verified **${selected.tag}** on **${selected.npmTag}**.`);
-      return;
-    }
-    await setTimeout(5_000);
+  summary(`npm accepted **${selected.tag}**; waiting for validation and the **${selected.npmTag}** dist-tag.`);
+  // Only poll visibility after success; never retry a publish with an uncertain outcome.
+  if (await waitForRegistryVisibility(selected, release)) {
+    summary(`Published and verified **${selected.tag}** on **${selected.npmTag}**.`);
+    return;
   }
-  throw new Error('Publish succeeded but registry visibility could not be verified. Inspect npm before rerunning.');
+  throw new Error(`npm accepted ${selected.tag}, but it is not visible after 30 minutes. It may still be validating or held for review; inspect npm before rerunning this workflow.`);
 }
 
 async function publishBatch(batch, destination) {
