@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareVersions, internalDependencies, loadPackage, orderPackages, selectBatch, selectNpmBatch, parseVersion, readRegistry, recordReleases, registryStatus, selectPackage, validateContents } from './release.mjs';
+import { compareVersions, internalDependencies, loadPackage, orderPackages, selectBatch, selectNpmBatch, parseVersion, readRegistry, recordReleases, registryStatus, selectPackage, validateContents, waitForRegistryVisibility } from './release.mjs';
 
 const manifest = {
   name: '@fevex/core', version: '0.1.0-alpha.2',
@@ -76,6 +76,24 @@ describe('registry preflight and safe retries', () => {
     expect(await registryStatus(selected, release, async () => existing)).toBe(true);
     await expect(registryStatus(selected, { integrity: 'sha512-other' }, async () => existing)).rejects.toThrow('different content');
     await expect(registryStatus(selected, release, async () => ({ ...existing, 'dist-tags': {} }))).rejects.toThrow('channel differs');
+  });
+  test('waits for npm validation and a delayed dist-tag before recording a publish', async () => {
+    const published = { versions: { [manifest.version]: { dist: { integrity: release.integrity } } }, 'dist-tags': { latest: manifest.version } };
+    let reads = 0;
+    let elapsed = 0;
+    const options = {
+      lookup: async () => ++reads === 1 ? metadata : reads === 2 ? { ...published, 'dist-tags': metadata['dist-tags'] } : published,
+      sleep: async (ms: number) => { elapsed += ms; },
+      now: () => elapsed,
+      timeoutMs: 90_000,
+    };
+    expect(await waitForRegistryVisibility(selected, release, options)).toBe(true);
+    expect([reads, elapsed]).toEqual([3, 60_000]);
+
+    reads = 0;
+    elapsed = 0;
+    expect(await waitForRegistryVisibility(selected, release, { ...options, lookup: async () => { reads++; return metadata; }, timeoutMs: 60_000 })).toBe(false);
+    expect([reads, elapsed]).toEqual([3, 60_000]);
   });
   test('requires the exact core version for adapters, including peers', async () => {
     const adapter = { ...selected, manifest: { ...manifest, name: '@fevex/opentelemetry', peerDependencies: { '@fevex/core': '0.1.0-alpha.2' } } };
