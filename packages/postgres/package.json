@@ -1,6 +1,6 @@
 {
   "name": "@fevex/postgres",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "PostgreSQL DurableRunStore adapter for Fevex.",
   "type": "module",
   "license": "Apache-2.0",
@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@fevex/core": "0.1.0-alpha.2",
+    "@fevex/core": "0.1.0-alpha.3",
     "pg": "^8.16.3"
   },
   "devDependencies": {

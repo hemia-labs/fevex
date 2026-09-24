@@ -1,6 +1,6 @@
 {
   "name": "@fevex/core",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Agent Engineering Framework for code-first, provider-neutral AI agents.",
   "type": "module",
   "license": "Apache-2.0",
