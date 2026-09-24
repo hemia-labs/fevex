@@ -1,0 +1,137 @@
+name: Package releases
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.repository == 'hemia-labs/fevex' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/test-framework.yml
+
+  release-plan:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pending: ${{ steps.batch.outputs.pending }}
+      publishable: ${{ steps.batch.outputs.publishable }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Identify a reviewed version-only batch
+        id: batch
+        if: github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: node scripts/changesets.mjs batch "$BASE_SHA"
+      - name: Create a scoped GitHub App token when configured
+        id: app-token
+        if: github.event_name == 'push' && steps.batch.outputs.pending != 'true' && vars.RELEASE_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: fevex
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Create or update the version PR (never publish here)
+        if: github.event_name == 'push' && steps.batch.outputs.pending != 'true'
+        uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1, CLI 3
+        with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          version-script: bun run ci:version
+          pr-title: 'chore: release packages'
+          commit-message: 'chore: release packages'
+
+  rehearse:
+    needs: [validate, release-plan]
+    if: github.event_name == 'workflow_dispatch' || needs.release-plan.outputs.pending == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-release
+          path: ${{ runner.temp }}/release
+      - run: node scripts/release.mjs inspect "$RUNNER_TEMP/release"
+      - name: Explain publication state
+        if: github.event_name != 'push' || needs.release-plan.outputs.publishable != 'true' || vars.ENABLE_NPM_PUBLISH != 'true'
+        run: echo 'Nothing published. Automatic publication currently covers @fevex/core, @fevex/deepseek and @fevex/openai; it requires a merged version-only release plan, ENABLE_NPM_PUBLISH=true and npm Trusted Publishing.' >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [release-plan, rehearse]
+    if: github.event_name == 'push' && needs.release-plan.outputs.pending == 'true' && needs.release-plan.outputs.publishable == 'true' && vars.ENABLE_NPM_PUBLISH == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11.15.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-release
+          path: ${{ runner.temp }}/release
+      - run: node scripts/release.mjs publish "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: published-packages
+          path: ${{ runner.temp }}/release/published.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  record:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: published-packages
+          path: ${{ runner.temp }}/published
+      - name: Record verified versions as GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs record "$RUNNER_TEMP/published"

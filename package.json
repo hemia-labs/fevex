@@ -9,6 +9,10 @@
     "packages/*"
   ],
   "scripts": {
+    "changeset": "changeset",
+    "ci:version": "node scripts/changesets.mjs version",
+    "test:release": "bun test scripts/*.test.ts",
+    "release:rehearse": "node scripts/release.mjs build /tmp/fevex-release && node scripts/release.mjs smoke /tmp/fevex-release && node scripts/release.mjs inspect /tmp/fevex-release",
     "dev": "bun --filter @fevex/web dev",
     "dev:mcp": "bun run --cwd examples/nest-mcp dev",
     "dev:nest": "bun run --cwd examples/nest-api dev",
@@ -18,6 +22,7 @@
     "typecheck": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run typecheck); fi; done"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.1",
     "@types/bun": "^1.2.0",
     "tsdown": "^0.22.13",
     "typescript": "^5.7.0"

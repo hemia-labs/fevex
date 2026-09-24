@@ -99,6 +99,16 @@ Package publishing is a maintainer responsibility. Do not change package
 versions or publish as part of an unrelated PR. Contributions use the repository's
 [Apache-2.0 license](LICENSE).
 
+For public package changes, run `bun run changeset` and include the generated
+changeset in the PR. Describe the change and select its SemVer impact; automation
+updates versions, internal dependencies and changelogs in a separate release PR.
+Source, manifest and package README changes require coverage. Test-only changes
+and documentation outside the packages do not require a release. See the
+[Changesets guide](.changeset/README.md) for a sample changeset, the release PR
+flow and local/Actions rehearsals without publishing. Releases currently use alpha
+versions, which publish under npm `latest` when publication is enabled; alpha
+versioning and permission to publish are separate controls.
+
 Maintainers can find branch rules, release recommendations and template activation
 instructions in the [maintainer guide](.github/MAINTAINER_GUIDE.md).
 
