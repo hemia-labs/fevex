@@ -24,7 +24,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: bun run test:release
-      - run: bun run changeset status --output "$RUNNER_TEMP/changeset-status.json"
       - name: Require changesets for public changes
         if: github.event_name == 'pull_request'
         env:
