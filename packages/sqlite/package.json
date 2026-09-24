@@ -1,6 +1,6 @@
 {
   "name": "@fevex/sqlite",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "SQLite DurableRunStore adapter for Fevex.",
   "type": "module",
   "license": "Apache-2.0",
@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@fevex/core": "0.1.0-alpha.1",
+    "@fevex/core": "0.1.0-alpha.2",
     "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
