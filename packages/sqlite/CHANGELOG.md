@@ -1,5 +1,12 @@
 # @fevex/sqlite
 
+## 0.1.0-alpha.2
+
+### Patch Changes
+
+- Updated dependencies [c5595c5]
+  - @fevex/core@0.1.0-alpha.3
+
 ## 0.1.0-alpha.1
 
 ### Patch Changes
