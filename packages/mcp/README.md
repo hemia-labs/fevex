@@ -54,6 +54,11 @@ available only after `notifications/initialized` succeeds. If initialization or
 discovery fails, a later call can try again on the same instance. The adapter does
 not automatically replay failed tool calls, which may have produced external effects.
 
+A server HTTP 404 for an established session invalidates that session. The failed
+request is surfaced without replay; the next call initializes a fresh session on
+the same provider. Concurrent callers share that initialization, and a late 404
+from the old session does not invalidate the new one.
+
 The core does not cache discovery across tool resolutions. This avoids sharing
 catalogs between contexts and retaining failed discovery promises, at the cost of
 additional `tools/list` requests. Custom providers are responsible for isolating

@@ -8,6 +8,59 @@ import { fakeModel } from '../testing';
 import { InMemoryRunStore } from '../runtime';
 
 describe('observability', () => {
+  test('attributes an overridden model and its cost after deleting the terminal checkpoint', async () => {
+    const traces: RunTrace[] = [];
+    const alternate = fakeModel({ output: 'alternate', usage: { totalTokens: 10 } });
+    alternate.metadata = { provider: 'alternate-provider', model: 'alternate-model' };
+    const defaultModel = fakeModel({ output: 'default' });
+    const store = new InMemoryRunStore();
+    const app = createFevex({
+      models: { default: defaultModel, alternate },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
+      runStore: store,
+      observability: {
+        exporters: [{ export(trace) { traces.push(structuredClone(trace)); } }],
+        calculateCost: ({ modelRegistryName, model, usage }) => ({
+          amount: modelRegistryName === 'alternate' && model?.model === 'alternate-model'
+            ? usage.totalTokens ?? 0 : 0,
+          currency: 'USD',
+        }),
+      },
+    });
+
+    const result = await app.runAgent('assistant', { input: 'go', model: 'alternate' });
+    await app.flushObservability();
+
+    expect(result.output).toBe('alternate');
+    expect(defaultModel.calls).toHaveLength(0);
+    expect(await store.getCheckpoint(result.runId)).toBeUndefined();
+    expect(await store.getRun(result.runId)).toMatchObject({
+      modelName: 'alternate', modelMetadata: alternate.metadata,
+    });
+    expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({
+      modelRegistryName: 'alternate',
+      model: alternate.metadata,
+      cost: { amount: 10, currency: 'USD' },
+    });
+  });
+
+  test('exports an inline model without requiring a default registry entry', async () => {
+    const traces: RunTrace[] = [];
+    const model = fakeModel({ output: 'inline' });
+    model.metadata = { provider: 'inline-provider', model: 'inline-model' };
+    const app = createFevex({
+      models: {},
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.', model })],
+      observability: {
+        exporters: [{ export(trace) { traces.push(structuredClone(trace)); } }],
+      },
+    });
+    await app.runAgent('assistant', { input: 'go' });
+    await app.flushObservability();
+    expect(traces[0]).toMatchObject({ modelRegistryName: 'default', model: model.metadata });
+  });
+
   test('exports a redacted trace with model steps, tool attempts, usage and cost', async () => {
     const traces: RunTrace[] = [];
     const model = fakeModel(
@@ -130,7 +183,7 @@ describe('observability', () => {
       },
     };
     const cancelledApp = createFevex({
-      models: { default: blocked },
+      models: { default: fakeModel(), alternate: blocked },
       agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
       observability: {
         exporters: [{
@@ -140,13 +193,14 @@ describe('observability', () => {
         }],
       },
     });
-    const started = await cancelledApp.startAgent('assistant', { input: 'wait' });
+    const started = await cancelledApp.startAgent('assistant', { input: 'wait', model: 'alternate' });
     await cancelledApp.cancelRun(started.id);
     await cancelledApp.flushObservability();
 
     const failedApp = createFevex({
       models: {
-        default: {
+        default: fakeModel(),
+        alternate: {
           async *stream() {
             throw new Error('provider failed');
           },
@@ -161,24 +215,26 @@ describe('observability', () => {
         }],
       },
     });
-    await expect(failedApp.runAgent('assistant', { input: 'fail' })).rejects.toThrow(
+    await expect(failedApp.runAgent('assistant', { input: 'fail', model: 'alternate' })).rejects.toThrow(
       'provider failed',
     );
     await failedApp.flushObservability();
 
     expect(traces.map(({ status }) => status)).toEqual(['cancelled', 'failed']);
+    expect(traces.map(({ modelRegistryName }) => modelRegistryName)).toEqual(['alternate', 'alternate']);
     expect(traces.every(({ spans }) => spans[0]?.status !== 'completed')).toBe(true);
   });
 
-  test('reconstructs a trace across durable pause and resume', async () => {
+  test.each([false, true])('reconstructs a trace across durable pause and resume (legacy: %s)', async (legacy) => {
     const traces: RunTrace[] = [];
     const store = new InMemoryRunStore();
     const model = fakeModel(
       { toolCalls: [{ id: 'call-1', name: 'write', input: { value: 1 } }] },
       { output: 'done' },
     );
+    model.metadata = { provider: 'test', model: 'resumed-model' };
     const config = {
-      models: { default: model },
+      models: { default: fakeModel(), alternate: model },
       agents: [
         defineAgent({ name: 'assistant', instructions: 'Help.', tools: ['write'] }),
       ],
@@ -200,7 +256,7 @@ describe('observability', () => {
     };
     const firstRuntime = createFevex(config);
     let runId = '';
-    await firstRuntime.runAgent('assistant', { input: 'write' }).catch((error) => {
+    await firstRuntime.runAgent('assistant', { input: 'write', model: 'alternate' }).catch((error) => {
       runId = (error as { runId?: string }).runId ?? '';
     });
     expect(runId).not.toBe('');
@@ -208,7 +264,14 @@ describe('observability', () => {
     expect(traces).toHaveLength(0);
 
     const paused = await firstRuntime.getRun(runId);
-    if (paused?.pause?.type !== 'approval') throw new Error('Expected approval pause');
+    if (!paused || !('agentName' in paused) || paused.pause?.type !== 'approval') {
+      throw new Error('Expected agent approval pause');
+    }
+    if (legacy) {
+      delete paused.modelName;
+      delete paused.modelMetadata;
+      await store.saveRun(paused);
+    }
     const secondRuntime = createFevex(config);
     await secondRuntime.resumeRun(runId, {
       type: 'approval',
@@ -223,6 +286,7 @@ describe('observability', () => {
     await secondRuntime.flushObservability();
 
     expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({ modelRegistryName: 'alternate', model: model.metadata });
     expect(traces[0]?.annotations.map(({ name }) => name)).toEqual([
       'approval.requested',
       'run.paused',

@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "baseUrl": "../..",
     "paths": {
+      "@fevex/core": ["packages/fevex/src/index.ts"],
+      "@fevex/core/evals": ["packages/fevex/src/evals/index.ts"],
+      "@fevex/mcp": ["packages/mcp/src/index.ts"],
+      "@fevex/openapi": ["packages/openapi/src/index.ts"],
       "@fevex/core/http": ["packages/fevex/src/http/index.ts"],
       "@fevex/core/runtime": ["packages/fevex/src/runtime/index.ts"],
       "@fevex/core/testing": ["packages/fevex/src/testing/index.ts"]
@@ -14,7 +18,8 @@
     "declaration": false,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "rootDir": "../.."
   },
   "include": ["src"]
 }

@@ -1,0 +1,250 @@
+{
+  "agentName": "research",
+  "cases": [
+    {
+      "caseId": "documentation",
+      "latencyMs": 2705.2030830000003,
+      "output": {
+        "account": null,
+        "answer": "La documentación menciona `resumeRun` en la página \"Workflows & teams\": las ejecuciones pausadas se reanudan con `resumeRun`, y un worker externo puede recuperar una ejecución `running` huérfana después de que expire su lease. Sin embargo, el extracto recuperado no detalla la firma, los parámetros ni el procedimiento exacto para reanudar una ejecución; esa información falta. Nota: este agente solo investiga documentación y no puede ejecutar ni modificar ejecuciones de Fevex.",
+        "sources": [
+          {
+            "quote": "Paused runs resume with `resumeRun`; an external worker can recover an orphaned\n`running` run after its lease expires:",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          }
+        ],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 1
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 1995,
+        "outputTokens": 245,
+        "totalTokens": 2240
+      }
+    },
+    {
+      "caseId": "account",
+      "latencyMs": 2220.456333,
+      "output": {
+        "account": {
+          "id": 42,
+          "plan": "pro",
+          "status": "active"
+        },
+        "answer": "La cuenta 42 está activa (status: active) y su plan es pro.",
+        "sources": [],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "accounts__getAccount"
+      ],
+      "usage": {
+        "inputTokens": 1980,
+        "outputTokens": 126,
+        "totalTokens": 2106
+      }
+    },
+    {
+      "caseId": "combined",
+      "latencyMs": 2924.2514170000013,
+      "output": {
+        "account": {
+          "id": 42,
+          "plan": "pro",
+          "status": "active"
+        },
+        "answer": "Sobre `resumeRun`: según la documentación, las ejecuciones pausadas se reanudan con `resumeRun`; además, un worker externo puede recuperar una ejecución `running` huérfana después de que expire su lease (documentación «Workflows & teams»). El extracto no incluye más detalles (firma, parámetros, ejemplos), por lo que no puedo ampliar más allá de eso. Nota: este agente solo investiga; no puede ejecutar ni reanudar ejecuciones.\n\nSobre la cuenta 42: el API devuelve estado `active` y plan `pro`.",
+        "sources": [
+          {
+            "quote": "Paused runs resume with `resumeRun`; an external worker can recover an orphaned\n`running` run after its lease expires:",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          }
+        ],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 1
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search",
+        "accounts__getAccount"
+      ],
+      "usage": {
+        "inputTokens": 2063,
+        "outputTokens": 309,
+        "totalTokens": 2372
+      }
+    },
+    {
+      "caseId": "no-matches",
+      "latencyMs": 2837.302375000001,
+      "output": {
+        "account": null,
+        "answer": "La búsqueda de «zzz_no_documentation_match_9» en la documentación de Fevex no devolvió ningún resultado, por lo que no hay información que explique ese término. Es posible que sea un identificador inexistente o mal escrito; si buscas un concepto real (por ejemplo, un nombre de función o parámetro), indícame el término correcto y lo consulto.",
+        "sources": [],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 1998,
+        "outputTokens": 211,
+        "totalTokens": 2209
+      }
+    },
+    {
+      "caseId": "missing-id",
+      "latencyMs": 1141.9643749999996,
+      "output": {
+        "account": null,
+        "answer": "Necesito el ID numérico de tu cuenta para consultar su estado y plan. Por favor, proporciónalo.",
+        "sources": [],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [],
+      "usage": {
+        "inputTokens": 936,
+        "outputTokens": 71,
+        "totalTokens": 1007
+      }
+    },
+    {
+      "caseId": "api-unavailable",
+      "error": "OpenAPI HTTP request failed",
+      "latencyMs": 1305.0481250000012,
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "expectedFailure": true
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "failed",
+      "tools": [
+        "accounts__getAccount"
+      ]
+    }
+  ],
+  "dataset": {
+    "name": "research-fixtures",
+    "version": "2"
+  },
+  "schemaVersion": "fevex.eval.v1",
+  "scorerIds": [
+    "tools.selected",
+    "research.evidence"
+  ],
+  "suiteName": "research",
+  "summary": {
+    "averageScore": 1,
+    "caseCount": 6,
+    "completedCount": 5,
+    "errorScoreCount": 0,
+    "failedCount": 1,
+    "failedScoreCount": 0,
+    "latencyMs": 13134.225708000004,
+    "passedScoreCount": 12,
+    "skippedScoreCount": 0,
+    "usage": {
+      "inputTokens": 8972,
+      "outputTokens": 962,
+      "totalTokens": 9934
+    }
+  },
+  "targetVersion": "deepseek-v4-flash"
+}

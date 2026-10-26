@@ -11,7 +11,6 @@ import {
   CircleDashed,
   CircleSlash2,
   CircleX,
-  Copy,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -24,12 +23,10 @@ import {
   X,
 } from 'lucide-react';
 import {
-  type ComponentProps,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
-  isValidElement,
   useEffect,
   useRef,
   useState,
@@ -58,6 +55,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
 import { Spinner } from '@/components/ui/spinner';
+import { ResearchAnswerView } from '@/components/research-answer';
+import { CodeBlock } from '@/components/code-block';
+import { ResearchEvaluations } from '@/components/research-evaluations';
+import { readResearchAnswer } from '../../research/answer';
 
 type Message = {
   role: 'assistant' | 'user';
@@ -260,7 +261,7 @@ export default function Home() {
     for await (const agentEvent of client.observeRun(runId, { signal: controller.signal, after })) {
         recordAssistantEvent(agentEvent);
 
-        if (agentEvent.type === 'model.output.delta') {
+        if (agentEvent.type === 'model.output.delta' && selectedRunnable?.name !== 'research') {
           const delta = readPayloadText(agentEvent.payload, 'delta');
           const workflowStepId = readPayloadText(agentEvent.payload, 'workflowStepId');
           if (workflowStepId && isResearchStep(selectedRunnable?.name ?? '', workflowStepId)) {
@@ -1035,6 +1036,9 @@ export default function Home() {
               </div>
             </div>
 
+            {selectedRunnable?.name === 'research' && (
+              <ResearchEvaluations apiUrl={apiUrl} disabled={isRunning} model={selectedModelId} />
+            )}
             <div className="messages">
               {messages.map((message, index) => (
                 <article className={`message ${message.role}`} key={index}>
@@ -1415,6 +1419,8 @@ function DebugPanel({ message, elapsedMs }: { message: Message; elapsedMs: numbe
 }
 
 function MessageContent({ content }: { content: JsonValue }) {
+  const research = readResearchAnswer(content);
+  if (research) return <ResearchAnswerView answer={research} />;
   if (typeof content !== 'string') {
     return (
       <div className="message-content">
@@ -1434,41 +1440,6 @@ function MessageContent({ content }: { content: JsonValue }) {
       </ReactMarkdown>
     </div>
   );
-}
-
-function CodeBlock({ children, ...props }: ComponentProps<'pre'>) {
-  const codeRef = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState(false);
-  const language = codeBlockLanguage(children);
-
-  async function copyCode() {
-    const text = codeRef.current?.textContent;
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {}
-  }
-
-  return (
-    <div className="code-block">
-      {language && <span className="code-language">{language}</span>}
-      <button className="code-copy" onClick={() => void copyCode()} type="button">
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-        {copied ? 'Copiado' : 'Copiar'}
-      </button>
-      <pre {...props} ref={codeRef}>{children}</pre>
-    </div>
-  );
-}
-
-function codeBlockLanguage(node: ReactNode): string | undefined {
-  if (isValidElement<{ className?: string }>(node)) {
-    return node.props.className?.match(/\blanguage-([^\s]+)/)?.[1];
-  }
-  if (Array.isArray(node)) return node.map(codeBlockLanguage).find(Boolean);
-  return undefined;
 }
 
 function WorkflowEventCard({

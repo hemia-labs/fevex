@@ -17,6 +17,12 @@
     "dev:mcp": "bun run --cwd examples/nest-mcp dev",
     "dev:nest": "bun run --cwd examples/nest-api dev",
     "dev:next": "bun run --cwd examples/next-playground dev",
+    "demo:starter": "bun run examples/starter/index.ts",
+    "demo:channels": "bun run examples/channel-elicitation/index.ts",
+    "demo:connections": "bun run examples/connections/index.ts",
+    "demo:research": "bun run examples/research/index.ts",
+    "eval:research": "bun run examples/research/index.ts --eval",
+    "inspect": "bun run scripts/inspect-run.ts",
     "build": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run build); fi; done",
     "test": "set -e; for d in packages/*; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run test); fi; done; bun run --cwd examples/nest-api test",
     "typecheck": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run typecheck); fi; done"

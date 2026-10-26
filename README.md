@@ -47,6 +47,23 @@ Schema-compatible validator can be used:
 npm install zod
 ```
 
+## Templates and debugging
+
+For an adaptable starting point, see the [example catalog](examples/README.md):
+
+```bash
+bun run demo:starter
+bun run demo:channels
+bun run demo:connections
+bun run demo:research
+bun run eval:research
+```
+
+Inspect an existing run through its HTTP host with
+`bun run inspect RUN_ID --api http://localhost:3001 --events`.
+See [templates and debugging](https://fevex.dev/docs/development/) for local
+inspection, event cursors and adapting the examples.
+
 ## HTTP v3 playground
 
 Run a real OpenAI or DeepSeek agent through the versioned Fetch/SSE protocol:
@@ -114,6 +131,13 @@ const billing = defineConnection({
 request/response bodies. YAML, remote refs, multipart, binary payloads and OAuth
 lifecycles stay with the hosting app or later phases.
 
+Try the [MCP documentation and OpenAPI account examples](examples/connections/)
+with real local HTTP requests and a deterministic model, without API keys:
+
+```bash
+bun run examples/connections/index.ts
+```
+
 ## Channels core
 
 Channels adapt external message surfaces to Fevex without making the runtime
@@ -154,8 +178,17 @@ if (!result.ignored) sessions.set(result.message.conversationId, result.run.sess
 ```
 
 The helper emits `channel.received`, `channel.delivered` and `channel.failed`
-events through its local `onEvent` callback. Durable redelivery/deduplication
-and Slack-specific signature checks stay for the Slack adapter phase.
+events through its local `onEvent` callback. When an agent pauses for external
+information, it calls the adapter's optional `deliverElicitation` hook with the
+request, run and conversation IDs, and a stable delivery key. The result then
+includes `elicitation` and the stored paused run.
+
+Humans, services and other agents respond through the same `app.resumeRun` API.
+Use `deliverChannelRun` to retry a stored request or deliver the resumed result
+without starting another run. The host owns trusted conversation/run routing,
+inbound deduplication and durable outbound delivery; adapters must deduplicate
+the supplied delivery key. See the [channel and resolver example](examples/channel-elicitation/)
+and the [channel guide](https://fevex.dev/docs/channels/).
 
 ## Knowledge and memory
 
@@ -804,7 +837,7 @@ The MVP intentionally supports:
 - optional Standard Schema validation;
 - immediate `AbortSignal` cancellation with cooperative underlying work.
 
-It does not include a CLI, hosted observability service, model-judge evals or
+It does not include a standalone CLI package, hosted observability service, model-judge evals or
 human evaluation workflows.
 
 ## Documentation

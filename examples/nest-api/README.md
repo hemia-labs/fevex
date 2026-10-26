@@ -1,4 +1,4 @@
-# Fevex HTTP v2 playground
+# Fevex HTTP v3 playground
 
 The Nest example hosts `@fevex/core/http`; the Next.js playground consumes its
 official client. Nest owns HTTP lifecycle and Fevex owns runs, sessions and
@@ -41,6 +41,7 @@ The API exposes independent agents for the optional capabilities:
 | Agent | Capability | Example prompt |
 | --- | --- | --- |
 | `mcp-tools` | Local MCP connection named `nest_mcp` | `Use MCP to slugify Hello Fevex Workflows` |
+| `research` | Shared MCP docs + OpenAPI account agent with evidence evals | `¿Cómo uso resumeRun y cuál es el estado y plan de la cuenta 42?` |
 | `billing-openapi` | Bundled OpenAPI 3.1 connection | `Get invoice INV-10` |
 | `refund-approval` | Durable human approval and keyed effect | `Refund account 10 for 250 MXN because of a duplicate charge` |
 | `knowledge-support` | Skill, request context and session memory | `What refund policy and customer context apply?` |
@@ -50,6 +51,22 @@ The API exposes independent agents for the optional capabilities:
 For the MCP demo, start the local MCP server first with `bun run dev:mcp`.
 The playground timeline will show rows like `Usando MCP nest_mcp · slugify`
 while the tool runs, completes or fails.
+
+The `research` agent uses repository docs and account fixtures in process by
+default, so it needs no separate MCP server. The UI displays source quotes and
+offers **Evaluar modelo** for seven isolated cases using the selected model.
+Documentation results include complete section context and code; the UI renders
+steps and copyable examples. Evaluations reject modified or unsupported code.
+This explicit action uses the provider API. The API-failure case should fail
+its run and pass its checks. Evaluations use the model's default reasoning;
+conversation runs retain the playground's reasoning selector. See
+[research](../research/) for commands, limits and configurable external services.
+Nest resolves local docs relative to its example directory; set
+`FEVEX_RESEARCH_DOCS_PATH` when starting it from another working directory.
+
+`bun run --cwd examples/nest-api build` emits ESM, matching the workspace
+packages. Use `bun run --cwd examples/nest-api start` to run the compiled host;
+its entry includes the shared research definitions.
 
 `sandbox-code` uses `createLocalSandbox` with the current Node/Bun executable
 allowlisted, empty env by default, a short timeout and no network capability.
@@ -141,7 +158,16 @@ Inspect with `GET /v1/runs/:runId`, cancel with
 `POST /v1/runs/:runId/resume`. An authenticated worker can explicitly recover
 an orphaned running execution with `POST /v1/runs/:runId/recover`; Fevex does
 not run a global recovery poller. Errors use `application/problem+json`; every
-response includes `Fevex-Protocol-Version: 2`.
+response includes `Fevex-Protocol-Version: 3`.
+
+Inspect an existing run without changing its state from the repository root:
+
+```bash
+bun run inspect RUN_ID --api http://localhost:3001 --events
+```
+
+See the [example catalog](../README.md) for event cursors, timeouts and metadata
+output.
 
 Closing the SSE connection only stops observation. The run continues until it
 finishes or is explicitly cancelled. This example intentionally has no real

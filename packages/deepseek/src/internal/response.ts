@@ -39,9 +39,12 @@ export function parseDeepSeekResponse(
   if ((choice.finish_reason === 'tool_calls') !== Boolean(toolCalls?.length)) {
     throw new DeepSeekError('DeepSeek finish_reason does not match the tool call payload');
   }
+  // Tool-call text is intermediate content; the schema applies to the final reply.
   const output =
     typeof message.content === 'string'
-      ? parseOutput(message.content, input.outputSchema !== undefined)
+      ? toolCalls?.length && input.outputSchema !== undefined
+        ? message.content || undefined
+        : parseOutput(message.content, input.outputSchema !== undefined)
       : undefined;
   const usage = parseUsage(response.usage);
   const providerState = toolCalls?.length

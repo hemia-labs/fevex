@@ -1,0 +1,227 @@
+{
+  "agentName": "research",
+  "cases": [
+    {
+      "caseId": "documentation",
+      "latencyMs": 5107.544,
+      "output": {
+        "account": null,
+        "answer": "La documentación solo ofrece una mención breve de `resumeRun`: las ejecuciones pausadas se reanudan con `resumeRun`, y un worker externo puede recuperar una ejecución `running` que quedó huérfana después de que expirara su lease.\n\nLimitación: el extracto recuperado no incluye el procedimiento completo (firma/parámetros, endpoint, ejemplo de código ni requisitos previos), así que no puedo detallar los pasos concretos para reanudar una ejecución. Además, este agente solo investiga: no puede leer ni modificar el estado de ninguna ejecución de Fevex.",
+        "sources": [
+          {
+            "quote": "Paused runs resume with `resumeRun`; an external worker can recover an orphaned\n`running` run after its lease expires:",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          }
+        ],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 1
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 1931,
+        "outputTokens": 767,
+        "totalTokens": 2698
+      }
+    },
+    {
+      "caseId": "account",
+      "latencyMs": 2556.631875000001,
+      "output": {
+        "account": {
+          "id": 42,
+          "plan": "pro",
+          "status": "active"
+        },
+        "answer": "La cuenta 42 está **activa** (status: active) y su plan es **pro**.",
+        "sources": [],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "accounts__getAccount"
+      ],
+      "usage": {
+        "inputTokens": 1873,
+        "outputTokens": 162,
+        "totalTokens": 2035
+      }
+    },
+    {
+      "caseId": "combined",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 3502.4889580000017,
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": "Missing or invalid structured answer",
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": [
+        "docs__search",
+        "accounts__getAccount"
+      ]
+    },
+    {
+      "caseId": "no-matches",
+      "latencyMs": 2408.838166999998,
+      "output": {
+        "account": null,
+        "answer": "La búsqueda exacta de «zzz_no_documentation_match_9» no devolvió ningún resultado en la documentación de Fevex. No hay coincidencias, por lo que no existe documentación que explique ese término con esta consulta. Es posible que se trate de un identificador inexistente o mal escrito; si el término correcto es otro, puedo intentar una nueva búsqueda con la palabra clave adecuada.",
+        "sources": [],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 1863,
+        "outputTokens": 184,
+        "totalTokens": 2047
+      }
+    },
+    {
+      "caseId": "missing-id",
+      "latencyMs": 1265.7308330000014,
+      "output": {
+        "account": null,
+        "answer": "Necesito tu ID de cuenta numérico para poder consultar el estado y el plan. Por favor, proporciónalo (por ejemplo: 12345).",
+        "sources": [],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [],
+      "usage": {
+        "inputTokens": 880,
+        "outputTokens": 85,
+        "totalTokens": 965
+      }
+    },
+    {
+      "caseId": "api-unavailable",
+      "error": "OpenAPI HTTP request failed",
+      "latencyMs": 967.2409999999982,
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "expectedFailure": true
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        }
+      ],
+      "status": "failed",
+      "tools": [
+        "accounts__getAccount"
+      ]
+    }
+  ],
+  "dataset": {
+    "name": "research-fixtures",
+    "version": "1"
+  },
+  "schemaVersion": "fevex.eval.v1",
+  "scorerIds": [
+    "tools.selected",
+    "research.evidence"
+  ],
+  "suiteName": "research",
+  "summary": {
+    "averageScore": 0.9166666666666666,
+    "caseCount": 6,
+    "completedCount": 4,
+    "errorScoreCount": 0,
+    "failedCount": 2,
+    "failedScoreCount": 1,
+    "latencyMs": 15808.474833,
+    "passedScoreCount": 11,
+    "skippedScoreCount": 0,
+    "usage": {
+      "inputTokens": 6547,
+      "outputTokens": 1198,
+      "totalTokens": 7745
+    }
+  },
+  "targetVersion": "deepseek-v4-flash"
+}

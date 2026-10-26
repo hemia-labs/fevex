@@ -1,4 +1,4 @@
-import type { AgentEvent, ExecutionContext, JsonObject } from '../core';
+import type { AgentEvent, ExecutionContext, JsonObject, RunId } from '../core';
 import type { Fevex } from '../fevex';
 import type { AgentRun, ElicitationRequest, SessionId } from '../runtime';
 
@@ -24,11 +24,20 @@ export interface ChannelContext {
   signal?: AbortSignal;
 }
 
+export interface ChannelElicitationContext extends ChannelContext {
+  /** Stable key for transport-level idempotency, preserved across delivery retries. */
+  deliveryId: string;
+  runId: RunId;
+  sessionId: SessionId;
+  conversationId: string;
+  threadId?: string;
+}
+
 export interface ChannelAdapter<TInput = unknown, TOutput = unknown> {
   name: string;
   parse(input: TInput, context: ChannelContext): Promise<ChannelMessage | null>;
   deliver(output: ChannelOutput, context: ChannelContext): Promise<TOutput>;
-  deliverElicitation?(request: ElicitationRequest, context: ChannelContext): Promise<TOutput>;
+  deliverElicitation?(request: ElicitationRequest, context: ChannelElicitationContext): Promise<TOutput>;
 }
 
 export type ChannelEventType = 'channel.received' | 'channel.delivered' | 'channel.failed';
@@ -42,6 +51,8 @@ interface ChannelEventBase {
   deliveryId?: string;
   conversationId?: string;
   threadId?: string;
+  runId?: RunId;
+  requestId?: string;
 }
 
 export type ChannelEvent =
@@ -62,23 +73,29 @@ export type ChannelRunEvent = ChannelEvent | AgentEvent;
 
 export class ChannelError extends Error {
   readonly name = 'ChannelError';
+  readonly runId?: RunId;
 
   constructor(
     readonly code: string,
     readonly safeMessage: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { runId?: RunId },
   ) {
     super(safeMessage, options);
+    this.runId = options?.runId;
   }
 }
 
-export interface ChannelRunOptions<TInput = unknown, TDelivery = unknown> {
+export interface ChannelDeliveryOptions<TInput = unknown, TDelivery = unknown> {
   fevex: Fevex;
   adapter: ChannelAdapter<TInput, TDelivery>;
-  agentName: string;
-  resolveSessionId?: (message: ChannelMessage) => SessionId | undefined | Promise<SessionId | undefined>;
   onEvent?: (event: ChannelEvent) => void;
   signal?: AbortSignal;
+}
+
+export interface ChannelRunOptions<TInput = unknown, TDelivery = unknown>
+  extends ChannelDeliveryOptions<TInput, TDelivery> {
+  agentName: string;
+  resolveSessionId?: (message: ChannelMessage) => SessionId | undefined | Promise<SessionId | undefined>;
 }
 
 export type ChannelRunResult<TDelivery = unknown> =
@@ -89,5 +106,7 @@ export type ChannelRunResult<TDelivery = unknown> =
       run: AgentRun;
       output: ChannelOutput;
       delivery: TDelivery;
+      /** Present when the agent is waiting for external information. */
+      elicitation?: ElicitationRequest;
       events: ChannelRunEvent[];
     };

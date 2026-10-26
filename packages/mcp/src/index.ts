@@ -215,6 +215,11 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
         signal: signal.signal,
       });
       if (!response.ok) {
+        if (response.status === 404 && connection?.sessionId && state === connection) {
+          // A late response from an old session must not invalidate its replacement.
+          state = undefined;
+          initializing = undefined;
+        }
         await response.body?.cancel();
         throw integrationError(
           response.status === 401 || response.status === 403 ? 'MCP_AUTH_REQUIRED' : 'MCP_HTTP_ERROR',

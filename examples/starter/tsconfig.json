@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["*.ts", "../../scripts/inspect-run.ts", "../../scripts/inspect-run.test.ts"]
+}

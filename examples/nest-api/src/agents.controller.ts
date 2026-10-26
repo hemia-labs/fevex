@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { All, Controller, Get, Req, Res } from '@nestjs/common';
+import { All, BadRequestException, Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
 import { FevexService } from './fevex.service';
 
 @Controller()
@@ -24,6 +24,23 @@ export class AgentsController {
   @Get('models')
   listModels() {
     return this.fevex.listModels();
+  }
+
+  @Post('research/evaluations')
+  async evaluateResearch(@Body() body: unknown, @Res() res: any) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => key !== 'model')
+      || typeof (body as { model?: unknown }).model !== 'string') {
+      throw new BadRequestException('Provide a model ID');
+    }
+    const controller = new AbortController();
+    const abort = () => { if (!res.writableEnded) controller.abort(new Error('Client disconnected')); };
+    res.on('close', abort);
+    try {
+      const report = await this.fevex.evaluateResearch((body as { model: string }).model,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]));
+      if (!res.destroyed) res.json(report);
+    } finally { res.off('close', abort); }
   }
 
   @All([

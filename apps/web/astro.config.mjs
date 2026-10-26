@@ -43,6 +43,7 @@ export default defineConfig({
             { label: 'Overview', slug: 'docs' },
             { label: 'Install', slug: 'docs/install' },
             { label: 'Quickstart', slug: 'docs/quickstart' },
+            { label: 'Templates & debugging', slug: 'docs/development' },
           ],
         },
         {
@@ -61,6 +62,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Adapters', slug: 'docs/adapters' },
+            { label: 'Channels & resolvers', slug: 'docs/channels' },
             { label: 'Package subpaths', slug: 'docs/packages' },
             { label: 'Status & scope', slug: 'docs/status' },
           ],

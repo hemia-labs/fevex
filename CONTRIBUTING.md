@@ -35,6 +35,28 @@ The full build includes examples and the website. The Next.js example currently
 fetches Google Fonts during its build, so that build needs network access.
 Model API keys are not needed for the automated source tests.
 
+The [example catalog](examples/README.md) lists standalone templates and run
+inspection commands. Their focused checks are:
+
+```sh
+bun run demo:starter
+bun run demo:channels
+bun run demo:connections
+bun run demo:research
+bun run eval:research
+bun test examples/research/evaluation.test.ts
+bun x tsc -p examples/research/tsconfig.json
+bun run --cwd examples/next-playground test
+bun test scripts/inspect-run.test.ts
+bun x tsc -p examples/starter/tsconfig.json
+bun x tsc -p examples/channel-elicitation/tsconfig.json
+bun x tsc -p examples/connections/tsconfig.json
+```
+
+The connections and research demos open a temporary localhost service;
+research evals use in-process fixtures. CI runs these checks alongside the Nest
+API and playground checks.
+
 For a focused package change:
 
 ```sh

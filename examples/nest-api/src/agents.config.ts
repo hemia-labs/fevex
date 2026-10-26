@@ -1,5 +1,6 @@
 import { defineAgent, defineTool, defineWorkflow } from '@fevex/core';
 import { z } from 'zod';
+import { researchAgent, researchCatalog } from '../../research/agent';
 import {
   capabilityAgentCatalog,
   capabilityAgents,
@@ -56,7 +57,7 @@ const localAgentCatalog = [
   },
 ];
 
-export const agentCatalog = [...localAgentCatalog, ...capabilityAgentCatalog];
+export const agentCatalog = [...localAgentCatalog, ...capabilityAgentCatalog, researchCatalog];
 
 export const workflowCatalog = [
   {
@@ -299,6 +300,7 @@ export const agents = [
     ...(name === 'elicitation-support' ? { elicitation: 'pause' as const } : {}),
   })),
   ...capabilityAgents,
+  researchAgent,
 ];
 
 export { connections, contextProviders, memoryStore };

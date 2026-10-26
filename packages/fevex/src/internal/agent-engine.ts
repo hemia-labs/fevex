@@ -94,7 +94,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
     }
-    const { modelName } = resolveModel(agent, request.model);
+    const { modelName, model } = resolveModel(agent, request.model);
     const now = new Date().toISOString();
     let session: Session;
     const newSession = request.sessionId === undefined;
@@ -122,6 +122,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       id: crypto.randomUUID(),
       sessionId: session.id,
       agentName: name,
+      modelName,
+      ...(model.metadata === undefined ? {} : { modelMetadata: structuredClone(model.metadata) }),
       status: 'running',
       revision: 0,
       createdAt: now,
@@ -1331,6 +1333,10 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       );
     }
     const { modelName, model } = checkpointModel;
+    if (run.modelName === undefined) {
+      run.modelName = modelName;
+      run.modelMetadata = model.metadata === undefined ? undefined : structuredClone(model.metadata);
+    }
     if (checkpoint.providerState !== undefined && !model.stateCodec) {
       throw new FevexRunError(
         'RUN_NOT_RESUMABLE',
