@@ -1,7 +1,9 @@
-import type { ExecutionContext, JsonValue } from '../core';
+import type { ExecutionContext, JsonValue, RunId } from '../core';
+import { RunPausedError } from '../run-error';
 import type { RunResult } from '../runtime';
 import {
   ChannelError,
+  type ChannelDeliveryOptions,
   type ChannelEvent,
   type ChannelFailurePhase,
   type ChannelMessage,
@@ -10,7 +12,7 @@ import {
   type ChannelRunResult,
 } from './channel';
 
-/** Parses one channel input, runs the configured agent, and delivers its output. */
+/** Parses one channel input, runs the configured agent, and delivers its result or elicitation. */
 export async function handleChannelInput<TInput, TDelivery>(
   input: TInput,
   options: ChannelRunOptions<TInput, TDelivery>,
@@ -36,47 +38,97 @@ export async function handleChannelInput<TInput, TDelivery>(
 
   emit(received(options.adapter.name, message));
 
-  let result: RunResult<JsonValue>;
+  let runId: RunId;
   try {
     const sessionId = await options.resolveSessionId?.(message);
-    result = await options.fevex.runAgent<string, JsonValue>(options.agentName, {
+    const result: RunResult<JsonValue> = await options.fevex.runAgent<string, JsonValue>(options.agentName, {
       input: message.content,
       ...(sessionId ? { sessionId } : {}),
       context: channelContext(options.adapter.name, message),
       signal: options.signal,
     });
+    runId = result.runId;
   } catch (cause) {
-    const error = channelError('CHANNEL_RUN_FAILED', 'Channel run failed', cause);
-    emit(failed(options.adapter.name, 'run', error, message));
-    throw error;
+    if (cause instanceof RunPausedError && cause.pause.type === 'elicitation') {
+      runId = cause.runId;
+    } else {
+      const error = channelError('CHANNEL_RUN_FAILED', 'Channel run failed', cause);
+      emit(failed(options.adapter.name, 'run', error, message));
+      throw error;
+    }
   }
 
-  const run = await options.fevex.getRun<JsonValue>(result.runId);
-  if (!run || run.kind === 'workflow' || run.kind === 'team') {
-    const error = channelError('CHANNEL_RUN_FAILED', 'Channel run was not found after completion');
-    emit(failed(options.adapter.name, 'run', error, message));
+  const delivered = await deliverChannelRun(runId, message, options);
+  return { ...delivered, events: [channelEvents[0]!, ...delivered.events] };
+}
+
+/** Delivers a stored agent result or elicitation without executing the agent again. */
+export async function deliverChannelRun<TInput, TDelivery>(
+  runId: RunId,
+  message: ChannelMessage,
+  options: ChannelDeliveryOptions<TInput, TDelivery>,
+): Promise<Exclude<ChannelRunResult<TDelivery>, { ignored: true }>> {
+  options.signal?.throwIfAborted();
+  const run = await options.fevex.getRun<JsonValue>(runId);
+  const elicitation = run?.status === 'paused' && run.pause?.type === 'elicitation'
+    ? run.pause.request
+    : undefined;
+  if (!run || run.kind === 'workflow' || run.kind === 'team'
+    || (run.status !== 'completed' && !elicitation)) {
+    const error = channelError('CHANNEL_RUN_FAILED', 'Channel run is not ready for delivery', undefined, runId);
+    options.onEvent?.(failed(options.adapter.name, 'run', error, message));
     throw error;
   }
 
   const output: ChannelOutput = {
-    deliveryId: message.deliveryId,
+    deliveryId: elicitation ? `elicitation:${runId}:${elicitation.id}` : message.deliveryId,
     conversationId: message.conversationId,
     ...(message.threadId ? { threadId: message.threadId } : {}),
-    content: stringifyOutput(result.output),
-    metadata: { runId: result.runId, sessionId: result.sessionId },
+    content: elicitation ? elicitation.prompt : stringifyOutput(run.output ?? null),
+    metadata: {
+      runId,
+      sessionId: run.sessionId,
+      ...(elicitation ? { requestId: elicitation.id } : {}),
+    },
   };
 
   let delivery: TDelivery;
   try {
-    delivery = await options.adapter.deliver(output, { signal: options.signal });
+    if (elicitation) {
+      if (!options.adapter.deliverElicitation) {
+        throw channelError('CHANNEL_ELICITATION_UNSUPPORTED', 'Channel does not support elicitation delivery', undefined, runId);
+      }
+      if (elicitation.expiresAt && Date.now() > Date.parse(elicitation.expiresAt)) {
+        throw channelError('CHANNEL_ELICITATION_EXPIRED', 'Channel elicitation has expired', undefined, runId);
+      }
+      delivery = await options.adapter.deliverElicitation(elicitation, {
+        signal: options.signal,
+        deliveryId: output.deliveryId,
+        runId,
+        sessionId: run.sessionId,
+        conversationId: message.conversationId,
+        ...(message.threadId ? { threadId: message.threadId } : {}),
+      });
+    } else {
+      delivery = await options.adapter.deliver(output, { signal: options.signal });
+    }
   } catch (cause) {
-    const error = channelError('CHANNEL_DELIVERY_FAILED', 'Channel delivery failed', cause);
-    emit(failed(options.adapter.name, 'deliver', error, message));
+    const error = cause instanceof ChannelError
+      ? channelError(cause.code, cause.safeMessage, cause, runId)
+      : channelError('CHANNEL_DELIVERY_FAILED', 'Channel delivery failed', cause, runId);
+    options.onEvent?.({
+      ...failed(options.adapter.name, 'deliver', error, { ...message, deliveryId: output.deliveryId }),
+      ...(elicitation ? { requestId: elicitation.id } : {}),
+    });
     throw error;
   }
 
-  const deliveredEvent = delivered(options.adapter.name, message);
-  emit(deliveredEvent);
+  const deliveredEvent = {
+    ...delivered(options.adapter.name, { ...message, deliveryId: output.deliveryId }),
+    runId,
+    ...(elicitation ? { requestId: elicitation.id } : {}),
+  };
+  options.onEvent?.(deliveredEvent);
 
   return {
     ignored: false,
@@ -84,7 +136,8 @@ export async function handleChannelInput<TInput, TDelivery>(
     run,
     output,
     delivery,
-    events: [channelEvents[0]!, ...(result.events ?? []), deliveredEvent],
+    ...(elicitation ? { elicitation } : {}),
+    events: [...await options.fevex.listEvents(runId), deliveredEvent],
   };
 }
 
@@ -143,6 +196,7 @@ function failed(
     adapter,
     phase,
     error: error.safeMessage,
+    ...(error.runId ? { runId: error.runId } : {}),
     ...(message
       ? {
           messageId: message.id,
@@ -154,8 +208,8 @@ function failed(
   };
 }
 
-function channelError(code: string, safeMessage: string, cause?: unknown): ChannelError {
-  return new ChannelError(code, safeMessage, cause === undefined ? undefined : { cause });
+function channelError(code: string, safeMessage: string, cause?: unknown, runId?: RunId): ChannelError {
+  return new ChannelError(code, safeMessage, { ...(cause === undefined ? {} : { cause }), ...(runId ? { runId } : {}) });
 }
 
 function stringifyOutput(value: JsonValue): string {

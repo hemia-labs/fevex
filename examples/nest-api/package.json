@@ -1,10 +1,11 @@
 {
   "name": "@fevex/example-nest-api",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "bun --watch src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "bun dist/main.js",
+    "start": "bun dist/examples/nest-api/src/main.js",
     "test": "bun test --cwd src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -71,3 +71,6 @@ console.log(result.output.answer);
 Invalid registrations throw `FevexConfigurationError` with a stable `code`.
 `fakeModel` returns its configured responses in order and records every input in
 `model.calls`.
+
+For a runnable template with separate definitions and local run inspection,
+continue with [Templates & debugging](/docs/development/).

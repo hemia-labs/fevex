@@ -757,6 +757,28 @@ describe('createDeepSeek', () => {
     ).rejects.toThrow('DeepSeek structured output was not valid JSON');
   });
 
+  test('accepts empty and textual tool-call content before the final structured reply', async () => {
+    for (const content of ['', 'I will look up the account.']) {
+      const toolCall = { id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{"query":"account"}' } };
+      const responses = [
+        { choices: [{ finish_reason: 'tool_calls', message: { content, tool_calls: [toolCall] } }] },
+        { choices: [{ finish_reason: 'stop', message: { content: '{"answer":"found"}' } }] },
+      ];
+      const model = createDeepSeek({ apiKey: 'test-key', schemaPolicy: 'best-effort', fetch: async () => ok(responses.shift()) })('deepseek-v4-flash');
+      const request = input({ outputSchema: { type: 'object' }, tools: [{ name: 'lookup', inputSchema: { type: 'object' } }] });
+      const first = await collectModel(model, request);
+      expect(first.toolCalls).toEqual([{ id: 'call-1', name: 'lookup', input: { query: 'account' } }]);
+      expect(first.output).toBe(content || undefined);
+      expect(first.providerState).toBeDefined();
+      const final = await collectModel(model, { ...request, providerState: first.providerState, messages: [
+        ...request.messages,
+        { role: 'assistant', content, toolCalls: first.toolCalls },
+        { role: 'tool', name: 'lookup', toolCallId: 'call-1', content: '{"found":true}' },
+      ] });
+      expect(final.output).toEqual({ answer: 'found' });
+    }
+  });
+
   test('rejects incomplete, filtered and malformed tool-call responses', async () => {
     const responses = [
       {

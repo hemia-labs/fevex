@@ -961,3 +961,19 @@ controls progress, so a slow consumer retains at most one page plus the stream's
 single queued frame, rather than buffering the run's entire history. Disconnecting
 cancels polling. This bounds event counts, not the byte size of an individual event;
 per-event payload limits and data retention remain host responsibilities.
+
+### Run model identity
+
+Agent runs retain the effective `modelName` and a `modelMetadata` snapshot when
+the gateway supplies metadata. Traces and cost calculators use this identity,
+including per-request model overrides, after terminal checkpoint cleanup and
+across pause/resume. These fields are optional for older stored runs; resuming
+an older run fills them from its checkpoint's resolved model.
+
+### Local sandbox limits
+
+The local development sandbox sends `SIGTERM` on timeout or cancellation, then
+`SIGKILL` after 100 ms if the process has not closed. Cancellation rejects with
+the caller's reason after process cleanup. Output limits apply separately to
+stdout and stderr in UTF-8 bytes, omitting an incomplete trailing character.
+This subprocess control does not provide operating-system isolation.

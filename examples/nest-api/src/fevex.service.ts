@@ -1,4 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { resolve } from 'node:path';
+import { createResearchConnections, createResearchFixtures } from '../../research/agent';
+import { evaluateResearch } from '../../research/evaluation';
 import { createDeepSeek } from '@fevex/deepseek';
 import { createOpenAI } from '@fevex/openai';
 import {
@@ -33,6 +36,11 @@ import {
 export class FevexService {
   private readonly logger = new Logger(FevexService.name);
   private readonly fevex: Fevex;
+  private readonly models: Record<string, ModelGateway>;
+  // ponytail: single-process eval gate; use a queue if this demo becomes multi-user.
+  private evaluationRunning = false;
+  private readonly researchDocumentsPath = process.env.FEVEX_RESEARCH_DOCS_PATH
+    ?? resolve(process.cwd(), '../../apps/web/src/content/docs/docs');
   private readonly modelCatalog: Array<{
     id: string;
     provider?: string;
@@ -46,6 +54,7 @@ export class FevexService {
 
   constructor() {
     const configured = createModels();
+    this.models = configured.models;
     this.modelCatalog = configured.catalog;
     const sandbox: Sandbox = createLocalSandbox({
       rootDir: process.cwd(),
@@ -61,12 +70,21 @@ export class FevexService {
             network: { allow: ['*'] },
           })
         : mockPreviewFrameSource();
+    const docsUrl = process.env.RESEARCH_MCP_URL;
+    const accountsUrl = process.env.RESEARCH_API_URL;
+    if (Boolean(docsUrl) !== Boolean(accountsUrl)) throw new Error('Set both RESEARCH_MCP_URL and RESEARCH_API_URL');
+    const researchConnections = docsUrl && accountsUrl
+      ? createResearchConnections({ docsUrl, accountsUrl,
+          docsHeaders: process.env.RESEARCH_DOCS_TOKEN ? { authorization: `Bearer ${process.env.RESEARCH_DOCS_TOKEN}` } : undefined,
+          accountsHeaders: process.env.RESEARCH_API_TOKEN ? { authorization: `Bearer ${process.env.RESEARCH_API_TOKEN}` } : undefined,
+        })
+      : createResearchFixtures(this.researchDocumentsPath);
     this.fevex = createFevex({
       models: configured.models,
       agents,
       workflows,
       tools,
-      connections,
+      connections: [...connections, ...researchConnections],
       contextProviders,
       memoryStore,
       sandbox,
@@ -113,6 +131,15 @@ export class FevexService {
 
   listModels() {
     return this.modelCatalog;
+  }
+
+  async evaluateResearch(modelId: string, signal: AbortSignal) {
+    if (!this.modelCatalog.some(({ id }) => id === modelId)) throw new BadRequestException('Unknown model');
+    if (this.evaluationRunning) throw new ConflictException('An evaluation is already running');
+    this.evaluationRunning = true;
+    try {
+      return await evaluateResearch(this.models[modelId]!, this.researchDocumentsPath, signal);
+    } finally { this.evaluationRunning = false; }
   }
 
   getRun(runId: RunId): Promise<RunRecord | undefined> {

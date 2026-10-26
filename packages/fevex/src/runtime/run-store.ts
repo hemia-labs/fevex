@@ -6,7 +6,7 @@ import type {
   JsonValue,
   RunId,
 } from '../core';
-import type { ModelUsage, ReasoningEffort } from '../models';
+import type { ModelMetadata, ModelUsage, ReasoningEffort } from '../models';
 import type { ToolChoice } from '../models';
 import type { AgentLimits } from '../agents';
 
@@ -125,6 +125,9 @@ export interface AgentRun<TOutput = JsonValue> {
   id: RunId;
   sessionId: SessionId;
   agentName: string;
+  /** Effective model identity retained after checkpoint cleanup. Absent on older runs. */
+  modelName?: string;
+  modelMetadata?: ModelMetadata;
   status: RunStatus;
   revision: number;
   pause?: RunPause;

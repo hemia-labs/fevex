@@ -1,0 +1,361 @@
+{
+  "agentName": "research",
+  "cases": [
+    {
+      "caseId": "documentation",
+      "latencyMs": 4150.599707999994,
+      "output": {
+        "account": null,
+        "answer": "La documentación de Fevex indica que las ejecuciones pausadas se reanudan con `resumeRun`. Para el workflow `review` de ejemplo, hay que enviar el evento declarado `review.approved` con el payload requerido y un actor autenticado, usando el ID de la ejecución pausada:\n\n```ts\nawait app.resumeRun(runId, {\n  type: 'event',\n  eventName: 'review.approved',\n  payload: { approved: true },\n  actor: { id: 'reviewer-42', type: 'user' },\n});\n```\n\nLa resolución debe coincidir con la pausa de la ejecución: las aprobaciones necesitan un ID de aprobación y una decisión; la elicitación necesita un ID de solicitud y su valor validado; los eventos de workflow necesitan el nombre del evento declarado y su payload. El actor debe derivarse de la autenticación de confianza del host. Tras reanudar, hay que observar los eventos de la ejecución para seguir su finalización.\n\nAdemás, la documentación señala que FEVEX no hace polling global: los despliegues necesitan un detector externo de huérfanos y un planificador que llame a `resumeRun` para los temporizadores vencidos.\n\nLimitación: esta respuesta se basa únicamente en los extractos recuperados de la documentación; este agente solo investiga y no puede ejecutar ni modificar ejecuciones.",
+        "sources": [
+          {
+            "quote": "### Resuming paused runs\n\nPaused runs resume with `resumeRun`. For the `review` workflow above, submit its\ndeclared `review.approved` event with the required payload and an authenticated\nactor. Use the ID of the paused workflow run:",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          },
+          {
+            "quote": "FEVEX does not poll globally: deployments need an external orphan detector and a\nscheduler that calls `resumeRun` for elapsed timers.",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          }
+        ],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 2
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "codeBlocks": 1,
+            "requiresResumeExample": true
+          },
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 2441,
+        "outputTokens": 630,
+        "totalTokens": 3071
+      }
+    },
+    {
+      "caseId": "account",
+      "latencyMs": 1675.7979169999962,
+      "output": {
+        "account": {
+          "id": 42,
+          "plan": "pro",
+          "status": "active"
+        },
+        "answer": "La cuenta 42 está activa y su plan es pro.",
+        "sources": [],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "codeBlocks": 0,
+            "requiresResumeExample": false
+          },
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "accounts__getAccount"
+      ],
+      "usage": {
+        "inputTokens": 2091,
+        "outputTokens": 108,
+        "totalTokens": 2199
+      }
+    },
+    {
+      "caseId": "combined",
+      "latencyMs": 3196.0385000000024,
+      "output": {
+        "account": {
+          "id": 42,
+          "plan": "pro",
+          "status": "active"
+        },
+        "answer": "Sobre `resumeRun`: según la documentación, las ejecuciones (runs) pausadas se reanudan con `resumeRun`. Para el workflow `review`, debes enviar el evento declarado `review.approved` con el payload requerido y un actor autenticado, usando el ID del run pausado:\n\n```ts\nawait app.resumeRun(runId, {\n  type: 'event',\n  eventName: 'review.approved',\n  payload: { approved: true },\n  actor: { id: 'reviewer-42', type: 'user' },\n});\n```\n\nLa resolución debe coincidir con la pausa del run: las aprobaciones necesitan un approval ID y una decisión; la elicitación necesita un request ID y su valor validado; los eventos de workflow necesitan el nombre del evento declarado y su payload. Deriva el actor desde la autenticación de confianza del host. Observa los eventos del run para seguir la finalización tras reanudar. Además, FEVEX no hace polling global: los despliegues necesitan un detector externo de runs huérfanos y un planificador que llame a `resumeRun` para los temporizadores vencidos.\n\nCuenta 42: estado `active` y plan `pro`.\n\nNota: este agente solo investiga; no puede ejecutar ni modificar runs de Fevex.",
+        "sources": [
+          {
+            "quote": "Paused runs resume with `resumeRun`. For the `review` workflow above, submit its declared `review.approved` event with the required payload and an authenticated actor.",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          },
+          {
+            "quote": "FEVEX does not poll globally: deployments need an external orphan detector and a scheduler that calls `resumeRun` for elapsed timers.",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          }
+        ],
+        "status": "answered"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 2
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "codeBlocks": 1,
+            "requiresResumeExample": true
+          },
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search",
+        "accounts__getAccount"
+      ],
+      "usage": {
+        "inputTokens": 2487,
+        "outputTokens": 569,
+        "totalTokens": 3056
+      }
+    },
+    {
+      "caseId": "no-matches",
+      "latencyMs": 2624.866833,
+      "output": {
+        "account": null,
+        "answer": "La búsqueda de «zzz_no_documentation_match_9» no devolvió ningún resultado en la documentación de Fevex. Por lo tanto, no puedo explicar qué indica la documentación sobre ese término: no existe ninguna coincidencia ni excerpt disponible. Es posible que el término sea incorrecto o que no esté documentado.",
+        "sources": [],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "codeBlocks": 0,
+            "requiresResumeExample": false
+          },
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 2112,
+        "outputTokens": 188,
+        "totalTokens": 2300
+      }
+    },
+    {
+      "caseId": "missing-id",
+      "latencyMs": 1044.4826670000039,
+      "output": {
+        "account": null,
+        "answer": "Necesito el ID numérico de tu cuenta para consultar su estado y plan. Por favor, proporciónalo (por ejemplo: 123).",
+        "sources": [],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 0
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "codeBlocks": 0,
+            "requiresResumeExample": false
+          },
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [],
+      "usage": {
+        "inputTokens": 998,
+        "outputTokens": 80,
+        "totalTokens": 1078
+      }
+    },
+    {
+      "caseId": "code-unavailable",
+      "latencyMs": 3842.332499999997,
+      "output": {
+        "account": null,
+        "answer": "La documentación sí menciona `stepId`, pero no incluye ningún ejemplo de código que lo use. La coincidencia encontrada (\"Workflows & teams\") solo lo define en prosa: «`stepId` is the durable identity of a step: keep it stable while its meaning is stable, and increment `version` when replay order or step meanings change.» El único bloque de código del extracto define un workflow con `defineWorkflow` y usa `step.agent(...)` y `step.waitForEvent(...)`, sin pasar ni referenciar `stepId` en ningún punto. Por tanto, no existe en el material recuperado un ejemplo de código que utilice `stepId`, y no puedo inventarlo ni reconstruirlo. Si necesitas ese ejemplo, habría que consultar una sección distinta de la documentación (p. ej. la referencia de la API de pasos) que no aparece en los resultados disponibles.",
+        "sources": [
+          {
+            "quote": "`stepId` is the durable identity of a step: keep it stable while its meaning is stable, and increment `version` when replay order or step meanings change.",
+            "title": "Workflows & teams",
+            "url": "https://fevex.dev/docs/workflows/"
+          }
+        ],
+        "status": "insufficient"
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "accountMatchesEvidence": true,
+            "citations": 1
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "codeBlocks": 0,
+            "requiresResumeExample": false
+          },
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "docs__search"
+      ],
+      "usage": {
+        "inputTokens": 2531,
+        "outputTokens": 654,
+        "totalTokens": 3185
+      }
+    },
+    {
+      "caseId": "api-unavailable",
+      "error": "OpenAPI HTTP request failed",
+      "latencyMs": 1031.282499999994,
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "expectedFailure": true
+          },
+          "score": 1,
+          "scorerId": "research.evidence",
+          "status": "passed"
+        },
+        {
+          "score": 1,
+          "scorerId": "research.code",
+          "status": "passed"
+        }
+      ],
+      "status": "failed",
+      "tools": [
+        "accounts__getAccount"
+      ]
+    }
+  ],
+  "dataset": {
+    "name": "research-fixtures",
+    "version": "3"
+  },
+  "schemaVersion": "fevex.eval.v1",
+  "scorerIds": [
+    "tools.selected",
+    "research.evidence",
+    "research.code"
+  ],
+  "suiteName": "research",
+  "summary": {
+    "averageScore": 1,
+    "caseCount": 7,
+    "completedCount": 6,
+    "errorScoreCount": 0,
+    "failedCount": 1,
+    "failedScoreCount": 0,
+    "latencyMs": 17565.400624999987,
+    "passedScoreCount": 21,
+    "skippedScoreCount": 0,
+    "usage": {
+      "inputTokens": 12660,
+      "outputTokens": 2229,
+      "totalTokens": 14889
+    }
+  },
+  "targetVersion": "deepseek-v4-flash"
+}

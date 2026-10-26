@@ -11,9 +11,13 @@ FEVEX is an early MVP. The API may change before the first stable release.
 - Native provider streaming and durable, consultable runs.
 - Synchronous event observers and `AsyncIterable` event streaming.
 - Local traces, OpenTelemetry export and deterministic evaluation suites.
+- [Adaptable examples and repository run inspection](/docs/development/) through
+  the public HTTP protocol.
 - Optional Standard Schema validation.
 - Immediate `AbortSignal` cancellation with cooperative underlying work.
 - Conversation sessions, tool approval checkpoints, and resumable runs.
+- [Channel contracts and external resolvers](/docs/channels/) for elicitation,
+  with correlated requests and stable keys for delivery retries.
 - Durable workflows and explicit team delegation, parallel work, and handoffs.
 - Official OpenAI and DeepSeek model adapters, MCP and OpenAPI connections,
   and SQLite and PostgreSQL stores.
@@ -27,6 +31,7 @@ is explicit: applications provide their own recovery worker and timer scheduler.
 | Area | Status | Direction |
 | --- | --- | --- |
 | Messaging channels | Next | Connect messaging surfaces such as Slack, Discord, WhatsApp, and Telegram through channel adapters. |
+| Developer experience | In progress | Adaptable templates, repository inspection and shared research/evals in the playground are available; Studio and builder contracts remain open. |
 | Agent builder ecosystem | Planned | Templates, catalogs, and products built on top of the FEVEX runtime. |
 
 These are planned capabilities, with no committed release dates. Agent builders,
@@ -37,7 +42,7 @@ not part of the core package.
 
 The MVP intentionally does **not** include:
 
-- a CLI;
+- a standalone CLI package;
 - a hosted observability service;
 - model-judge evals;
 - human evaluation workflows.

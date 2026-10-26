@@ -172,6 +172,93 @@ for (const stage of ['initialize', 'notifications/initialized', 'tools/list']) {
   });
 }
 
+for (const method of ['tools/list', 'tools/call']) {
+  test(`reinitializes after an expired session on ${method} without replaying the failed request`, async () => {
+    let initializations = 0;
+    let expired = false;
+    const requests: Array<{ method: string; session: string | null }> = [];
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const session = new Headers(init?.headers).get('mcp-session-id');
+        requests.push({ method: body.method, session });
+        if (body.method === 'initialize') {
+          initializations++;
+          return json({ jsonrpc: '2.0', id: body.id,
+            result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
+          }, { headers: { 'mcp-session-id': `session-${initializations}` } });
+        }
+        if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+        if (expired && session === 'session-1') return new Response(null, { status: 404 });
+        return json({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'lookup' }] } });
+      },
+    });
+
+    await provider.listTools();
+    expired = true;
+    const beforeFailure = requests.length;
+    await expect(method === 'tools/list' ? provider.listTools() : provider.callTool('lookup', {}, {}))
+      .rejects.toMatchObject({ code: 'MCP_HTTP_ERROR' });
+    expect(requests.slice(beforeFailure)).toEqual([{ method, session: 'session-1' }]);
+    expect(initializations).toBe(1);
+
+    await expect(Promise.all([provider.listTools(), provider.listTools()]))
+      .resolves.toEqual([[{ name: 'lookup' }], [{ name: 'lookup' }]]);
+    expect(initializations).toBe(2);
+    expect(requests.slice(beforeFailure + 1)).toEqual([
+      { method: 'initialize', session: null },
+      { method: 'notifications/initialized', session: 'session-2' },
+      { method: 'tools/list', session: 'session-2' },
+      { method: 'tools/list', session: 'session-2' },
+    ]);
+  });
+}
+
+test('a late 404 from an old session does not invalidate its replacement', async () => {
+  let initializations = 0;
+  let expired = false;
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const provider = createMcpToolProvider({
+    url: 'https://mcp.test',
+    fetch: async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.method === 'initialize') {
+        initializations++;
+        return json({ jsonrpc: '2.0', id: body.id,
+          result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
+        }, { headers: { 'mcp-session-id': `session-${initializations}` } });
+      }
+      if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+      if (body.method === 'tools/call') {
+        entered();
+        await gate;
+        return new Response(null, { status: 404 });
+      }
+      if (expired && new Headers(init?.headers).get('mcp-session-id') === 'session-1') {
+        return new Response(null, { status: 404 });
+      }
+      return json({ jsonrpc: '2.0', id: body.id, result: { tools: [] } });
+    },
+  });
+  await provider.listTools();
+  const lateFailure = Promise.resolve(provider.callTool('lookup', {}, {})).catch((error) => error);
+  await started;
+  try {
+    expired = true;
+    await expect(provider.listTools()).rejects.toMatchObject({ code: 'MCP_HTTP_ERROR' });
+    await expect(provider.listTools()).resolves.toEqual([]);
+  } finally {
+    release();
+    await expect(lateFailure).resolves.toMatchObject({ code: 'MCP_HTTP_ERROR' });
+  }
+  await expect(provider.listTools()).resolves.toEqual([]);
+  expect(initializations).toBe(2);
+});
+
 test('does not publish a session before the initialized notification completes', async () => {
   let release!: () => void;
   let entered!: () => void;

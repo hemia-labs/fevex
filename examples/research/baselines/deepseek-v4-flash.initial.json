@@ -1,0 +1,149 @@
+{
+  "agentName": "research",
+  "cases": [
+    {
+      "caseId": "documentation",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 1345.2975000000151,
+      "scores": [
+        {
+          "score": 0,
+          "scorerId": "tools.selected",
+          "status": "failed"
+        },
+        {
+          "details": "Missing or invalid structured answer",
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": []
+    },
+    {
+      "caseId": "account",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 745.7681250000023,
+      "scores": [
+        {
+          "score": 0,
+          "scorerId": "tools.selected",
+          "status": "failed"
+        },
+        {
+          "details": "Missing or invalid structured answer",
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": []
+    },
+    {
+      "caseId": "combined",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 1173.8074590000033,
+      "scores": [
+        {
+          "score": 0,
+          "scorerId": "tools.selected",
+          "status": "failed"
+        },
+        {
+          "details": "Missing or invalid structured answer",
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": []
+    },
+    {
+      "caseId": "no-matches",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 1286.5435829999915,
+      "scores": [
+        {
+          "score": 0,
+          "scorerId": "tools.selected",
+          "status": "failed"
+        },
+        {
+          "details": "Missing or invalid structured answer",
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": []
+    },
+    {
+      "caseId": "missing-id",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 1999.347374999983,
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": "Missing or invalid structured answer",
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": []
+    },
+    {
+      "caseId": "api-unavailable",
+      "error": "DeepSeek structured output was not valid JSON",
+      "latencyMs": 1205.400290999998,
+      "scores": [
+        {
+          "score": 0,
+          "scorerId": "tools.selected",
+          "status": "failed"
+        },
+        {
+          "details": {
+            "expectedFailure": true
+          },
+          "score": 0,
+          "scorerId": "research.evidence",
+          "status": "failed"
+        }
+      ],
+      "status": "failed",
+      "tools": []
+    }
+  ],
+  "dataset": {
+    "name": "research-fixtures",
+    "version": "1"
+  },
+  "schemaVersion": "fevex.eval.v1",
+  "scorerIds": [
+    "tools.selected",
+    "research.evidence"
+  ],
+  "suiteName": "research",
+  "summary": {
+    "averageScore": 0.08333333333333333,
+    "caseCount": 6,
+    "completedCount": 0,
+    "errorScoreCount": 0,
+    "failedCount": 6,
+    "failedScoreCount": 11,
+    "latencyMs": 7756.164332999993,
+    "passedScoreCount": 1,
+    "skippedScoreCount": 0
+  },
+  "targetVersion": "deepseek-v4-flash"
+}

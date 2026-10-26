@@ -98,20 +98,23 @@ export function createRunCore({
       if (!run) throw new Error(`Run "${event.runId}" does not exist`);
       if (isCoordinatorRun(run)) return;
       const agentRun = run as AgentRun;
-      const agent = agents.get(agentRun.agentName);
-      if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
-      const checkpoint = isDurableRunStore(runStore)
-        ? await runStore.getCheckpoint<RunCheckpoint>(agentRun.id)
-        : undefined;
-      const { modelName: modelRegistryName, model: gateway } = resolveModel(
-        agent,
-        checkpoint?.modelName,
-      );
+      let modelRegistryName = agentRun.modelName;
+      let modelMetadata = agentRun.modelMetadata;
+      if (modelRegistryName === undefined) {
+        const agent = agents.get(agentRun.agentName);
+        if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
+        const checkpoint = isDurableRunStore(runStore)
+          ? await runStore.getCheckpoint<RunCheckpoint>(agentRun.id)
+          : undefined;
+        const resolved = resolveModel(agent, checkpoint?.modelName);
+        modelRegistryName = resolved.modelName;
+        modelMetadata = resolved.model.metadata;
+      }
       const trace = buildRunTrace(
         agentRun,
         await runStore.listEvents(agentRun.id),
         modelRegistryName,
-        gateway?.metadata,
+        modelMetadata,
         observability,
       );
       const results = await Promise.allSettled(

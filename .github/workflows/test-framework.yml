@@ -116,7 +116,7 @@ jobs:
       - run: bun run --cwd packages/postgres test
 
   examples:
-    name: Nest API integration
+    name: Examples integration
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -131,7 +131,20 @@ jobs:
           path: ${{ runner.temp }}
       - run: tar -xzf "$RUNNER_TEMP/package-builds.tgz"
       - run: bun run --cwd examples/nest-api typecheck
+      - run: bun run --cwd examples/nest-api build
       - run: bun run --cwd examples/nest-api test
+      - run: bun x tsc -p examples/starter/tsconfig.json
+      - run: bun run demo:starter
+      - run: bun x tsc -p examples/channel-elicitation/tsconfig.json
+      - run: bun run demo:channels
+      - run: bun x tsc -p examples/connections/tsconfig.json
+      - run: bun run demo:connections
+      - run: bun x tsc -p examples/research/tsconfig.json
+      - run: bun run demo:research
+      - run: bun run eval:research
+      - run: bun test examples/research/evaluation.test.ts
+      - run: bun run --cwd examples/next-playground typecheck
+      - run: bun run --cwd examples/next-playground test
 
   consumers:
     name: Consumers (Node ${{ matrix.node }})

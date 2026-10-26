@@ -1,6 +1,7 @@
 import type { ModelGateway, ModelInput, ModelResult } from '../models';
 import type {
   ChannelAdapter,
+  ChannelElicitationContext,
   ChannelMessage,
   ChannelOutput,
 } from '../channels';
@@ -10,6 +11,7 @@ import { IntegrationError, type ToolProvider } from '../tools';
 import type {
   AgentRun,
   DurableRunStore,
+  ElicitationRequest,
   RunCheckpoint,
   Session,
   ToolExecutionRecord,
@@ -58,6 +60,11 @@ export interface ChannelAdapterContract<TInput, TOutput> {
   output: ChannelOutput;
   delivered: TOutput;
   ignoredInput?: TInput;
+  elicitation?: {
+    request: ElicitationRequest;
+    context: ChannelElicitationContext;
+    delivered: TOutput;
+  };
 }
 
 export interface ToolProviderContract {
@@ -225,6 +232,18 @@ export async function testChannelAdapter<TInput, TOutput>(
       === JSON.stringify(contract.delivered),
     'ChannelAdapter returned an unexpected delivery',
   );
+  if (contract.elicitation) {
+    assert(adapter.deliverElicitation, 'ChannelAdapter must support elicitation delivery');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert(
+        JSON.stringify(await adapter.deliverElicitation(
+          structuredClone(contract.elicitation.request),
+          { ...contract.elicitation.context },
+        )) === JSON.stringify(contract.elicitation.delivered),
+        'ChannelAdapter returned an unexpected elicitation delivery or retry receipt',
+      );
+    }
+  }
 }
 
 export async function testModelGateway(

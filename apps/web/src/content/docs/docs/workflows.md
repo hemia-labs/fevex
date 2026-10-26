@@ -44,8 +44,29 @@ External events must be declared. This example requires an approval payload of
 
 ## Recovery
 
-Paused runs resume with `resumeRun`; an external worker can recover an orphaned
-`running` run after its lease expires:
+### Resuming paused runs
+
+Paused runs resume with `resumeRun`. For the `review` workflow above, submit its
+declared `review.approved` event with the required payload and an authenticated
+actor. Use the ID of the paused workflow run:
+
+```ts
+await app.resumeRun(runId, {
+  type: 'event',
+  eventName: 'review.approved',
+  payload: { approved: true },
+  actor: { id: 'reviewer-42', type: 'user' },
+});
+```
+
+The resolution must match the run's pause: approvals need an approval ID and a
+decision; elicitation needs a request ID and its validated value; workflow
+events need the declared event name and payload. Derive the actor from trusted
+host authentication. Observe the run's events to follow completion after resume.
+
+### Recovering orphaned runs
+
+An external worker can recover an orphaned `running` run after its lease expires:
 
 ```ts
 await app.recoverRun(runId, {

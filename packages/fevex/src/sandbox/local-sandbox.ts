@@ -88,8 +88,8 @@ async function runProcess(options: {
 }): Promise<SandboxRunResult> {
   const started = Date.now();
   let timedOut = false;
-  let stdout = '';
-  let stderr = '';
+  const stdout = { text: '', bytes: 0 };
+  const stderr = { text: '', bytes: 0 };
 
   return await new Promise((resolvePromise, reject) => {
     options.signal?.throwIfAborted();
@@ -99,35 +99,52 @@ async function runProcess(options: {
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const abort = () => {
+    let aborted = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const terminate = () => {
+      if (killTimer !== undefined) return;
       child.kill('SIGTERM');
-      reject(options.signal?.reason ?? new DOMException('Sandbox aborted', 'AbortError'));
+      // A cooperative stop is preferred, but ignoring SIGTERM must not outlive the limit.
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 100);
+    };
+    const abort = () => {
+      aborted = true;
+      clearTimeout(timer);
+      terminate();
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      terminate();
     }, options.timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      options.signal?.removeEventListener('abort', abort);
+    };
     options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
-      stdout = appendLimited(stdout, String(chunk), options.maxOutputBytes);
+      appendLimited(stdout, String(chunk), options.maxOutputBytes);
     });
     child.stderr.on('data', (chunk) => {
-      stderr = appendLimited(stderr, String(chunk), options.maxOutputBytes);
+      appendLimited(stderr, String(chunk), options.maxOutputBytes);
     });
     child.on('error', (error) => {
-      clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abort);
+      cleanup();
       reject(new SandboxError('SANDBOX_PROCESS_ERROR', 'Sandbox process failed', { cause: error }));
     });
     child.on('close', (exitCode) => {
-      clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abort);
+      cleanup();
+      if (aborted) {
+        reject(options.signal?.reason ?? new DOMException('Sandbox aborted', 'AbortError'));
+        return;
+      }
       resolvePromise({
         exitCode,
-        stdout,
-        stderr,
+        stdout: stdout.text,
+        stderr: stderr.text,
         durationMs: Date.now() - started,
         timedOut,
       });
@@ -137,9 +154,13 @@ async function runProcess(options: {
   });
 }
 
-function appendLimited(current: string, chunk: string, maxBytes: number): string {
-  const next = current + chunk;
-  return Buffer.byteLength(next) <= maxBytes ? next : next.slice(0, maxBytes);
+function appendLimited(output: { text: string; bytes: number }, chunk: string, maxBytes: number): void {
+  const remaining = maxBytes - output.bytes;
+  if (remaining <= 0) return;
+  const bytes = Buffer.from(chunk).subarray(0, remaining);
+  output.bytes += bytes.length;
+  // Streaming decode omits a character cut short by the byte limit.
+  output.text += new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes, { stream: true });
 }
 
 function isInside(rootDir: string, value: string): boolean {
