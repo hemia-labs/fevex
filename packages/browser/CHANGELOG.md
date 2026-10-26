@@ -1,5 +1,13 @@
 # @fevex/browser
 
+## 0.1.0-alpha.4
+
+### Patch Changes
+
+- Updated dependencies [f4f8020]
+- Updated dependencies [f4f8020]
+  - @fevex/core@0.1.0-alpha.4
+
 ## 0.1.0-alpha.3
 
 ### Patch Changes
