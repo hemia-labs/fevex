@@ -1,5 +1,14 @@
 # @fevex/deepseek
 
+## 0.1.0-alpha.4
+
+### Patch Changes
+
+- f4f8020: Accept empty or textual assistant content during tool-call turns when an output schema is configured. Parse the final response as JSON while preserving intermediate tool calls and provider state.
+- Updated dependencies [f4f8020]
+- Updated dependencies [f4f8020]
+  - @fevex/core@0.1.0-alpha.4
+
 ## 0.1.0-alpha.3
 
 ### Minor Changes
