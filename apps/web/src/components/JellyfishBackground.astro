@@ -1,0 +1,37 @@
+---
+import Pause from 'lucide-astro/Pause';
+import Play from 'lucide-astro/Play';
+---
+
+<div class="jellyfish-background" aria-hidden="true">
+  <canvas data-ascii-jellyfish hidden></canvas>
+</div>
+<button class="motion-toggle" type="button" data-motion-toggle aria-label="Pause background animation" aria-pressed="false" hidden>
+  <Pause size={14} class="pause-icon" aria-hidden="true" />
+  <Play size={14} class="play-icon" aria-hidden="true" />
+</button>
+
+<script>
+  import '../scripts/ascii-jellyfish';
+</script>
+
+<style>
+  .jellyfish-background {
+    position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+    background: radial-gradient(ellipse at 78% 42%, color-mix(in srgb, var(--brand-ruby-red) 9%, transparent), transparent 62%);
+    mask-image: linear-gradient(90deg, transparent 15%, #000 65%), linear-gradient(180deg, transparent, #000 12%, #000 84%, transparent);
+    mask-composite: intersect;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .motion-toggle { position: absolute; right: 24px; bottom: 88px; z-index: 2; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--brand-border); border-radius: 50%; background: var(--brand-obsidian); color: var(--brand-silver-mist); cursor: pointer; }
+  .motion-toggle:hover { color: var(--brand-warm-ivory); border-color: var(--brand-control-border); }
+  .motion-toggle[hidden], canvas[hidden] { display: none; }
+  .motion-toggle :global(.play-icon) { display: none; }
+  .motion-toggle[aria-pressed='true'] :global(.pause-icon) { display: none; }
+  .motion-toggle[aria-pressed='true'] :global(.play-icon) { display: block; }
+  @media (max-width: 860px) {
+    .jellyfish-background { mask-image: linear-gradient(180deg, transparent 26%, #000 60%, #000 86%, transparent); }
+    .motion-toggle { right: 20px; bottom: 115px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .motion-toggle { display: none; } }
+</style>

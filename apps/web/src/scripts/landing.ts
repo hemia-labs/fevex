@@ -99,7 +99,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-copy], [data-copy-target]").
 const hero = document.querySelector<HTMLElement>("[data-hero-motion]");
 const motionAllowed = window.matchMedia("(prefers-reduced-motion: no-preference)");
 if (hero && "IntersectionObserver" in window) {
-  const toggle = hero.querySelector<HTMLButtonElement>("[data-globe-toggle]");
+  const toggle = hero.querySelector<HTMLButtonElement>("[data-motion-toggle]");
   let visible = false;
   let userPaused = false;
   const update = () => {
@@ -114,7 +114,7 @@ if (hero && "IntersectionObserver" in window) {
   toggle?.addEventListener("click", () => {
     userPaused = !userPaused;
     toggle.setAttribute("aria-pressed", String(userPaused));
-    toggle.setAttribute("aria-label", userPaused ? "Resume globe animation" : "Pause globe animation");
+    toggle.setAttribute("aria-label", userPaused ? "Resume background animation" : "Pause background animation");
     update();
   });
   motionAllowed.addEventListener("change", update);
