@@ -2,7 +2,7 @@
 import '@/styles/global.css';
 import { Code } from 'astro:components';
 import { buttonVariants } from '@/components/ui/button';
-import AIThinkingGlobe from '@/components/AIThinkingGlobe.astro';
+import JellyfishBackground from '@/components/JellyfishBackground.astro';
 import ArrowUpRight from 'lucide-astro/ArrowUpRight';
 import ArrowRight from 'lucide-astro/ArrowRight';
 import Check from 'lucide-astro/Check';
@@ -243,7 +243,8 @@ const adapterNodes = adapterRows.map((items, i) => {
     </header>
 
     <main id="main">
-      <section class="hero container" aria-labelledby="hero-heading">
+      <section class="hero container" aria-labelledby="hero-heading" data-hero-motion>
+        <JellyfishBackground />
         <div class="hero-copy">
           <h1 id="hero-heading">AI agent framework<br class="desktop-break" />{' '}for <span>TypeScript.</span></h1>
           <p class="hero-description">From your first agent to durable workflows.<br class="desktop-break" /> Typed tools, any model, and control over every run.</p>
@@ -256,7 +257,6 @@ const adapterNodes = adapterRows.map((items, i) => {
             <button type="button" class="copy-button icon-copy" data-copy="npm install @fevex/core" aria-label="Copy install command"><Copy size={15} aria-hidden="true" /><span class="copy-feedback" data-copy-label>Copy</span></button>
           </div>
         </div>
-        <div class="hero-art" data-hero-motion><AIThinkingGlobe /></div>
         <div class="hero-footnote"><span>YOUR CODE. YOUR MODELS. YOUR INFRASTRUCTURE.</span><a href="#quickstart">See it in code <span aria-hidden="true">↓</span></a></div>
       </section>
 
@@ -436,9 +436,8 @@ const adapterNodes = adapterRows.map((items, i) => {
   .nav-cta { display: inline-flex; gap: 14px; align-items: center; border: 1px solid var(--brand-control-border); padding: 9px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; transition: background 150ms; }
   .nav-cta:hover { background: var(--brand-raised); }
   .mobile-nav { display: none; }
-  .hero { position: relative; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: center; column-gap: 32px; padding: 64px 48px 0; }
-  .hero-art { min-width: 0; width: 100%; }
-  .hero-copy { position: relative; min-width: 0; max-width: 800px; }
+  .hero { position: relative; isolation: isolate; display: grid; grid-template-rows: 1fr auto; min-height: 650px; padding: 96px 48px 0; }
+  .hero-copy { position: relative; z-index: 1; align-self: center; min-width: 0; max-width: 800px; }
   .ruby-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--brand-ruby-red); flex-shrink: 0; }
   h1 { font-size: clamp(40px, 5.2vw, 76px); font-weight: 500; line-height: 1.08; letter-spacing: -.055em; margin: 0 0 24px; text-wrap: balance; }
   h1 span { color: var(--brand-silver-mist); }
@@ -570,8 +569,8 @@ const adapterNodes = adapterRows.map((items, i) => {
     .mobile-nav nav { position: absolute; top: 62px; right: 24px; left: 24px; padding: 8px; border: 1px solid var(--brand-control-border); border-radius: 8px; background: var(--brand-surface); }
     .mobile-nav nav a { display: flex; align-items: center; justify-content: space-between; padding: 14px; font-size: 14px; min-height: 48px; }
     .mobile-nav nav a:hover { background: var(--brand-raised); border-radius: 4px; }
-    .hero { grid-template-columns: 1fr; padding: 72px 24px 0; }
-    .hero-art { max-width: 360px; margin: 24px auto 0; }
+    .hero { min-height: 790px; padding: 72px 24px 0; }
+    .hero-copy { align-self: start; }
     h1 { max-width: 610px; }
     .hero-description { font-size: 16px; }
     .hero-footnote { margin-top: 32px; }
