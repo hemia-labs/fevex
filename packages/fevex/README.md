@@ -652,6 +652,28 @@ underlying work. External systems must enforce the supplied idempotency key to
 make keyed retries safe. Repeated tool call IDs are rejected within a run before
 Fevex repeats an effect.
 
+### Deadlines, admission and retention
+
+Set `deadlineMs` on a run request to cap wall-clock time. An expired deadline
+cancels the run with `run.cancelled` reason `timeout`; resuming or recovering
+after the absolute deadline persists that cancellation instead of continuing.
+
+`createFevex({ admission })` limits concurrent top-level runs globally or per
+tenant. The default tenant key is a non-empty `context.attributes.tenantId`;
+`tenantKey` and `authorize` support host-specific quotas. Counts are local to
+one runtime process.
+
+`createFevex({ limits: { maxEventsPerRun } })` caps non-control events per run.
+Pause, resume, approval, elicitation, wait and terminal events are always
+persisted so a run can always reach a durable state; use retention for a total
+storage cap.
+
+Terminal runs can be purged with `app.purgeRuns({ before, statuses, limit })`.
+SQLite and PostgreSQL implement the retention capability; custom stores can add
+`purgeRuns` to opt in. The API deletes only terminal runs and sessions left
+without runs; active work is untouched. Artifact retention and per-event payload
+byte limits remain host policies.
+
 ## Observability
 
 Add trace exporters to the application configuration; agent definitions stay
@@ -959,8 +981,10 @@ limit for the initial SSE read and every subsequent read. Full pages drain
 without the polling delay; short pages wait for `pollIntervalMs`. Stream demand
 controls progress, so a slow consumer retains at most one page plus the stream's
 single queued frame, rather than buffering the run's entire history. Disconnecting
-cancels polling. This bounds event counts, not the byte size of an individual event;
-per-event payload limits and data retention remain host responsibilities.
+cancels polling. `maxConnections` caps concurrent SSE streams. This bounds event
+counts, not the byte size of an individual event; per-event payload limits remain
+host responsibilities. Use `purgeRuns` for configurable retention of terminal
+runs.
 
 ### Run model identity
 

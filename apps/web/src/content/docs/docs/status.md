@@ -15,6 +15,8 @@ FEVEX is an early MVP. The API may change before the first stable release.
   the public HTTP protocol.
 - Optional Standard Schema validation.
 - Immediate `AbortSignal` cancellation with cooperative underlying work.
+- Per-runtime admission limits, per-run deadlines, event caps and terminal-run
+  retention through `purgeRuns`.
 - Conversation sessions, tool approval checkpoints, and resumable runs.
 - [Channel contracts and external resolvers](/docs/channels/) for elicitation,
   with correlated requests and stable keys for delivery retries.

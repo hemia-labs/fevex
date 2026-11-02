@@ -166,6 +166,44 @@ curl -s http://localhost:3001/v1/runs/RUN_ID/resume \
   -d '{"type":"event","eventName":"review.approved","payload":{"approved":true,"comment":"Looks good"}}'
 ```
 
+## Retention, admission and deadlines
+
+The host applies these operational limits per runtime process:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `FEVEX_MAX_ACTIVE_RUNS` | `8` | Concurrent top-level runs |
+| `FEVEX_MAX_ACTIVE_RUNS_PER_TENANT` | `4` | Concurrent top-level runs per `tenantId` |
+| `FEVEX_MAX_EVENTS_PER_RUN` | `10000` | Non-control events persisted per run |
+| `FEVEX_MAX_CONNECTIONS` | `64` | Concurrent SSE streams |
+
+Start requests accept `deadlineMs`:
+
+```bash
+curl -s http://localhost:3001/v1/agents/support/runs \
+  -H 'content-type: application/json' \
+  -d '{"input":"Check account 10","deadlineMs":60000}'
+```
+
+An expired deadline cancels the run with `run.cancelled` reason `timeout`.
+Resuming or recovering after the absolute deadline persists that cancellation
+instead of continuing.
+
+Purge terminal runs from a scheduled host job:
+
+```ts
+const result = await fevex.purgeRuns({
+  before: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+  limit: 1000,
+});
+// { runs, sessions }
+```
+
+Only `completed`, `failed` and `cancelled` runs are purged; running or paused
+runs and their sessions are kept. Artifact retention is separate. Admission
+counts are local to one runtime process; use `admission.authorize` for
+distributed quotas.
+
 ## Protocol
 
 The protocol examples below assume the dev server (`FEVEX_DEMO_AUTH=1`). With
@@ -182,7 +220,8 @@ curl -s http://localhost:3001/v1/agents/support/runs \
 
 The same request accepts `model` (`deepseek` or `openai`) and `reasoning`
 (`provider-default`, `none`, `low`, `medium`, `high`, `xhigh` or `max`,
-depending on the selected provider).
+depending on the selected provider). Add `deadlineMs` to cap the run's
+wall-clock time.
 
 The `202` response is an `AgentRun` containing `id` and `sessionId`. Pass that
 session ID when starting another run to continue the conversation.

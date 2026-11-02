@@ -102,9 +102,17 @@ export class FevexService {
       runStore: createSQLiteRunStore({
         filename: process.env.FEVEX_DB_PATH ?? '.fevex/demo.sqlite',
       }),
+      admission: {
+        maxActiveRuns: envPositiveInteger('FEVEX_MAX_ACTIVE_RUNS', 8),
+        maxActiveRunsPerTenant: envPositiveInteger('FEVEX_MAX_ACTIVE_RUNS_PER_TENANT', 4),
+      },
+      limits: {
+        maxEventsPerRun: envPositiveInteger('FEVEX_MAX_EVENTS_PER_RUN', 10_000),
+      },
     });
     const handler = createFevexHttpHandler({
       fevex: this.fevex,
+      maxConnections: envPositiveInteger('FEVEX_MAX_CONNECTIONS', 64),
       authorize: (access) => this.authorization.authorize(access),
       onRunStarted: (run, context) => this.authorization.claim(run, context),
       onError: (error, problem) => {
@@ -192,6 +200,11 @@ function errorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function envPositiveInteger(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
 function createModels() {
