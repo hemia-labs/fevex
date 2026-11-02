@@ -1,9 +1,78 @@
 import type { JsonObject } from '../core';
 import type { ModelUsage } from '../models';
+import type { RunRequest } from '../runtime';
+import { FevexRunError } from '../run-error';
 import { toJsonValue } from './json';
 
 export const DEFAULT_MAX_STEPS = 8;
 export const DEFAULT_MAX_TOOL_CALLS = 16;
+/** Largest delay accepted by Node and Bun timers. */
+export const MAX_DEADLINE_MS = 2_147_483_647;
+
+export function deadlineAtFromMs(deadlineMs?: number): string | undefined {
+  if (deadlineMs === undefined) return undefined;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > MAX_DEADLINE_MS) {
+    throw new TypeError(`deadlineMs must be a positive safe integer up to ${MAX_DEADLINE_MS}`);
+  }
+  return new Date(Date.now() + deadlineMs).toISOString();
+}
+
+export function runSignal(controller: AbortController, request: RunRequest): AbortSignal {
+  const signals = [controller.signal];
+  if (request.signal) signals.push(request.signal);
+  if (request.deadlineMs !== undefined) {
+    deadlineAtFromMs(request.deadlineMs);
+    signals.push(AbortSignal.timeout(request.deadlineMs));
+  }
+  return AbortSignal.any(signals);
+}
+
+export function resumeDeadlineSignal(
+  deadlineAt: string | undefined,
+  runId: string,
+  code: 'RUN_NOT_RESUMABLE' | 'RUN_NOT_RECOVERABLE',
+): AbortSignal | undefined {
+  if (deadlineAt === undefined) return undefined;
+  const expiresAt = Date.parse(deadlineAt);
+  if (!Number.isFinite(expiresAt)) {
+    throw new FevexRunError(code, `Run "${runId}" has an invalid deadline`, runId);
+  }
+  if (expiresAt <= Date.now()) {
+    throw new FevexRunError(code, `Run "${runId}" deadline has passed`, runId);
+  }
+  return AbortSignal.timeout(expiresAt - Date.now());
+}
+
+export function remainingDeadlineMs(
+  deadlineAt: string | undefined,
+  runId: string,
+): number | undefined {
+  if (deadlineAt === undefined) return undefined;
+  const expiresAt = Date.parse(deadlineAt);
+  if (!Number.isFinite(expiresAt)) {
+    throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" has an invalid deadline`, runId);
+  }
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    throw new FevexRunError('RUN_NOT_RESUMABLE', `Run "${runId}" deadline has passed`, runId);
+  }
+  return remaining;
+}
+
+export function isTimeoutError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { name?: unknown }).name === 'TimeoutError';
+}
+
+export function minDeadline(
+  first: number | undefined,
+  second: number | undefined,
+): number | undefined {
+  if (first === undefined) return second;
+  if (second === undefined) return first;
+  return Math.min(first, second);
+}
 
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;

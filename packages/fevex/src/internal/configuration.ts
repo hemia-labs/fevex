@@ -55,6 +55,8 @@ export interface FevexComposition {
   policies: PolicyDefinition[];
   onEvent: FevexConfig['onEvent'];
   observability: ObservabilityOptions | undefined;
+  admission: FevexConfig['admission'];
+  limits: FevexConfig['limits'];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -540,6 +542,47 @@ export function createComposition(config: FevexConfig): FevexComposition {
     'INVALID_CONFIG',
     'Fevex config "policies" must be an array',
   );
+  if (config.admission !== undefined) {
+    assertConfiguration(
+      isRecord(config.admission),
+      'INVALID_CONFIG',
+      'Fevex config "admission" must be an object',
+    );
+    for (const name of ['maxActiveRuns', 'maxActiveRunsPerTenant'] as const) {
+      const value = config.admission[name];
+      assertConfiguration(
+        value === undefined
+          || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0),
+        'INVALID_CONFIG',
+        `Fevex config "admission.${name}" must be a positive safe integer`,
+      );
+    }
+    assertConfiguration(
+      config.admission.tenantKey === undefined || typeof config.admission.tenantKey === 'function',
+      'INVALID_CONFIG',
+      'Fevex config "admission.tenantKey" must be a function',
+    );
+    assertConfiguration(
+      config.admission.authorize === undefined || typeof config.admission.authorize === 'function',
+      'INVALID_CONFIG',
+      'Fevex config "admission.authorize" must be a function',
+    );
+  }
+  if (config.limits !== undefined) {
+    assertConfiguration(
+      isRecord(config.limits),
+      'INVALID_CONFIG',
+      'Fevex config "limits" must be an object',
+    );
+    assertConfiguration(
+      config.limits.maxEventsPerRun === undefined
+        || (typeof config.limits.maxEventsPerRun === 'number'
+          && Number.isSafeInteger(config.limits.maxEventsPerRun)
+          && config.limits.maxEventsPerRun > 0),
+      'INVALID_CONFIG',
+      'Fevex config "limits.maxEventsPerRun" must be a positive safe integer',
+    );
+  }
   if (config.observability !== undefined) {
     assertConfiguration(
       isRecord(config.observability),
@@ -1396,6 +1439,8 @@ export function createComposition(config: FevexConfig): FevexComposition {
     sandbox: config.sandbox,
     policies,
     onEvent: config.onEvent,
+    admission: config.admission === undefined ? undefined : { ...config.admission },
+    limits: config.limits === undefined ? undefined : { ...config.limits },
     observability:
       config.observability === undefined
         ? undefined

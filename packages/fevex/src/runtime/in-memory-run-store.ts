@@ -1,4 +1,4 @@
-import { validateListEventsOptions } from './run-store';
+import { validateListEventsOptions, validatePurgeRunsOptions } from './run-store';
 import type { AgentEvent, RunId } from '../core';
 import { FevexRunError } from '../run-error';
 import type {
@@ -7,6 +7,9 @@ import type {
   ExecutionCommit,
   ExecutionCreate,
   ListEventsOptions,
+  PurgeRunsOptions,
+  PurgeRunsResult,
+  RetainableRunStatus,
   RunCheckpoint,
   RunLease,
   RunRecord,
@@ -152,6 +155,36 @@ export class InMemoryRunStore implements DurableRunStore {
   #sessionBusy(sessionId: string, exceptRunId?: string): boolean {
     return [...this.#runs.values()].some((run) => run.sessionId === sessionId
       && run.id !== exceptRunId && (run.status === 'running' || run.status === 'paused'));
+  }
+
+  async purgeRuns(options: PurgeRunsOptions = {}): Promise<PurgeRunsResult> {
+    const { statuses, before, limit } = validatePurgeRunsOptions(options);
+    const allowed = new Set<RetainableRunStatus>(statuses);
+    const beforeTime = before === undefined ? undefined : Date.parse(before);
+    const candidates = [...this.#runs.entries()]
+      .filter(([, run]) => allowed.has(run.status as RetainableRunStatus)
+        && (beforeTime === undefined || Date.parse(run.createdAt) < beforeTime))
+      .sort(([, first], [, second]) => Date.parse(first.createdAt) - Date.parse(second.createdAt))
+      .slice(0, limit);
+
+    for (const [runId] of candidates) {
+      this.#runs.delete(runId);
+      this.#events.delete(runId);
+      this.#checkpoints.delete(runId);
+      this.#leases.delete(runId);
+      for (const key of this.#toolExecutions.keys()) {
+        if (key.startsWith(`${runId}:`)) this.#toolExecutions.delete(key);
+      }
+    }
+
+    const affectedSessions = new Set(candidates.map(([, run]) => run.sessionId));
+    const usedSessions = new Set([...this.#runs.values()].map(({ sessionId }) => sessionId));
+    let sessions = 0;
+    for (const sessionId of affectedSessions) {
+      if (usedSessions.has(sessionId)) continue;
+      if (this.#sessions.delete(sessionId)) sessions += 1;
+    }
+    return { runs: candidates.length, sessions };
   }
 
   async acquireLease(lease: RunLease): Promise<boolean> {

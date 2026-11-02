@@ -25,7 +25,18 @@ import type {
 import type { FevexComposition } from './configuration';
 import { definitionHash, teamDefinitionHash, workflowDefinitionHash } from './definition-hash';
 import { toJsonValue } from './json';
-import { abortable, cancellationReason, eventUsage, toErrorMessage } from './run-support';
+import {
+  abortable,
+  cancellationReason,
+  deadlineAtFromMs,
+  eventUsage,
+  isTimeoutError,
+  minDeadline,
+  remainingDeadlineMs,
+  resumeDeadlineSignal,
+  runSignal,
+  toErrorMessage,
+} from './run-support';
 import { validateSchema } from './schemas';
 import {
   addWorkflowBudget,
@@ -65,6 +76,7 @@ export function createWorkflowEngine(
     activeWorkflowRuns,
     activeSessions,
     runtimeOwner,
+    admitStart,
     createEvent,
     createCoordinatorEvent,
     notifyObserver,
@@ -107,7 +119,7 @@ export function createWorkflowEngine(
       )
       .map(({ childRunId }) => childRunId);
     for (const childRunId of childRunIds) {
-      if (!(await cancelStoredAgent(childRunId))) {
+      if (!(await cancelStoredAgent(childRunId, reason === 'timeout' ? 'timeout' : 'aborted'))) {
         throw new FevexRunError(
           'RUN_CONFLICT',
           `Workflow child "${childRunId}" could not be cancelled`,
@@ -130,7 +142,110 @@ export function createWorkflowEngine(
     return event;
   };
 
-  const prepareWorkflowExecution = async <TInput, TOutput>(
+  const cancelStoredWorkflow = async (
+    runId: string,
+    reason: 'aborted' | 'timeout' = 'aborted',
+  ): Promise<boolean> => {
+    const active = activeWorkflowRuns.get(runId);
+    if (active && !active.request.signal.aborted) {
+      active.controller.abort(new DOMException(
+        reason === 'timeout' ? 'Run deadline exceeded' : 'Run cancelled',
+        reason === 'timeout' ? 'TimeoutError' : 'AbortError',
+      ));
+      if (!active.advancing) {
+        await cancelWorkflowExecution(active);
+        return true;
+      }
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const current = await runStore.getRun(runId);
+        if (
+          current?.status === 'cancelled'
+          || current?.status === 'completed'
+          || current?.status === 'failed'
+        ) {
+          return true;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+      return false;
+    }
+    if (!isDurableRunStore(runStore)) return false;
+    const run = await runStore.getRun<CoordinatorRun>(runId);
+    if (!run) return false;
+    if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+      return true;
+    }
+    const session = await runStore.getSession(run.sessionId);
+    const checkpoint = await runStore.getCheckpoint<CoordinatorCheckpoint>(runId);
+    if (!session || !checkpoint) return false;
+
+    const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
+    const lease = {
+      generation: 0,
+      runId,
+      ownerId,
+      expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
+    };
+    const acquired = await runStore.acquireLease(lease);
+    if (!acquired) return false;
+    try {
+      const childRunIds = Object.values(checkpoint.steps)
+        .filter(
+          (record): record is Extract<
+            WorkflowStepRecord,
+            { type: 'agent'; status: 'running' }
+          > => record.type === 'agent' && record.status === 'running',
+        )
+        .map(({ childRunId }) => childRunId);
+      for (const childRunId of childRunIds) {
+        if (!(await cancelStoredAgent(childRunId, reason))) return false;
+      }
+      const state: WorkflowExecutionState = {
+        run,
+        session,
+        request: {
+          input: checkpoint.input,
+          ...(checkpoint.model === undefined ? {} : { model: checkpoint.model }),
+          ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
+          sessionId: session.id,
+          context: checkpoint.context,
+          limits: checkpoint.limits,
+          signal: new AbortController().signal,
+        },
+        controller: new AbortController(),
+        eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+        checkpoint,
+        advancing: false,
+        lease,
+        commitQueue: Promise.resolve(),
+      };
+      run.status = 'cancelled';
+      run.pause = undefined;
+      run.error = reason;
+      run.usage = checkpoint.budget?.usage;
+      const cancelled = createCoordinatorEvent(
+        state,
+        'workflow.run.cancelled',
+        { reason },
+        'team.run.cancelled',
+      );
+      await commit(state, { checkpoint: null, events: [cancelled] });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof FevexRunError
+        && error.code === 'RUN_CONFLICT'
+        && (await runStore.getRun(runId))?.status !== 'paused'
+      ) {
+        return false;
+      }
+      throw error;
+    } finally {
+      await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
+    }
+  };
+
+  const prepareWorkflowExecutionBody = async <TInput, TOutput>(
     name: string,
     request: RunRequest<TInput, TOutput>,
     kind: 'workflow' | 'team' = 'workflow',
@@ -172,11 +287,9 @@ export function createWorkflowEngine(
     if (activeSessions.has(session.id)) {
       throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" already has an active run`);
     }
-    activeSessions.add(session.id);
     const controller = new AbortController();
-    const signal = request.signal
-      ? AbortSignal.any([controller.signal, request.signal])
-      : controller.signal;
+    const signal = runSignal(controller, request);
+    const deadlineAt = deadlineAtFromMs(request.deadlineMs);
     const validatedInput =
       workflow.inputSchema === undefined
         ? request.input
@@ -205,6 +318,7 @@ export function createWorkflowEngine(
             revision: 0,
             createdAt: now,
             updatedAt: now,
+            ...(deadlineAt === undefined ? {} : { deadlineAt }),
           }
         : {
             kind: 'workflow',
@@ -215,6 +329,7 @@ export function createWorkflowEngine(
             revision: 0,
             createdAt: now,
             updatedAt: now,
+            ...(deadlineAt === undefined ? {} : { deadlineAt }),
           };
     const checkpoint: CoordinatorCheckpoint =
       kind === 'team'
@@ -244,6 +359,7 @@ export function createWorkflowEngine(
             steps: {},
             limits: combineLimits(workflow.limits, request.limits),
           };
+    activeSessions.add(session.id);
     const state: WorkflowExecutionState<TInput, TOutput> = {
       run,
       session,
@@ -284,6 +400,19 @@ export function createWorkflowEngine(
     }
     activeWorkflowRuns.set(run.id, state as WorkflowExecutionState);
     return state;
+  };
+
+  const prepareWorkflowExecution = async <TInput, TOutput>(
+    name: string,
+    request: RunRequest<TInput, TOutput>,
+    kind: 'workflow' | 'team' = 'workflow',
+  ): Promise<WorkflowExecutionState<TInput, TOutput>> => {
+    const release = await admitStart(kind, name, request);
+    try {
+      return await prepareWorkflowExecutionBody(name, request, kind);
+    } finally {
+      release();
+    }
   };
 
   async function* executeWorkflow<TInput = unknown, TOutput = unknown>(
@@ -538,6 +667,7 @@ export function createWorkflowEngine(
               undefined,
               true,
               state.recoveryActor,
+              { admit: false, internal: true },
             );
           }
           if (child.status === 'completed') {
@@ -567,6 +697,10 @@ export function createWorkflowEngine(
           : state.request.signal;
         const childState = await prepareExecution(agentName, {
           ...request,
+          deadlineMs: minDeadline(
+            remainingDeadlineMs(state.run.deadlineAt, state.run.id),
+            request.deadlineMs,
+          ),
           model: request.model ?? state.request.model,
           reasoning: request.reasoning ?? state.request.reasoning,
           context: mergeExecutionContext(state.request.context, request.context),
@@ -575,7 +709,7 @@ export function createWorkflowEngine(
             remainingWorkflowLimits(state.checkpoint.limits, state.checkpoint.budget),
           ),
           signal: childSignal,
-        });
+        }, { admit: false });
         const action = options?.metadata?.teamAction === 'handoff' ? 'handoff' : 'delegate';
         const lifecycleEvents: AgentEvent[] = [];
         if (isTeamRun(state.run) && action === 'handoff') {
@@ -1037,9 +1171,18 @@ export function createWorkflowEngine(
       };
     } catch (error) {
       let thrown = error;
-      if (state.request.signal.aborted) {
+      const parentDeadline = state.run.deadlineAt === undefined
+        ? undefined
+        : Date.parse(state.run.deadlineAt);
+      const parentTimedOut = isTimeoutError(error)
+        && parentDeadline !== undefined
+        && Date.now() >= parentDeadline - 10;
+      if (state.request.signal.aborted || parentTimedOut) {
         try {
-          const event = await cancelWorkflowExecution(state);
+          const event = await cancelWorkflowExecution(
+            state,
+            parentTimedOut ? 'timeout' : undefined,
+          );
           if (event) {
             events.push(event);
             yield event;
@@ -1119,7 +1262,7 @@ export function createWorkflowEngine(
     }
   };
 
-  const resumeWorkflow = async <TOutput>(
+  const resumeWorkflowBody = async <TOutput>(
     runId: string,
     resolution: ResumeRunResolution | undefined,
     recoveryActor?: { id: string; type?: string },
@@ -1157,6 +1300,22 @@ export function createWorkflowEngine(
         runId,
       );
     }
+    if (run.deadlineAt !== undefined && Date.parse(run.deadlineAt) <= Date.now()) {
+      const cancelled = await cancelStoredWorkflow(runId, 'timeout');
+      if (!cancelled) {
+        throw new FevexRunError(
+          resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+          `Run "${runId}" deadline has passed`,
+          runId,
+        );
+      }
+      return (await runStore.getRun<CoordinatorRun>(runId))! as CoordinatorRun<TOutput>;
+    }
+    const deadlineSignal = resumeDeadlineSignal(
+      run.deadlineAt,
+      runId,
+      resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+    );
     const name = coordinatorName(run);
     const workflow = workflows.get(name);
     const team = isTeamRun(run) ? teams.get(name) : undefined;
@@ -1211,6 +1370,9 @@ export function createWorkflowEngine(
           );
         }
         const controller = new AbortController();
+        const signal = deadlineSignal
+          ? AbortSignal.any([controller.signal, deadlineSignal])
+          : controller.signal;
         const state: WorkflowExecutionState = {
           run,
           session,
@@ -1221,7 +1383,7 @@ export function createWorkflowEngine(
             sessionId: session.id,
             context: checkpoint.context,
             limits: checkpoint.limits,
-            signal: controller.signal,
+            signal,
           },
           controller,
           eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
@@ -1308,6 +1470,9 @@ export function createWorkflowEngine(
           }
         }
         const controller = new AbortController();
+        const signal = deadlineSignal
+          ? AbortSignal.any([controller.signal, deadlineSignal])
+          : controller.signal;
         const state: WorkflowExecutionState = {
           run,
           session,
@@ -1318,7 +1483,7 @@ export function createWorkflowEngine(
             sessionId: session.id,
             context: checkpoint.context,
             limits: checkpoint.limits,
-            signal: controller.signal,
+            signal,
           },
           controller,
           eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
@@ -1381,8 +1546,115 @@ export function createWorkflowEngine(
           runId,
         );
       }
-      const childRun = await resumeAgent(childRunId, resolution, true);
+      let childRun: AgentRun;
+      try {
+        childRun = await resumeAgent(
+          childRunId,
+          resolution,
+          true,
+          undefined,
+          { admit: false, internal: true },
+        );
+      } catch (error) {
+        const parentDeadline = run.deadlineAt === undefined
+          ? undefined
+          : Date.parse(run.deadlineAt);
+        const child = await runStore.getRun<AgentRun>(childRunId);
+        const childDeadline = child?.deadlineAt === undefined
+          ? undefined
+          : Date.parse(child.deadlineAt);
+        const parentTimedOut = isTimeoutError(error)
+          && parentDeadline !== undefined
+          && childDeadline !== undefined
+          && Math.abs(childDeadline - parentDeadline) <= 5;
+        if (parentTimedOut) {
+          const pausedChildIds = workflowPause.type === 'workflow_children'
+            ? workflowPause.children.map(({ childRunId }) => childRunId)
+            : [workflowPause.childRunId];
+          for (const pausedChildId of pausedChildIds) {
+            if (!(await cancelStoredAgent(pausedChildId, 'timeout'))) throw error;
+          }
+          const cancelController = new AbortController();
+          const cancelState: WorkflowExecutionState = {
+            run,
+            session,
+            request: {
+              input: checkpoint.input,
+              ...(checkpoint.model === undefined ? {} : { model: checkpoint.model }),
+              ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
+              sessionId: session.id,
+              context: checkpoint.context,
+              limits: checkpoint.limits,
+              signal: cancelController.signal,
+            },
+            controller: cancelController,
+            eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+            checkpoint,
+            advancing: false,
+            lease,
+            commitQueue: Promise.resolve(),
+          };
+          run.status = 'cancelled';
+          run.pause = undefined;
+          run.error = 'timeout';
+          run.usage = checkpoint.budget?.usage;
+          const cancelled = createCoordinatorEvent(
+            cancelState,
+            'workflow.run.cancelled',
+            { reason: 'timeout' },
+            'team.run.cancelled',
+          );
+          await commit(cancelState, { checkpoint: null, events: [cancelled] });
+          await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
+          return structuredClone(run) as CoordinatorRun<TOutput>;
+        }
+        if (isTimeoutError(error)) {
+          const pausedChildIds = workflowPause.type === 'workflow_children'
+            ? workflowPause.children.map(({ childRunId }) => childRunId)
+            : [workflowPause.childRunId];
+          for (const pausedChildId of pausedChildIds) {
+            if (!(await cancelStoredAgent(pausedChildId, 'aborted'))) throw error;
+          }
+          const failController = new AbortController();
+          const failState: WorkflowExecutionState = {
+            run,
+            session,
+            request: {
+              input: checkpoint.input,
+              ...(checkpoint.model === undefined ? {} : { model: checkpoint.model }),
+              ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
+              sessionId: session.id,
+              context: checkpoint.context,
+              limits: checkpoint.limits,
+              signal: failController.signal,
+            },
+            controller: failController,
+            eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
+            checkpoint,
+            advancing: false,
+            lease,
+            commitQueue: Promise.resolve(),
+          };
+          run.status = 'failed';
+          run.pause = undefined;
+          run.error = toErrorMessage(error);
+          run.usage = checkpoint.budget?.usage;
+          const failed = createCoordinatorEvent(
+            failState,
+            'workflow.run.failed',
+            { error: toErrorMessage(error), ...runErrorPayload(error) },
+            'team.run.failed',
+          );
+          await commit(failState, { checkpoint: null, events: [failed] });
+          await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
+          return structuredClone(run) as CoordinatorRun<TOutput>;
+        }
+        throw error;
+      }
       const controller = new AbortController();
+      const signal = deadlineSignal
+        ? AbortSignal.any([controller.signal, deadlineSignal])
+        : controller.signal;
       const state: WorkflowExecutionState = {
         run,
         session,
@@ -1393,7 +1665,7 @@ export function createWorkflowEngine(
           sessionId: session.id,
           context: checkpoint.context,
           limits: checkpoint.limits,
-          signal: controller.signal,
+          signal,
         },
         controller,
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
@@ -1406,8 +1678,11 @@ export function createWorkflowEngine(
         run.status = 'cancelled';
         run.pause = undefined;
         run.error = childRun.error ?? 'aborted';
-        const reason =
-          childRun.error === 'approval_rejected' ? 'approval_rejected' : 'aborted';
+        const reason = childRun.error === 'approval_rejected'
+          ? 'approval_rejected'
+          : childRun.error === 'timeout'
+            ? 'timeout'
+            : 'aborted';
         const cancelled = createCoordinatorEvent(
           state,
           'workflow.run.cancelled',
@@ -1438,6 +1713,36 @@ export function createWorkflowEngine(
     }
   };
 
+  const resumeWorkflow = async <TOutput>(
+    runId: string,
+    resolution: ResumeRunResolution | undefined,
+    recoveryActor?: { id: string; type?: string },
+    options: { admit?: boolean } = {},
+  ): Promise<CoordinatorRun<TOutput>> => {
+    let release: (() => void) | undefined;
+    if (options.admit !== false) {
+      const run = await runStore.getRun<CoordinatorRun>(runId);
+      const checkpoint = isDurableRunStore(runStore)
+        ? await runStore.getCheckpoint<CoordinatorCheckpoint>(runId)
+        : undefined;
+      if (run && checkpoint && (run.status === 'paused' || run.status === 'running')) {
+        release = await admitStart(
+          isTeamRun(run) ? 'team' : 'workflow',
+          coordinatorName(run),
+          {
+            input: '',
+            ...(checkpoint.context === undefined ? {} : { context: checkpoint.context }),
+          },
+        );
+      }
+    }
+    try {
+      return await resumeWorkflowBody<TOutput>(runId, resolution, recoveryActor);
+    } finally {
+      release?.();
+    }
+  };
+
   return {
     prepareWorkflowExecution,
     executeWorkflow,
@@ -1445,6 +1750,7 @@ export function createWorkflowEngine(
     drainWorkflowExecution,
     resumeWorkflow,
     cancelWorkflowExecution,
+    cancelStoredWorkflow,
   };
 }
 
