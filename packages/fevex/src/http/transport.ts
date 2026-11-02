@@ -2,10 +2,11 @@ import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
 import type { Fevex } from '../fevex';
 import type { ReasoningEffort } from '../models';
 import { FevexRunError, type FevexRunErrorCode } from '../run-error';
-import type { ResumeRunResolution } from '../runtime';
+import type { ResumeRunResolution, RunRecord } from '../runtime';
 import {
   FEVEX_HTTP_PROTOCOL_VERSION,
   FEVEX_HTTP_PROTOCOL_VERSION_HEADER,
+  type FevexHttpAccess,
   type FevexHttpClient,
   type FevexHttpClientOptions,
   type FevexHttpFetch,
@@ -50,25 +51,48 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
     throw new TypeError('pollIntervalMs must be a positive number');
   }
 
+  const authorize = async (access: FevexHttpAccess) => {
+    if (options.authorize && !(await options.authorize(access))) {
+      throw new HttpProtocolError(403, 'FORBIDDEN', 'Forbidden');
+    }
+  };
+
   return async (request, handlerContext = {}) => {
     const url = new URL(request.url);
     const path = url.pathname;
+    const commitStart = async (run: RunRecord) => {
+      try {
+        await options.onRunStarted?.(run, handlerContext.context);
+      } catch (error) {
+        await options.fevex.cancelRun(run.id).catch(() => {});
+        throw error;
+      }
+    };
 
     try {
       const start = path.match(/^\/v1\/agents\/([^/]+)\/runs$/);
       if (start && request.method === 'POST') {
         const body = await readJson(request);
         if (!hasOwn(body, 'input')) throw badRequest('input is required');
+        const name = decodeURIComponent(start[1]!);
         const sessionId = optionalId(body.sessionId, 'sessionId');
         const model = optionalId(body.model, 'model');
         const reasoning = optionalReasoning(body.reasoning);
-        const run = await options.fevex.startAgent(decodeURIComponent(start[1]!), {
+        await authorize({
+          action: 'start',
+          kind: 'agent',
+          name,
+          sessionId,
+          context: handlerContext.context,
+        });
+        const run = await options.fevex.startAgent(name, {
           input: body.input as JsonValue,
           ...(model ? { model } : {}),
           ...(reasoning === undefined ? {} : { reasoning }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
+        await commitStart(run);
         return json(run, 202);
       }
 
@@ -76,38 +100,57 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
       if (startWorkflow && request.method === 'POST') {
         const body = await readJson(request);
         if (!hasOwn(body, 'input')) throw badRequest('input is required');
+        const name = decodeURIComponent(startWorkflow[1]!);
         const sessionId = optionalId(body.sessionId, 'sessionId');
         const model = optionalId(body.model, 'model');
         const reasoning = optionalReasoning(body.reasoning);
-        const run = await options.fevex.startWorkflow(decodeURIComponent(startWorkflow[1]!), {
+        await authorize({
+          action: 'start',
+          kind: 'workflow',
+          name,
+          sessionId,
+          context: handlerContext.context,
+        });
+        const run = await options.fevex.startWorkflow(name, {
           input: body.input as JsonValue,
           ...(model ? { model } : {}),
           ...(reasoning === undefined ? {} : { reasoning }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
+        await commitStart(run);
         return json(run, 202);
       }
       const startTeam = path.match(/^\/v1\/teams\/([^/]+)\/runs$/);
       if (startTeam && request.method === 'POST') {
         const body = await readJson(request);
         if (!hasOwn(body, 'input')) throw badRequest('Run input is required');
+        const name = decodeURIComponent(startTeam[1]!);
         const sessionId = optionalId(body.sessionId, 'sessionId');
         const model = optionalId(body.model, 'model');
         const reasoning = optionalReasoning(body.reasoning);
-        const run = await options.fevex.startTeam(decodeURIComponent(startTeam[1]!), {
+        await authorize({
+          action: 'start',
+          kind: 'team',
+          name,
+          sessionId,
+          context: handlerContext.context,
+        });
+        const run = await options.fevex.startTeam(name, {
           input: body.input as JsonValue,
           ...(model ? { model } : {}),
           ...(reasoning === undefined ? {} : { reasoning }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
+        await commitStart(run);
         return json(run, 202);
       }
 
       const events = path.match(/^\/v1\/runs\/([^/]+)\/events$/);
       if (events && request.method === 'GET') {
         const runId = decodeURIComponent(events[1]!);
+        await authorize({ action: 'observe', runId, context: handlerContext.context });
         if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
         const after = request.headers.get('last-event-id')?.trim() || undefined;
         const initial = await options.fevex.listEvents(runId, { after, limit: eventPageSize });
@@ -132,11 +175,13 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
       const resume = path.match(/^\/v1\/runs\/([^/]+)\/resume$/);
       if (resume && request.method === 'POST') {
         const runId = decodeURIComponent(resume[1]!);
-        if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
+        // Authenticate and authorize before revealing whether the run exists.
         const actor = handlerContext.context?.actor;
         if (!actor?.id?.trim()) {
           throw new HttpProtocolError(401, 'ACTOR_REQUIRED', 'Authenticated actor is required');
         }
+        await authorize({ action: 'resume', runId, context: handlerContext.context });
+        if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
         const resolution = readResolution(await readJson(request), actor);
         return json(await options.fevex.resumeRun(runId, resolution), 202);
       }
@@ -144,22 +189,27 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
       const recover = path.match(/^\/v1\/runs\/([^/]+)\/recover$/);
       if (recover && request.method === 'POST') {
         const runId = decodeURIComponent(recover[1]!);
-        if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
+        // Authenticate and authorize before revealing whether the run exists.
         const actor = handlerContext.context?.actor;
         if (!actor?.id?.trim()) {
           throw new HttpProtocolError(401, 'ACTOR_REQUIRED', 'Authenticated actor is required');
         }
+        await authorize({ action: 'recover', runId, context: handlerContext.context });
+        if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
         return json(await options.fevex.recoverRun(runId, { actor }), 202);
       }
 
       const run = path.match(/^\/v1\/runs\/([^/]+)$/);
       if (run && request.method === 'GET') {
-        const value = await options.fevex.getRun(decodeURIComponent(run[1]!));
+        const runId = decodeURIComponent(run[1]!);
+        await authorize({ action: 'read', runId, context: handlerContext.context });
+        const value = await options.fevex.getRun(runId);
         if (!value) throw notFound('RUN_NOT_FOUND', 'Run not found');
         return json(value);
       }
       if (run && request.method === 'DELETE') {
         const runId = decodeURIComponent(run[1]!);
+        await authorize({ action: 'cancel', runId, context: handlerContext.context });
         const value = await options.fevex.getRun(runId);
         if (!value) throw notFound('RUN_NOT_FOUND', 'Run not found');
         if (value.status === 'running' || value.status === 'paused') {

@@ -1,4 +1,4 @@
-import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
+import type { AgentEvent, ExecutionContext, JsonValue, RunId } from '../core';
 import type { Fevex } from '../fevex';
 import type { ReasoningEffort } from '../models';
 import type {
@@ -46,11 +46,43 @@ export interface FevexHttpHandlerContext {
   context?: ExecutionContext;
 }
 
+/** Host-facing resource access check. */
+export type FevexHttpAccess =
+  | {
+      action: 'start';
+      kind: 'agent' | 'workflow' | 'team';
+      name: string;
+      sessionId?: SessionId;
+      context?: ExecutionContext;
+    }
+  | {
+      action: 'read' | 'observe' | 'cancel' | 'resume' | 'recover';
+      runId: RunId;
+      context?: ExecutionContext;
+    };
+
 export interface FevexHttpHandlerOptions {
   fevex: Fevex;
   pollIntervalMs?: number;
   /** Events per SSE read (default 100, maximum 1000). */
   eventPageSize?: number;
+  /**
+   * Authorizes a resource operation before the handler reads or mutates a run,
+   * or starts a run (new or existing session). Return false for a 403 response.
+   * Omit to preserve the host's existing trusted-network behavior.
+   */
+  authorize?: (access: FevexHttpAccess) => boolean | Promise<boolean>;
+  /**
+   * Called after a run starts so the host can persist run and session ownership.
+   * If it throws, the handler cancels the new run and returns 500. A process
+   * crash between start and this callback leaves the run unowned; hosts must
+   * treat unowned runs as inaccessible. Runs created outside the HTTP handler
+   * are not reported.
+   */
+  onRunStarted?: (
+    run: RunRecord,
+    context?: ExecutionContext,
+  ) => void | Promise<void>;
   onError?: (error: unknown, problem: FevexProblemDetails) => void;
 }
 
