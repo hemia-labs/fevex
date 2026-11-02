@@ -17,6 +17,8 @@ export interface StartRunHttpRequest<TInput extends JsonValue = JsonValue> {
   model?: string;
   reasoning?: ReasoningEffort;
   sessionId?: SessionId;
+  /** Maximum wall-clock time for the run, including time spent paused. */
+  deadlineMs?: number;
 }
 
 export type ResumeRunHttpRequest =
@@ -66,6 +68,8 @@ export interface FevexHttpHandlerOptions {
   pollIntervalMs?: number;
   /** Events per SSE read (default 100, maximum 1000). */
   eventPageSize?: number;
+  /** Maximum concurrent SSE streams (default unlimited). */
+  maxConnections?: number;
   /**
    * Authorizes a resource operation before the handler reads or mutates a run,
    * or starts a run (new or existing session). Return false for a 403 response.

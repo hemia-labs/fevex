@@ -1,5 +1,6 @@
 import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
 import type { Fevex } from '../fevex';
+import { MAX_DEADLINE_MS } from '../internal/run-support';
 import type { ReasoningEffort } from '../models';
 import { FevexRunError, type FevexRunErrorCode } from '../run-error';
 import type { ResumeRunResolution, RunRecord } from '../runtime';
@@ -32,6 +33,7 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
   'CHECKPOINT_UNSUPPORTED',
   'RUN_DEFINITION_CHANGED',
   'POLICY_DENIED',
+  'ADMISSION_DENIED',
   'CREDENTIAL_NOT_FOUND',
   'SANDBOX_REQUIRED',
   'ELICITATION_INVALID',
@@ -44,12 +46,17 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
 export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexHttpHandler {
   const pollIntervalMs = options.pollIntervalMs ?? 100;
   const eventPageSize = options.eventPageSize ?? 100;
+  const maxConnections = options.maxConnections;
   if (!Number.isSafeInteger(eventPageSize) || eventPageSize < 1 || eventPageSize > 1000) {
     throw new TypeError('eventPageSize must be an integer between 1 and 1000');
   }
   if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 1) {
     throw new TypeError('pollIntervalMs must be a positive number');
   }
+  if (maxConnections !== undefined && (!Number.isSafeInteger(maxConnections) || maxConnections < 1)) {
+    throw new TypeError('maxConnections must be a positive safe integer');
+  }
+  let activeConnections = 0;
 
   const authorize = async (access: FevexHttpAccess) => {
     if (options.authorize && !(await options.authorize(access))) {
@@ -78,6 +85,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const sessionId = optionalId(body.sessionId, 'sessionId');
         const model = optionalId(body.model, 'model');
         const reasoning = optionalReasoning(body.reasoning);
+        const deadlineMs = optionalDeadline(body.deadlineMs, 'deadlineMs');
         await authorize({
           action: 'start',
           kind: 'agent',
@@ -89,6 +97,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
           input: body.input as JsonValue,
           ...(model ? { model } : {}),
           ...(reasoning === undefined ? {} : { reasoning }),
+          ...(deadlineMs === undefined ? {} : { deadlineMs }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
@@ -104,6 +113,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const sessionId = optionalId(body.sessionId, 'sessionId');
         const model = optionalId(body.model, 'model');
         const reasoning = optionalReasoning(body.reasoning);
+        const deadlineMs = optionalDeadline(body.deadlineMs, 'deadlineMs');
         await authorize({
           action: 'start',
           kind: 'workflow',
@@ -115,6 +125,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
           input: body.input as JsonValue,
           ...(model ? { model } : {}),
           ...(reasoning === undefined ? {} : { reasoning }),
+          ...(deadlineMs === undefined ? {} : { deadlineMs }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
@@ -129,6 +140,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         const sessionId = optionalId(body.sessionId, 'sessionId');
         const model = optionalId(body.model, 'model');
         const reasoning = optionalReasoning(body.reasoning);
+        const deadlineMs = optionalDeadline(body.deadlineMs, 'deadlineMs');
         await authorize({
           action: 'start',
           kind: 'team',
@@ -140,6 +152,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
           input: body.input as JsonValue,
           ...(model ? { model } : {}),
           ...(reasoning === undefined ? {} : { reasoning }),
+          ...(deadlineMs === undefined ? {} : { deadlineMs }),
           ...(sessionId ? { sessionId } : {}),
           ...(handlerContext.context ? { context: handlerContext.context } : {}),
         });
@@ -154,6 +167,16 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
         const after = request.headers.get('last-event-id')?.trim() || undefined;
         const initial = await options.fevex.listEvents(runId, { after, limit: eventPageSize });
+        if (maxConnections !== undefined && activeConnections >= maxConnections) {
+          throw new HttpProtocolError(429, 'CONNECTION_LIMIT', 'Too many event streams');
+        }
+        activeConnections += 1;
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          activeConnections -= 1;
+        };
         const disconnected = new AbortController();
         const iterator = observeEvents(
           options.fevex,
@@ -164,7 +187,11 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
           AbortSignal.any([request.signal, disconnected.signal]),
           eventPageSize,
         );
-        return versioned(new Response(iteratorStream(iterator, () => disconnected.abort()), {
+        return versioned(new Response(iteratorStream(
+          iterator,
+          () => disconnected.abort(),
+          release,
+        ), {
           headers: {
             'content-type': `${SSE_TYPE}; charset=utf-8`,
             'cache-control': 'no-cache, no-transform',
@@ -346,18 +373,34 @@ async function* observeEvents(
   }
 }
 
-function iteratorStream(iterator: AsyncGenerator<Uint8Array>, cancel: () => void) {
+function iteratorStream(
+  iterator: AsyncGenerator<Uint8Array>,
+  cancel: () => void,
+  done?: () => void,
+) {
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    done?.();
+  };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const next = await iterator.next();
-        if (next.done) controller.close();
-        else controller.enqueue(next.value);
+        if (next.done) {
+          finish();
+          controller.close();
+        } else {
+          controller.enqueue(next.value);
+        }
       } catch (error) {
+        finish();
         controller.error(error);
       }
     },
     async cancel() {
+      finish();
       cancel();
       await iterator.return(undefined);
     },
@@ -490,6 +533,22 @@ function optionalId(value: unknown, name: string) {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !value.trim()) throw badRequest(`${name} must be a string`);
   return value.trim();
+}
+
+function optionalPositiveInteger(value: unknown, name: string) {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw badRequest(`${name} must be a positive integer`);
+  }
+  return value as number;
+}
+
+function optionalDeadline(value: unknown, name: string) {
+  const deadlineMs = optionalPositiveInteger(value, name);
+  if (deadlineMs !== undefined && deadlineMs > MAX_DEADLINE_MS) {
+    throw badRequest(`${name} must be at most ${MAX_DEADLINE_MS}`);
+  }
+  return deadlineMs;
 }
 
 function optionalReasoning(value: unknown): ReasoningEffort | undefined {
@@ -643,6 +702,7 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
   ) return 404;
   if (code === 'APPROVAL_INVALID' || code === 'INVALID_CURSOR') return 400;
   if (code === 'POLICY_DENIED') return 403;
+  if (code === 'ADMISSION_DENIED') return 429;
   return 409;
 }
 
@@ -650,6 +710,7 @@ function titleForStatus(status: number) {
   if (status === 404) return 'Not Found';
   if (status === 400) return 'Bad Request';
   if (status === 403) return 'Forbidden';
+  if (status === 429) return 'Too Many Requests';
   return 'Conflict';
 }
 
