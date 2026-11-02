@@ -14,7 +14,17 @@ import {
   type RunRecord,
   type Sandbox,
 } from '@fevex/core';
-import { createFevexHttpHandler, type FevexHttpHandler } from '@fevex/core/http';
+import {
+  createFevexHttpHandler,
+  FEVEX_HTTP_PROTOCOL_VERSION,
+  FEVEX_HTTP_PROTOCOL_VERSION_HEADER,
+  type FevexHttpHandler,
+} from '@fevex/core/http';
+import {
+  DemoAuthorization,
+  demoAuthEnabled,
+  resolveDemoContext,
+} from './authorization';
 import {
   mockPreviewFrameSource,
   realPreviewFrameSource,
@@ -48,8 +58,9 @@ export class FevexService {
     efforts: ReasoningEffort[];
   }>;
   readonly http: FevexHttpHandler;
-  /** The single actor in this example; the core does not persist per-run owners. */
-  readonly demoActor = 'demo-user';
+  readonly authorization = new DemoAuthorization(
+    process.env.FEVEX_OWNERS_PATH ?? '.fevex/owners.json',
+  );
   readonly previewFrameSource: PreviewFrameSource;
 
   constructor() {
@@ -94,6 +105,8 @@ export class FevexService {
     });
     const handler = createFevexHttpHandler({
       fevex: this.fevex,
+      authorize: (access) => this.authorization.authorize(access),
+      onRunStarted: (run, context) => this.authorization.claim(run, context),
       onError: (error, problem) => {
         this.logger.error(
           `${problem.code} ${problem.instance}: ${errorMessage(error)}`,
@@ -101,12 +114,7 @@ export class FevexService {
         );
       },
     });
-    this.http = (request) => handler(request, {
-      context: {
-        actor: { id: 'demo-user' },
-        attributes: { plan: 'pro', region: 'MX' },
-      },
-    });
+    this.http = createDemoHttpHandler(handler);
   }
 
   listAgents() {
@@ -145,15 +153,35 @@ export class FevexService {
   getRun(runId: RunId): Promise<RunRecord | undefined> {
     return this.fevex.getRun(runId);
   }
+}
 
-  /**
-   * Resolves the owner of a run. The core does not store per-run owners, and this
-   * example has a single actor, so every run maps to `demoActor`. A multi-tenant
-   * app must maintain its own run->owner mapping (e.g. captured at start time).
-   */
-  getRunOwner(_runId: RunId): string {
-    return this.demoActor;
-  }
+function unauthorized(request: Request): Response {
+  return new Response(JSON.stringify({
+    type: 'urn:fevex:problem:unauthorized',
+    title: 'Unauthorized',
+    status: 401,
+    code: 'UNAUTHORIZED',
+    instance: new URL(request.url).pathname,
+  }), {
+    status: 401,
+    headers: {
+      'content-type': 'application/problem+json',
+      'www-authenticate': 'Bearer',
+      [FEVEX_HTTP_PROTOCOL_VERSION_HEADER]: FEVEX_HTTP_PROTOCOL_VERSION,
+    },
+  });
+}
+
+export function createDemoHttpHandler(
+  handler: FevexHttpHandler,
+  demoAuth: () => boolean = demoAuthEnabled,
+): FevexHttpHandler {
+  return async (request, handlerContext) => {
+    const context = handlerContext?.context
+      ?? resolveDemoContext(request.headers.get('authorization'), demoAuth());
+    if (!context) return unauthorized(request);
+    return handler(request, { context });
+  };
 }
 
 function errorMessage(error: unknown): string {

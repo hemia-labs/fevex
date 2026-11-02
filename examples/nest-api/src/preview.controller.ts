@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Req, Res } from '@nestjs/common';
 import type { RunStatus } from '@fevex/core';
 import { FevexService } from './fevex.service';
+import { demoAuthEnabled, resolveDemoContext } from './authorization';
 
 const TERMINAL: ReadonlySet<RunStatus> = new Set(['completed', 'failed', 'cancelled']);
 const DEFAULT_FPS = 1;
@@ -17,15 +18,22 @@ export class PreviewController {
     @Req() req: any,
     @Res() res: any,
   ): Promise<void> {
-    const actor = header(req, 'x-fevex-actor') ?? this.fevex.demoActor;
+    const context = resolveDemoContext(
+      header(req, 'authorization'),
+      demoAuthEnabled(),
+    );
+    if (!context) {
+      problem(res, 401, 'UNAUTHORIZED', 'Authentication required', runId);
+      return;
+    }
+    if (!this.fevex.authorization.authorize({ action: 'observe', runId, context })) {
+      problem(res, 403, 'RUN_FORBIDDEN', 'You do not own this run', runId);
+      return;
+    }
 
     const run = await this.fevex.getRun(runId);
     if (!run) {
       problem(res, 404, 'RUN_NOT_FOUND', 'Run not found', runId);
-      return;
-    }
-    if (actor !== this.fevex.getRunOwner(runId)) {
-      problem(res, 403, 'RUN_FORBIDDEN', 'You do not own this run', runId);
       return;
     }
 

@@ -7,7 +7,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
     exposedHeaders: [FEVEX_HTTP_PROTOCOL_VERSION_HEADER],
-    allowedHeaders: ['content-type', 'last-event-id'],
+    allowedHeaders: ['authorization', 'content-type', 'last-event-id'],
   });
   await app.listen(3001);
 }
