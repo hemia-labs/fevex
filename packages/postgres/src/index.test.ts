@@ -7,7 +7,7 @@ import {
   RunPausedError,
   type ModelGateway,
 } from '@fevex/core';
-import { testRunStore } from '@fevex/core/testing';
+import { testRetentionStore, testRunStore } from '@fevex/core/testing';
 import type {
   AgentRun,
   RunCheckpoint,
@@ -262,6 +262,7 @@ integration('PostgresRunStore', () => {
     try {
       await store.migrate();
       await testRunStore(store);
+      await testRetentionStore(store);
     } finally {
       await store.close();
     }

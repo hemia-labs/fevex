@@ -1,4 +1,4 @@
-import { validateListEventsOptions } from '@fevex/core/runtime';
+import { validateListEventsOptions, validatePurgeRunsOptions } from '@fevex/core/runtime';
 import { Pool, type PoolClient } from 'pg';
 import { FevexRunError, type AgentEvent, type RunId } from '@fevex/core';
 import type {
@@ -7,6 +7,9 @@ import type {
   ExecutionCommit,
   ExecutionCreate,
   ListEventsOptions,
+  PurgeRunsOptions,
+  PurgeRunsResult,
+  RetainableRunStore,
   RunRecord,
   RunCheckpoint,
   RunLease,
@@ -17,7 +20,7 @@ import type {
 } from '@fevex/core/runtime';
 import { migration } from './migration';
 
-export interface PostgresRunStore extends DurableRunStore {
+export interface PostgresRunStore extends DurableRunStore, RetainableRunStore {
   migrate(): Promise<void>;
   close(): Promise<void>;
 }
@@ -129,6 +132,56 @@ class PgRunStore implements PostgresRunStore {
       [runId, sequence, options.limit ?? null],
     );
     return clone(result.rows.map(({ data }) => data));
+  }
+
+  async purgeRuns(options: PurgeRunsOptions = {}): Promise<PurgeRunsResult> {
+    const { statuses, before, limit } = validatePurgeRunsOptions(options);
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      const params: unknown[] = [statuses];
+      let where = "data->>'status' = ANY($1::text[])";
+      if (before !== undefined) {
+        params.push(before);
+        where += ` AND (data->>'createdAt')::timestamptz < $${params.length}::timestamptz`;
+      }
+      params.push(limit ?? 2_147_483_647);
+      const deleted = await client.query<{ id: string; session_id: string }>(
+        `WITH candidates AS (
+           SELECT id, session_id FROM fevex.runs
+           WHERE ${where}
+           ORDER BY (data->>'createdAt')::timestamptz
+           LIMIT $${params.length}
+         )
+         DELETE FROM fevex.runs AS runs
+         USING candidates
+         WHERE runs.id = candidates.id
+         RETURNING runs.id, runs.session_id`,
+        params,
+      );
+
+      const sessionIds = [...new Set(deleted.rows.map(({ session_id }) => session_id))];
+      let sessions = 0;
+      if (sessionIds.length > 0) {
+        const removed = await client.query<{ id: string }>(
+          `DELETE FROM fevex.sessions AS sessions
+           WHERE sessions.id = ANY($1::text[])
+             AND NOT EXISTS (
+               SELECT 1 FROM fevex.runs AS runs WHERE runs.session_id = sessions.id
+             )
+           RETURNING sessions.id`,
+          [sessionIds],
+        );
+        sessions = removed.rowCount ?? 0;
+      }
+      await client.query('COMMIT');
+      return { runs: deleted.rowCount ?? 0, sessions };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(
