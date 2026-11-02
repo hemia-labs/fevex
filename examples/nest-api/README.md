@@ -30,6 +30,9 @@ and reasoning effort per run. Use `DEEPSEEK_MODEL` and `OPENAI_MODEL` to overrid
 `FEVEX_MODEL` remains a shortcut for the provider selected by
 `FEVEX_PROVIDER`. OpenAI also accepts `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID`.
 
+`bun run dev` sets `FEVEX_DEMO_AUTH=1`, so anonymous playground requests use
+`demo-user`. The compiled `start` script requires a bearer token.
+
 Start the UI separately with `bun run dev:next` and open
 `http://localhost:3000`. `NEXT_PUBLIC_NEST_API_URL` defaults to
 `http://localhost:3001`.
@@ -74,9 +77,58 @@ It demonstrates the contract only; use an external provider for production
 isolation.
 
 Runs and approval checkpoints persist in
-`FEVEX_DB_PATH` (default `.fevex/demo.sqlite`). The example uses the fixed
-actor `demo-user` to make approval runnable without adding fake authentication.
-Do not copy that actor setup into production.
+`FEVEX_DB_PATH` (default `.fevex/demo.sqlite`).
+
+## Multi-tenant authorization
+
+The host authenticates demo bearer tokens and passes the resulting actor to
+`createFevexHttpHandler`:
+
+| Token | Actor | Tenant |
+| --- | --- | --- |
+| `alice-token` | `alice` | `tenant-a` |
+| `bob-token` | `bob` | `tenant-b` |
+
+Requests without a token use `demo-user` only while `FEVEX_DEMO_AUTH=1`, which
+the `dev` script sets so the Next playground and README curl snippets keep
+working. The optional `authorize` hook checks every read, event stream,
+cancellation, resume, recovery and start (new or existing session), and
+`onRunStarted` records run and session owners. Both identities can create runs,
+but neither can access the other's resources:
+
+```bash
+ALICE_RUN=$(curl -s http://localhost:3001/v1/agents/support/runs \
+  -H 'authorization: Bearer alice-token' \
+  -H 'content-type: application/json' \
+  -d '{"input":"Check account 10"}' | jq -r .id)
+
+# 403: bob cannot read alice's run
+curl -s -o /dev/null -w '%{http_code}\n' \
+  http://localhost:3001/v1/runs/$ALICE_RUN \
+  -H 'authorization: Bearer bob-token'
+
+# 200: alice can
+curl -s -o /dev/null -w '%{http_code}\n' \
+  http://localhost:3001/v1/runs/$ALICE_RUN \
+  -H 'authorization: Bearer alice-token'
+```
+
+The example persists owners in `FEVEX_OWNERS_PATH` (default
+`.fevex/owners.json`) so restarts keep access. Use a database-backed store for
+multiple processes. The core stores runs and events but does not assign
+tenants. Replace the demo tokens with your identity provider and require
+authentication before exposing the API.
+
+The browser preview is dev-only for token-owned runs: `EventSource` cannot send
+the `Authorization` header, so it uses the demo identity enabled by the dev
+script. Use a cookie-based session for previews in a token-authenticated
+deployment.
+
+Runs started outside the HTTP handler (channels, schedulers or direct
+`startAgent` calls) must be claimed in the same ownership store, or their HTTP
+resources will be denied. A process crash between starting a run and writing its
+owner also leaves it unowned; treat unowned runs as inaccessible or reserve
+ownership before starting.
 
 `elicitation-support` demonstrates the same durable pause mechanism for missing
 information. Ask without an account ID, answer the generated form in the
@@ -115,6 +167,10 @@ curl -s http://localhost:3001/v1/runs/RUN_ID/resume \
 ```
 
 ## Protocol
+
+The protocol examples below assume the dev server (`FEVEX_DEMO_AUTH=1`). With
+the compiled `start` script or token-owned runs, add
+`-H 'authorization: Bearer alice-token'` to each request.
 
 Start a run:
 
@@ -170,5 +226,6 @@ See the [example catalog](../README.md) for event cursors, timeouts and metadata
 output.
 
 Closing the SSE connection only stops observation. The run continues until it
-finishes or is explicitly cancelled. This example intentionally has no real
-auth, production CORS policy, TLS or server-managed replay.
+finishes or is explicitly cancelled. This example uses demo bearer tokens and
+file-backed demo ownership, not a production identity provider, CORS policy,
+TLS or server-managed replay.

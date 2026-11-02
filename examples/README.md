@@ -31,7 +31,9 @@ playground's research agent, source view and evaluation action.
 
 When runs must survive restarts, configure a persistent store. The host owns
 authentication, tenant/resource authorization, channel correlation, scheduling
-and delivery receipts; example identities and Maps are demonstration data.
+and delivery receipts; example identities and ownership files are demonstration
+data. The Nest host demonstrates the `authorize` and `onRunStarted` hooks with
+two isolated identities.
 
 ## Inspect a run
 

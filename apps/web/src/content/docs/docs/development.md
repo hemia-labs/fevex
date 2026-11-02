@@ -83,8 +83,11 @@ bun run inspect RUN_ID --events --after EVENT_ID --timeout-ms 30000
 ```
 
 Set `FEVEX_API_TOKEN` in the environment if your host uses bearer authentication.
-The host must authorize reads. The command requires a reachable HTTP host with
-the same public Fevex protocol; it does not search local databases or start runs.
+The host must authorize reads. Hosts that serve more than one identity should
+pass the optional `authorize` hook to `createFevexHttpHandler` and record run and
+session owners in `onRunStarted`; the Nest example demonstrates both. The
+command requires a reachable HTTP host with the same public Fevex protocol; it
+does not search local databases or start runs.
 
 To try it without a model key, run `bun run demo:starter --serve`. Copy `api` and
 `runId` from the final JSON line and inspect that URL from another terminal.
