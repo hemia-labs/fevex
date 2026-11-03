@@ -1,5 +1,19 @@
 # @fevex/core
 
+## 0.1.0-alpha.5
+
+### Minor Changes
+
+- 1a68a1d: Add `@fevex/core/artifacts` with artifact descriptors, in-memory and local filesystem stores, an S3-compatible adapter boundary, and an optional metadata catalog. `@fevex/sqlite` and `@fevex/postgres` add artifact catalogs for listing, authorizing and deleting artifacts by tenant, run, session or actor. `@fevex/core/http` exposes `GET`/`HEAD`/`DELETE /v1/artifacts/:id` and `GET /v1/runs/:runId/artifacts`, with `authorizeArtifact` and client helpers. Tools receive `context.artifacts` and emit `artifact.created`.
+- 1a68a1d: Add optional resource authorization to the HTTP host. `createFevexHttpHandler`
+  now accepts an `authorize` hook that runs before reads, event streams,
+  cancellation, resume, recovery and every start, plus `onRunStarted` so the host
+  can persist run and session ownership. The Nest example demonstrates two
+  isolated identities with bearer authentication.
+- 1a68a1d: Add per-runtime admission limits, per-run deadlines, event caps and terminal
+  run retention through `purgeRuns`. SQLite and PostgreSQL implement the new
+  retention capability.
+
 ## 0.1.0-alpha.4
 
 ### Minor Changes
