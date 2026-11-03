@@ -7,6 +7,7 @@ import type {
 } from '../channels';
 import type { JsonObject, JsonValue, ToolCall } from '../core';
 import type { MemoryStore } from '../knowledge';
+import { isRetainableRunStore } from '../runtime';
 import { IntegrationError, type ToolProvider } from '../tools';
 import type {
   AgentRun,
@@ -715,4 +716,92 @@ export async function testRunStore(store: DurableRunStore): Promise<void> {
   }), 'The current generation must be able to commit');
   await store.releaseLease(runId, takeoverLease.ownerId, takeoverLease.generation);
 
+}
+
+export async function testRetentionStore(store: DurableRunStore): Promise<void> {
+  assert(isRetainableRunStore(store), 'RunStore must implement purgeRuns');
+  const suffix = crypto.randomUUID();
+  const now = Date.now();
+  const old = new Date(now - 2 * 86_400_000).toISOString();
+  const before = new Date(now - 86_400_000).toISOString();
+  const recent = new Date(now).toISOString();
+  const entries = [
+    { id: `retention-old-completed-${suffix}`, status: 'completed' as const, createdAt: old },
+    { id: `retention-old-failed-${suffix}`, status: 'failed' as const, createdAt: old },
+    { id: `retention-recent-completed-${suffix}`, status: 'completed' as const, createdAt: recent },
+    { id: `retention-old-running-${suffix}`, status: 'running' as const, createdAt: old },
+  ];
+
+  for (const entry of entries) {
+    const sessionId = `retention-session-${entry.id}`;
+    await store.saveSession({
+      id: sessionId,
+      history: [],
+      createdAt: entry.createdAt,
+      updatedAt: entry.createdAt,
+    });
+    await store.saveRun({
+      id: entry.id,
+      sessionId,
+      agentName: 'retention-agent',
+      status: entry.status,
+      revision: 1,
+      createdAt: entry.createdAt,
+      updatedAt: entry.createdAt,
+    } satisfies AgentRun);
+    await store.appendEvent({
+      id: `retention-event-${entry.id}`,
+      sequence: 1,
+      type: 'run.started',
+      runId: entry.id,
+      timestamp: entry.createdAt,
+    });
+  }
+
+  const purged = await store.purgeRuns({ before });
+  assert(purged.runs === 2, 'Retention must delete only old terminal runs');
+  assert(purged.sessions === 2, 'Retention must delete sessions left without runs');
+  assert(!(await store.getRun(entries[0]!.id)), 'Retention must delete the completed run');
+  assert(!(await store.getRun(entries[1]!.id)), 'Retention must delete the failed run');
+  assert(await store.getRun(entries[2]!.id), 'Retention must keep recent terminal runs');
+  assert(await store.getRun(entries[3]!.id), 'Retention must keep active runs');
+  assert(
+    !(await store.getSession(`retention-session-${entries[0]!.id}`)),
+    'Retention must delete empty sessions',
+  );
+  assert(
+    await store.getSession(`retention-session-${entries[2]!.id}`),
+    'Retention must keep sessions with runs',
+  );
+
+  const limited = await store.purgeRuns({ limit: 1 });
+  assert(limited.runs === 1, 'Retention must honor the limit');
+  await store.purgeRuns({ before: new Date(Date.now() + 86_400_000).toISOString() });
+  assert(!(await store.getRun(entries[2]!.id)), 'Retention must purge remaining terminal runs');
+  assert(await store.getRun(entries[3]!.id), 'Retention must keep active runs after a full purge');
+
+  const boundaryId = `retention-boundary-${suffix}`;
+  const boundarySessionId = `retention-boundary-session-${suffix}`;
+  const boundaryCreatedAt = '2020-01-01T00:00:00.100Z';
+  await store.saveSession({
+    id: boundarySessionId,
+    history: [],
+    createdAt: boundaryCreatedAt,
+    updatedAt: boundaryCreatedAt,
+  });
+  await store.saveRun({
+    id: boundaryId,
+    sessionId: boundarySessionId,
+    agentName: 'retention-agent',
+    status: 'completed',
+    revision: 1,
+    createdAt: boundaryCreatedAt,
+    updatedAt: boundaryCreatedAt,
+  } satisfies AgentRun);
+  const boundary = await store.purgeRuns({
+    before: '2020-01-01T00:00:00.500Z',
+    statuses: ['completed'],
+  });
+  assert(boundary.runs === 1, 'Retention must compare subsecond timestamps');
+  assert(!(await store.getRun(boundaryId)), 'Retention must delete the boundary run');
 }

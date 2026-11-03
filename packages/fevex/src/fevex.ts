@@ -1,5 +1,6 @@
 import type { AgentDefinition } from './agents';
-import type { AgentEvent, RunId } from './core';
+import type { ArtifactStore } from './artifacts';
+import type { AgentEvent, ExecutionContext, RunId } from './core';
 import { createComposition } from './internal/configuration';
 import { createRuntime } from './internal/runtime';
 import type { ContextProvider, MemoryStore } from './knowledge';
@@ -11,6 +12,8 @@ import type {
   AgentRun,
   CredentialStore,
   ListEventsOptions,
+  PurgeRunsOptions,
+  PurgeRunsResult,
   ResumeRunResolution,
   RunRecord,
   RunRequest,
@@ -25,6 +28,34 @@ import type { TeamDefinition } from './teams';
 import type { ConnectionDefinition, ToolDefinition } from './tools';
 import type { WorkflowDefinition } from './workflows';
 
+export interface FevexAdmissionRequest {
+  kind: 'agent' | 'workflow' | 'team';
+  name: string;
+  request: RunRequest;
+  activeRuns: number;
+  activeTenantRuns: number;
+}
+
+/** Optional host-level admission controls applied before a top-level run starts. */
+export interface FevexAdmission {
+  /** Maximum concurrent top-level runs in this runtime. */
+  maxActiveRuns?: number;
+  /** Maximum concurrent top-level runs for one tenant. */
+  maxActiveRunsPerTenant?: number;
+  /** Defaults to a non-empty `context.attributes.tenantId` string. */
+  tenantKey?: (context?: ExecutionContext) => string | undefined;
+  /** Custom admission check, called after the built-in limits. */
+  authorize?: (request: FevexAdmissionRequest) => boolean | Promise<boolean>;
+}
+
+export interface FevexLimits {
+  /**
+   * Maximum non-control events persisted for one run. Control events such as
+   * pause, resume, approval and terminal transitions are always persisted.
+   */
+  maxEventsPerRun?: number;
+}
+
 /** Provider-neutral definitions and adapters used to create one Fevex runtime. */
 export interface FevexConfig {
   models: Record<string, ModelGateway>;
@@ -38,9 +69,13 @@ export interface FevexConfig {
   runStore?: RunStore;
   credentialStore?: CredentialStore;
   sandbox?: Sandbox;
+  /** Optional artifact store exposed to tools as `context.artifacts`. */
+  artifacts?: ArtifactStore;
   policies?: PolicyDefinition[];
   onEvent?: (event: AgentEvent) => void;
   observability?: ObservabilityOptions;
+  admission?: FevexAdmission;
+  limits?: FevexLimits;
 }
 
 export interface Fevex {
@@ -88,6 +123,7 @@ export interface Fevex {
     runId: RunId,
     options: { actor: { id: string; type?: string } },
   ): Promise<RunRecord<TOutput>>;
+  purgeRuns(options?: PurgeRunsOptions): Promise<PurgeRunsResult>;
   compactSession(sessionId: SessionId, summary: string): Promise<Session>;
   flushObservability(): Promise<void>;
 }

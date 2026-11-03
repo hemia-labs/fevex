@@ -2,6 +2,7 @@ import type { Fevex } from '../fevex';
 import { FevexRunError } from '../run-error';
 import {
   isDurableRunStore,
+  isRetainableRunStore,
   type AgentRun,
   type ResumeRunResolution,
   type RunRecord,
@@ -71,6 +72,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
     drainWorkflowExecution,
     resumeWorkflow,
     cancelWorkflowExecution,
+    cancelStoredWorkflow,
   } = createWorkflowEngine(composition, core, agentEngine);
 
   const resumeRun = async <TOutput>(
@@ -241,75 +243,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
       }
       const run = await runStore.getRun<RunRecord>(runId);
       if (!run || (run.status !== 'paused' && run.status !== 'running')) return false;
-      if (!isDurableRunStore(runStore)) return false;
-      const session = await runStore.getSession(run.sessionId);
-      if (!session) return false;
-      if (isCoordinatorRun(run)) {
-        const checkpoint = await runStore.getCheckpoint<CoordinatorCheckpoint>(runId);
-        if (!checkpoint) return false;
-        const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
-        const lease = {
-          generation: 0,
-          runId,
-          ownerId,
-          expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
-        };
-        const acquired = await runStore.acquireLease(lease);
-        if (!acquired) return false;
-        try {
-          const childRunIds = Object.values(checkpoint.steps)
-            .filter(
-              (record): record is Extract<
-                WorkflowStepRecord,
-                { type: 'agent'; status: 'running' }
-              > => record.type === 'agent' && record.status === 'running',
-            )
-            .map(({ childRunId }) => childRunId);
-          for (const childRunId of childRunIds) {
-            if (!(await cancelStoredAgent(childRunId))) return false;
-          }
-          const state: WorkflowExecutionState = {
-            run,
-            session,
-            request: {
-              input: checkpoint.input,
-              ...(checkpoint.reasoning === undefined ? {} : { reasoning: checkpoint.reasoning }),
-              sessionId: session.id,
-              context: checkpoint.context,
-              limits: checkpoint.limits,
-              signal: new AbortController().signal,
-            },
-            controller: new AbortController(),
-            eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
-            checkpoint,
-            advancing: false,
-            lease,
-            commitQueue: Promise.resolve(),
-          };
-          run.status = 'cancelled';
-          run.pause = undefined;
-          run.error = 'aborted';
-          run.usage = checkpoint.budget?.usage;
-          const cancelled = createCoordinatorEvent(
-            state,
-            'workflow.run.cancelled',
-            { reason: 'aborted' },
-            'team.run.cancelled',
-          );
-          await commit(state, { checkpoint: null, events: [cancelled] });
-          return true;
-        } catch (error) {
-          if (
-            error instanceof FevexRunError &&
-            error.code === 'RUN_CONFLICT' &&
-            (await runStore.getRun<RunRecord>(runId))?.status !== 'paused'
-          )
-            return false;
-          throw error;
-        } finally {
-          await runStore.releaseLease(runId, ownerId, lease.generation).catch(() => {});
-        }
-      }
+      if (isCoordinatorRun(run)) return cancelStoredWorkflow(runId);
       return cancelStoredAgent(runId);
     },
     resumeRun<TOutput = unknown>(runId: string, resolution: ResumeRunResolution) {
@@ -320,6 +254,15 @@ export function createRuntime(composition: FevexComposition): Fevex {
       options: { actor: { id: string; type?: string } },
     ) {
       return recoverRun<TOutput>(runId, options.actor);
+    },
+    async purgeRuns(options) {
+      if (!isRetainableRunStore(runStore)) {
+        throw new FevexRunError(
+          'RETENTION_UNSUPPORTED',
+          'The configured run store does not support purgeRuns',
+        );
+      }
+      return runStore.purgeRuns(options);
     },
     async compactSession(sessionId, summary) {
       if (typeof summary !== 'string' || !summary.trim()) {

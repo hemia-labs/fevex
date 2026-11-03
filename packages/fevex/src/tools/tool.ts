@@ -8,6 +8,7 @@ import type {
   ToolSpec,
 } from '../core';
 import type { ExactDefinition } from '../internal/exact-definition';
+import type { ArtifactStore } from '../artifacts';
 import type { Sandbox, SandboxCapabilities } from '../sandbox';
 import type { ToolProviderContext, ToolProviderTool } from './connection';
 
@@ -20,6 +21,8 @@ export interface ToolExecutionContext {
   idempotencyKey: string;
   getCredential(name: string): Promise<string>;
   sandbox?: Sandbox;
+  /** Optional artifact store; writes emit `artifact.created`. */
+  artifacts?: ArtifactStore;
   context?: ExecutionContext;
   signal?: AbortSignal;
 }

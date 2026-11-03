@@ -1,4 +1,4 @@
-import { validateListEventsOptions } from '@fevex/core/runtime';
+import { validateListEventsOptions, validatePurgeRunsOptions } from '@fevex/core/runtime';
 import { FevexRunError, type AgentEvent, type RunId } from '@fevex/core';
 import type {
   AgentRun,
@@ -6,6 +6,9 @@ import type {
   ExecutionCommit,
   ExecutionCreate,
   ListEventsOptions,
+  PurgeRunsOptions,
+  PurgeRunsResult,
+  RetainableRunStore,
   RunRecord,
   RunCheckpoint,
   RunLease,
@@ -20,7 +23,7 @@ import {
   type SQLiteDatabase,
 } from './database';
 
-export interface SQLiteRunStore extends DurableRunStore {
+export interface SQLiteRunStore extends DurableRunStore, RetainableRunStore {
   close(): Promise<void>;
 }
 
@@ -106,6 +109,37 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
       `SELECT data FROM events WHERE run_id = ? AND sequence > ? ORDER BY sequence ${order} LIMIT ?`,
     ).all(runId, sequence, options.limit ?? -1) as Array<{ data: string }>;
     return rows.map(({ data }) => parse<AgentEvent>(data));
+  }
+
+  async purgeRuns(options: PurgeRunsOptions = {}): Promise<PurgeRunsResult> {
+    const { statuses, before, limit } = validatePurgeRunsOptions(options);
+    return immediateTransaction(this.#database, () => {
+      const placeholders = statuses.map(() => '?').join(', ');
+      const rows = this.#database.prepare(
+        `SELECT id, session_id FROM runs
+         WHERE json_extract(data, '$.status') IN (${placeholders})
+         ${before === undefined ? '' : "AND julianday(json_extract(data, '$.createdAt')) < julianday(?)"}
+         ORDER BY julianday(json_extract(data, '$.createdAt'))
+         LIMIT ?`,
+      ).all(
+        ...statuses,
+        ...(before === undefined ? [] : [before]),
+        limit ?? -1,
+      ) as Array<{ id: string; session_id: string }>;
+      if (rows.length === 0) return { runs: 0, sessions: 0 };
+
+      const deleteRun = this.#database.prepare('DELETE FROM runs WHERE id = ?');
+      for (const { id } of rows) deleteRun.run(id);
+
+      const hasRuns = this.#database.prepare('SELECT 1 FROM runs WHERE session_id = ? LIMIT 1');
+      const deleteSession = this.#database.prepare('DELETE FROM sessions WHERE id = ?');
+      let sessions = 0;
+      for (const sessionId of new Set(rows.map(({ session_id }) => session_id))) {
+        if (hasRuns.get(sessionId)) continue;
+        sessions += deleteSession.run(sessionId).changes;
+      }
+      return { runs: rows.length, sessions };
+    });
   }
 
   async getCheckpoint<TCheckpoint extends StoredRunCheckpoint = RunCheckpoint>(

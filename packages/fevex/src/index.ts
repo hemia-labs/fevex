@@ -1,4 +1,5 @@
 export * from './agents';
+export * from './artifacts';
 export * from './channels';
 export * from './configuration-error';
 export * from './core';

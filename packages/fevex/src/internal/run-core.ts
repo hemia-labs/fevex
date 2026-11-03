@@ -1,4 +1,10 @@
-import type { AgentEvent, AgentEventPayloads, AgentEventType, JsonValue } from '../core';
+import type {
+  AgentEvent,
+  AgentEventPayloads,
+  AgentEventType,
+  ExecutionContext,
+  JsonValue,
+} from '../core';
 import type { ModelRef } from '../models';
 import type { PolicyDecision } from '../policies';
 import { FevexRunError } from '../run-error';
@@ -8,6 +14,7 @@ import {
   type DurableRunStore,
   type RunCheckpoint,
   type RunRecord,
+  type RunRequest,
   type Session,
   type StoredRunCheckpoint,
   type ToolExecutionRecord,
@@ -39,14 +46,155 @@ export function createRunCore({
   policies,
   onEvent,
   observability,
+  admission,
+  limits,
 }: FevexComposition) {
   const activeRuns = new Map<string, ExecutionState>();
   const activeWorkflowRuns = new Map<string, WorkflowExecutionState>();
   const activeSessions = new Set<string>();
+  const internalRuns = new Set<string>();
+  const pendingTenantStarts = new Map<string, number>();
+  let pendingStarts = 0;
   const pendingExports = new Set<Promise<void>>();
   const exportFailures: unknown[] = [];
   const exportedRuns = new Set<string>();
   const runtimeOwner = crypto.randomUUID();
+  const unboundedEvents = new Set<AgentEventType>([
+    'run.started',
+    'run.recovered',
+    'run.paused',
+    'run.resumed',
+    'elicitation.requested',
+    'elicitation.resolved',
+    'approval.requested',
+    'approval.resolved',
+    'tool.execution_unknown',
+    'run.completed',
+    'run.failed',
+    'run.cancelled',
+    'workflow.run.started',
+    'workflow.run.recovered',
+    'workflow.run.paused',
+    'workflow.run.resumed',
+    'workflow.wait.started',
+    'workflow.wait.completed',
+    'workflow.run.completed',
+    'workflow.run.failed',
+    'workflow.run.cancelled',
+    'team.run.started',
+    'team.run.recovered',
+    'team.run.paused',
+    'team.run.resumed',
+    'team.run.completed',
+    'team.run.failed',
+    'team.run.cancelled',
+  ]);
+
+  const tenantOf = (context?: ExecutionContext): string | undefined => {
+    const configured = admission?.tenantKey?.(context);
+    if (configured !== undefined) return configured;
+    const tenantId = context?.attributes?.tenantId;
+    if (typeof tenantId !== 'string') return undefined;
+    const value = tenantId.trim();
+    return value || undefined;
+  };
+
+  const countsForAdmission = (
+    runId: string,
+    state: { request: RunRequest },
+  ): boolean => !internalRuns.has(runId) && !state.request.signal?.aborted;
+
+  const activeTopLevelRuns = (): number => {
+    let count = 0;
+    for (const [runId, state] of activeRuns) {
+      if (countsForAdmission(runId, state)) count += 1;
+    }
+    for (const [runId, state] of activeWorkflowRuns) {
+      if (countsForAdmission(runId, state)) count += 1;
+    }
+    return count;
+  };
+
+  const activeTenantRuns = (tenant: string): number => {
+    let count = 0;
+    for (const [runId, state] of activeRuns) {
+      if (countsForAdmission(runId, state) && tenantOf(state.request.context) === tenant) count += 1;
+    }
+    for (const [runId, state] of activeWorkflowRuns) {
+      if (countsForAdmission(runId, state) && tenantOf(state.request.context) === tenant) {
+        count += 1;
+      }
+    }
+    return count;
+  };
+
+  const admitStart = async (
+    kind: 'agent' | 'workflow' | 'team',
+    name: string,
+    request: RunRequest,
+  ): Promise<() => void> => {
+    if (!admission) return () => {};
+    const running = activeTopLevelRuns() + pendingStarts;
+    const tenant = tenantOf(request.context);
+    const tenantRuns = tenant === undefined
+      ? 0
+      : activeTenantRuns(tenant) + (pendingTenantStarts.get(tenant) ?? 0);
+    if (admission.maxActiveRuns !== undefined && running >= admission.maxActiveRuns) {
+      throw new FevexRunError(
+        'ADMISSION_DENIED',
+        `Runtime reached maxActiveRuns limit of ${admission.maxActiveRuns}`,
+      );
+    }
+    if (
+      admission.maxActiveRunsPerTenant !== undefined
+      && tenant !== undefined
+      && tenantRuns >= admission.maxActiveRunsPerTenant
+    ) {
+      throw new FevexRunError(
+        'ADMISSION_DENIED',
+        `Tenant "${tenant}" reached maxActiveRunsPerTenant limit of ${admission.maxActiveRunsPerTenant}`,
+      );
+    }
+
+    // Reserve synchronously so concurrent starts cannot pass the same check.
+    pendingStarts += 1;
+    if (tenant !== undefined) {
+      pendingTenantStarts.set(tenant, (pendingTenantStarts.get(tenant) ?? 0) + 1);
+    }
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      pendingStarts = Math.max(0, pendingStarts - 1);
+      if (tenant === undefined) return;
+      const next = (pendingTenantStarts.get(tenant) ?? 1) - 1;
+      if (next <= 0) pendingTenantStarts.delete(tenant);
+      else pendingTenantStarts.set(tenant, next);
+    };
+
+    try {
+      if (
+        admission.authorize
+        && !(await admission.authorize({
+          kind,
+          name,
+          request,
+          activeRuns: running,
+          activeTenantRuns: tenantRuns,
+        }))
+      ) {
+        throw new FevexRunError('ADMISSION_DENIED', 'Run admission was denied by the host');
+      }
+    } catch (error) {
+      release();
+      throw error;
+    }
+    return release;
+  };
+
+  const markInternalRun = (runId: string): void => {
+    internalRuns.add(runId);
+  };
 
   const resolveModel = (agent: { model?: ModelRef }, requestedModel?: string) => {
     const modelName = requestedModel ?? (typeof agent.model === 'string' ? agent.model : 'default');
@@ -144,15 +292,27 @@ export function createRunCore({
     state: { run: RunRecord; eventSequence: number },
     type: TType,
     payload: AgentEventPayloads[TType],
-  ): AgentEvent<TType> =>
-    ({
+  ): AgentEvent<TType> => {
+    if (
+      limits?.maxEventsPerRun !== undefined
+      && !unboundedEvents.has(type)
+      && state.eventSequence >= limits.maxEventsPerRun
+    ) {
+      throw new FevexRunError(
+        'EVENT_LIMIT_EXCEEDED',
+        `Run exceeded maxEventsPerRun limit of ${limits.maxEventsPerRun}`,
+        state.run.id,
+      );
+    }
+    return {
       id: crypto.randomUUID(),
       sequence: (state.eventSequence += 1),
       type,
       runId: state.run.id,
       timestamp: new Date().toISOString(),
       ...(payload === undefined ? {} : { payload }),
-    }) as AgentEvent<TType>;
+    } as AgentEvent<TType>;
+  };
 
   const createCoordinatorEvent = (
     state: WorkflowExecutionState,
@@ -185,6 +345,7 @@ export function createRunCore({
   const releaseExecution = async (state: ExecutionState): Promise<void> => {
     activeRuns.delete(state.run.id);
     activeSessions.delete(state.session.id);
+    internalRuns.delete(state.run.id);
     if (state.leaseTimer) clearInterval(state.leaseTimer);
     if (state.leaseExpiryTimer) clearTimeout(state.leaseExpiryTimer);
     state.leaseTimer = undefined;
@@ -310,6 +471,7 @@ export function createRunCore({
   const releaseWorkflowExecution = async (state: WorkflowExecutionState): Promise<void> => {
     activeWorkflowRuns.delete(state.run.id);
     activeSessions.delete(state.session.id);
+    internalRuns.delete(state.run.id);
     if (state.leaseTimer) clearInterval(state.leaseTimer);
     if (state.leaseExpiryTimer) clearTimeout(state.leaseExpiryTimer);
     state.leaseTimer = undefined;
@@ -374,6 +536,8 @@ export function createRunCore({
     pendingExports,
     exportFailures,
     runtimeOwner,
+    admitStart,
+    markInternalRun,
     resolveModel,
     resolveCheckpointModel,
     notifyObserver,

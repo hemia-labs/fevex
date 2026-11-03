@@ -1,4 +1,9 @@
 import type { AgentEvent, AgentEventPayloads, AgentEventType, AgentMessage, JsonValue } from '../core';
+import type {
+  ArtifactDescriptor,
+  ArtifactStore,
+  ArtifactStoreContext,
+} from '../artifacts';
 import type { KnowledgeContext } from '../knowledge';
 import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import { FevexRunError, RunPausedError } from '../run-error';
@@ -22,10 +27,13 @@ import {
   addUsage,
   assertContinuationBudget,
   assertTokenBudget,
+  deadlineAtFromMs,
   DEFAULT_MAX_STEPS,
   DEFAULT_MAX_TOOL_CALLS,
   eventUsage,
   remainingOutputTokens,
+  resumeDeadlineSignal,
+  runSignal,
   toErrorMessage,
 } from './run-support';
 import { toTransportableSchema, validateSchema } from './schemas';
@@ -68,12 +76,15 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     runStore,
     credentialStore,
     sandbox,
+    artifacts,
     policies,
   } = composition;
   const {
     activeRuns,
     activeSessions,
     runtimeOwner,
+    admitStart,
+    markInternalRun,
     resolveModel,
     resolveCheckpointModel,
     notifyObserver,
@@ -86,9 +97,10 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     authorize,
   } = core;
 
-  const prepareExecution = async <TInput, TOutput>(
+  const prepareExecutionBody = async <TInput, TOutput>(
     name: string,
     request: RunRequest<TInput, TOutput>,
+    internal = false,
   ): Promise<ExecutionState<TInput, TOutput>> => {
     const agent = agents.get(name);
     if (!agent) {
@@ -113,11 +125,10 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     if (activeSessions.has(session.id)) {
       throw new FevexRunError('RUN_CONFLICT', `Session "${session.id}" already has an active run`);
     }
-    activeSessions.add(session.id);
     const controller = new AbortController();
-    const signal = request.signal
-      ? AbortSignal.any([controller.signal, request.signal])
-      : controller.signal;
+    const signal = runSignal(controller, request);
+    const deadlineAt = deadlineAtFromMs(request.deadlineMs);
+    activeSessions.add(session.id);
     const run: AgentRun = {
       id: crypto.randomUUID(),
       sessionId: session.id,
@@ -128,7 +139,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       revision: 0,
       createdAt: now,
       updatedAt: now,
+      ...(deadlineAt === undefined ? {} : { deadlineAt }),
     };
+    if (internal) markInternalRun(run.id);
     const state: ExecutionState<TInput, TOutput> = {
       run,
       session,
@@ -214,6 +227,21 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     }
     activeRuns.set(run.id, state as ExecutionState);
     return state;
+  };
+
+  const prepareExecution = async <TInput, TOutput>(
+    name: string,
+    request: RunRequest<TInput, TOutput>,
+    options: { admit?: boolean } = {},
+  ): Promise<ExecutionState<TInput, TOutput>> => {
+    const release = options.admit === false
+      ? undefined
+      : await admitStart('agent', name, request);
+    try {
+      return await prepareExecutionBody(name, request, options.admit === false);
+    } finally {
+      release?.();
+    }
   };
 
   const durableCheckpoint = async (
@@ -1091,6 +1119,24 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             }
             events.push(started);
             yield started;
+            const createdArtifacts: AgentEvent[] = [];
+            const toolArtifacts = artifacts === undefined
+              ? undefined
+              : scopedArtifacts(artifacts, {
+                  runId: state.run.id,
+                  sessionId: state.session.id,
+                  request,
+                  emit: async (descriptor) => {
+                    createdArtifacts.push(
+                      await emit('artifact.created', {
+                        descriptor,
+                        toolCallId: pending.call.id,
+                        toolName: pending.call.name,
+                        ...toolSourcePayload(tool),
+                      }),
+                    );
+                  },
+                });
             try {
               const raw = await abortable(
                 () =>
@@ -1101,11 +1147,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                     idempotencyKey: pending.idempotencyKey,
                     getCredential,
                     ...(scopedSandbox === undefined ? {} : { sandbox: scopedSandbox }),
+                    ...(toolArtifacts === undefined ? {} : { artifacts: toolArtifacts }),
                     context: request.context,
                     signal: request.signal,
                   }),
                 request.signal,
               );
+              for (const event of createdArtifacts.splice(0)) yield event;
               const validated =
                 tool.outputSchema === undefined
                   ? raw
@@ -1143,6 +1191,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               yield completed;
               break;
             } catch (error) {
+              for (const event of createdArtifacts.splice(0)) yield event;
               if (request.signal.aborted) throw error;
               const safeError = redact(toErrorMessage(error), secrets);
               record = {
@@ -1274,7 +1323,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     }
   };
 
-  const resumeAgent = async <TOutput>(
+  const resumeAgentBody = async <TOutput>(
     runId: string,
     resolution: ResumeRunResolution | undefined,
     waitForCompletion = false,
@@ -1316,6 +1365,22 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         runId,
       );
     }
+    if (run.deadlineAt !== undefined && Date.parse(run.deadlineAt) <= Date.now()) {
+      const cancelled = await cancelStoredAgent(runId, 'timeout');
+      if (!cancelled) {
+        throw new FevexRunError(
+          resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+          `Run "${runId}" deadline has passed`,
+          runId,
+        );
+      }
+      return (await runStore.getRun<AgentRun>(runId))! as AgentRun<TOutput>;
+    }
+    const deadlineSignal = resumeDeadlineSignal(
+      run.deadlineAt,
+      runId,
+      resolution ? 'RUN_NOT_RESUMABLE' : 'RUN_NOT_RECOVERABLE',
+    );
     const agent = agents.get(run.agentName);
     if (!agent) {
       throw new FevexRunError(
@@ -1361,6 +1426,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
     try {
       const controller = new AbortController();
+      const signal = deadlineSignal
+        ? AbortSignal.any([controller.signal, deadlineSignal])
+        : controller.signal;
       const state: ExecutionState = {
         run,
         session,
@@ -1371,7 +1439,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           sessionId: session.id,
           context: checkpoint.context,
           limits: checkpoint.limits,
-          signal: controller.signal,
+          signal,
         },
         controller,
         eventSequence: (await runStore.listEvents(runId)).at(-1)?.sequence ?? 0,
@@ -1600,10 +1668,49 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     }
   };
 
-  const cancelStoredAgent = async (runId: string): Promise<boolean> => {
+  const resumeAgent = async <TOutput>(
+    runId: string,
+    resolution: ResumeRunResolution | undefined,
+    waitForCompletion = false,
+    recoveryActor?: { id: string; type?: string },
+    options: { admit?: boolean; internal?: boolean } = {},
+  ): Promise<AgentRun<TOutput>> => {
+    let release: (() => void) | undefined;
+    if (options.admit !== false) {
+      const run = await runStore.getRun<AgentRun>(runId);
+      const checkpoint = isDurableRunStore(runStore)
+        ? await runStore.getCheckpoint<RunCheckpoint>(runId)
+        : undefined;
+      if (run && checkpoint && (run.status === 'paused' || run.status === 'running')) {
+        release = await admitStart('agent', run.agentName, {
+          input: '',
+          ...(checkpoint.context === undefined ? {} : { context: checkpoint.context }),
+        });
+      }
+    }
+    try {
+      if (options.internal) markInternalRun(runId);
+      return await resumeAgentBody<TOutput>(
+        runId,
+        resolution,
+        waitForCompletion,
+        recoveryActor,
+      );
+    } finally {
+      release?.();
+    }
+  };
+
+  const cancelStoredAgent = async (
+    runId: string,
+    reason: 'aborted' | 'timeout' = 'aborted',
+  ): Promise<boolean> => {
     const active = activeRuns.get(runId);
     if (active && !active.request.signal.aborted) {
-      active.controller.abort(new DOMException('Run cancelled', 'AbortError'));
+      active.controller.abort(new DOMException(
+        reason === 'timeout' ? 'Run deadline exceeded' : 'Run cancelled',
+        reason === 'timeout' ? 'TimeoutError' : 'AbortError',
+      ));
       if (!active.advancing) {
         await cancelExecution(active);
         return true;
@@ -1651,8 +1758,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       };
       run.status = 'cancelled';
       run.pause = undefined;
-      run.error = 'aborted';
-      const cancelled = createEvent(state, 'run.cancelled', { reason: 'aborted' }) as AgentEvent;
+      run.error = reason;
+      const cancelled = createEvent(state, 'run.cancelled', { reason }) as AgentEvent;
       await commit(state, { checkpoint: null, events: [cancelled] });
       return true;
     } catch (error) {
@@ -1675,3 +1782,52 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
 /** The agent-run surface the workflow engine and the public runtime consume. */
 export type AgentEngine = ReturnType<typeof createAgentEngine>;
+
+function scopedArtifacts(
+  store: ArtifactStore,
+  options: {
+    runId: string;
+    sessionId: string;
+    request: RunRequest;
+    emit: (descriptor: ArtifactDescriptor) => Promise<void>;
+  },
+): ArtifactStore {
+  const scopedContext = (value?: ArtifactStoreContext): ArtifactStoreContext => {
+    const contextTenant = options.request.context?.attributes?.tenantId;
+    const tenantId = typeof contextTenant === 'string' ? contextTenant : value?.tenantId;
+    const actor = options.request.context?.actor;
+    return {
+      ...value,
+      runId: options.runId,
+      sessionId: options.sessionId,
+      ...(tenantId === undefined ? {} : { tenantId }),
+      ...(actor === undefined ? {} : { actor }),
+      signal: options.request.signal,
+    };
+  };
+
+  return {
+    async put(input, context) {
+      const descriptor = await store.put(input, scopedContext(context));
+      await options.emit(descriptor);
+      return descriptor;
+    },
+    get(artifactId, context) {
+      return store.get(artifactId, scopedContext(context));
+    },
+    ...(store.head === undefined
+      ? {}
+      : {
+          head(artifactId: string, context?: ArtifactStoreContext) {
+            return store.head!(artifactId, scopedContext(context));
+          },
+        }),
+    ...(store.delete === undefined
+      ? {}
+      : {
+          delete(artifactId: string, context?: ArtifactStoreContext) {
+            return store.delete!(artifactId, scopedContext(context));
+          },
+        }),
+  };
+}

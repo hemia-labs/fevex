@@ -31,6 +31,10 @@
       "types": "./dist/agents/index.d.mts",
       "import": "./dist/agents/index.mjs"
     },
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.mts",
+      "import": "./dist/artifacts/index.mjs"
+    },
     "./channels": {
       "types": "./dist/channels/index.d.mts",
       "import": "./dist/channels/index.mjs"
@@ -85,7 +89,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/agents/index.ts src/channels/index.ts src/http/index.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/teams/index.ts src/runtime/index.ts src/sandbox/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
+    "build": "tsdown src/index.ts src/agents/index.ts src/artifacts/index.ts src/channels/index.ts src/http/index.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/teams/index.ts src/runtime/index.ts src/sandbox/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
     "prepack": "bun run build",
     "test": "bun test --cwd src",
     "typecheck": "tsc -p tsconfig.json --noEmit"

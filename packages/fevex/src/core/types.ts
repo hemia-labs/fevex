@@ -1,3 +1,5 @@
+import type { ArtifactDescriptor } from '../artifacts';
+
 /** A value that can cross provider and persistence boundaries without conversion. */
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -57,6 +59,7 @@ export type AgentEventType =
   | 'tool.failed'
   | 'tool.retrying'
   | 'tool.execution_unknown'
+  | 'artifact.created'
   | 'elicitation.requested'
   | 'elicitation.resolved'
   | 'approval.requested'
@@ -179,6 +182,16 @@ export interface AgentEventPayloads {
     step: number;
     toolCallId: string;
     toolName: string;
+    source?: ToolEventSource;
+    workflowStepId?: string;
+    workflowAgentName?: string;
+    teamDelegationId?: string;
+    teamAgentName?: string;
+  };
+  'artifact.created': {
+    descriptor: ArtifactDescriptor;
+    toolCallId?: string;
+    toolName?: string;
     source?: ToolEventSource;
     workflowStepId?: string;
     workflowAgentName?: string;

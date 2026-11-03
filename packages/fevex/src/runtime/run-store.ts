@@ -133,6 +133,8 @@ export interface AgentRun<TOutput = JsonValue> {
   pause?: RunPause;
   createdAt: string;
   updatedAt: string;
+  /** Absolute deadline for the run, derived from `RunRequest.deadlineMs`. */
+  deadlineAt?: string;
   output?: TOutput;
   error?: string;
   usage?: ModelUsage;
@@ -148,6 +150,8 @@ export interface WorkflowRun<TOutput = JsonValue> {
   pause?: RunPause;
   createdAt: string;
   updatedAt: string;
+  /** Absolute deadline for the run, derived from `RunRequest.deadlineMs`. */
+  deadlineAt?: string;
   output?: TOutput;
   error?: string;
   usage?: ModelUsage;
@@ -163,6 +167,8 @@ export interface TeamRun<TOutput = JsonValue> {
   pause?: RunPause;
   createdAt: string;
   updatedAt: string;
+  /** Absolute deadline for the run, derived from `RunRequest.deadlineMs`. */
+  deadlineAt?: string;
   output?: TOutput;
   error?: string;
   usage?: ModelUsage;
@@ -201,6 +207,58 @@ export function validateListEventsOptions(options: ListEventsOptions): void {
   if (options.order !== undefined && options.order !== 'asc' && options.order !== 'desc') {
     throw new TypeError('Event order must be asc or desc');
   }
+}
+
+export type RetainableRunStatus = 'completed' | 'failed' | 'cancelled';
+
+export interface PurgeRunsOptions {
+  /** Delete runs created strictly before this ISO timestamp. */
+  before?: string;
+  /** Terminal statuses to delete. Defaults to completed, failed and cancelled. */
+  statuses?: RetainableRunStatus[];
+  /** Maximum runs to delete in one call. */
+  limit?: number;
+}
+
+export interface PurgeRunsResult {
+  runs: number;
+  sessions: number;
+}
+
+/** Optional capability for stores that can delete terminal runs and empty sessions. */
+export interface RetainableRunStore extends RunStore {
+  purgeRuns(options?: PurgeRunsOptions): Promise<PurgeRunsResult>;
+}
+
+export function isRetainableRunStore(store: RunStore): store is RetainableRunStore {
+  return typeof (store as Partial<RetainableRunStore>).purgeRuns === 'function';
+}
+
+export function validatePurgeRunsOptions(options: PurgeRunsOptions = {}): {
+  statuses: RetainableRunStatus[];
+  before?: string;
+  limit?: number;
+} {
+  const statuses = options.statuses ?? ['completed', 'failed', 'cancelled'];
+  if (
+    statuses.length === 0 ||
+    statuses.some(
+      (status) => status !== 'completed' && status !== 'failed' && status !== 'cancelled',
+    )
+  ) {
+    throw new TypeError('Purge statuses must contain only completed, failed or cancelled');
+  }
+  if (options.before !== undefined && Number.isNaN(Date.parse(options.before))) {
+    throw new TypeError('Purge before must be an ISO timestamp');
+  }
+  if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
+    throw new TypeError('Purge limit must be a positive safe integer');
+  }
+  return {
+    statuses,
+    ...(options.before === undefined ? {} : { before: new Date(options.before).toISOString() }),
+    ...(options.limit === undefined ? {} : { limit: options.limit }),
+  };
 }
 
 export interface RunStore {
@@ -418,6 +476,8 @@ export interface RunRequest<TInput = unknown, TOutput = unknown> {
   toolChoice?: ToolChoice;
   sessionId?: SessionId;
   signal?: AbortSignal;
+  /** Maximum wall-clock time for this run, including time spent paused. */
+  deadlineMs?: number;
 }
 
 export interface RunResult<TOutput = unknown> {

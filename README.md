@@ -811,6 +811,7 @@ configured tolerance.
 | --- | --- |
 | `@fevex/core` | Common runtime, definitions and contracts |
 | `@fevex/core/agents` | Agent definitions |
+| `@fevex/core/artifacts` | Artifact descriptors, local stores and S3-compatible adapter |
 | `@fevex/core/channels` | Channel adapters and message handling |
 | `@fevex/core/knowledge` | Context providers, skills and memory contracts |
 | `@fevex/core/models` | Provider-neutral model contracts |

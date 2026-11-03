@@ -1,7 +1,7 @@
 import type { AgentMessage, ExecutionContext, JsonObject, JsonValue } from '../core';
 import type { ContextBlock, KnowledgeContext, MemoryStore } from '../knowledge';
 import type { ToolChoice } from '../models';
-import { RunPausedError } from '../run-error';
+import { FevexRunError, RunPausedError } from '../run-error';
 import type { AgentRunPause, CoordinatorRun, ResumeRunResolution, RunRecord, TeamRun } from '../runtime';
 import { IntegrationError, validateFevexJsonSchemaProfile, type ToolDefinition } from '../tools';
 import type { FevexComposition } from './configuration';
@@ -191,6 +191,7 @@ export const toolErrorPayload = (tool: ToolDefinition, error: unknown) => ({
 });
 
 export const runErrorPayload = (error: unknown) => {
+  if (error instanceof FevexRunError) return { errorCode: error.code };
   if (!(error instanceof IntegrationError)) return {};
   return {
     errorCode: error.code,
