@@ -4,13 +4,16 @@ description: What the FEVEX MVP supports today, and what is intentionally out of
 ---
 
 FEVEX is an early MVP. The API may change before the first stable release.
+See [Compatibility & releases](/docs/compatibility/) for the public API,
+checkpoint, upgrade and support guarantees.
 
 ## Supported today
 
 - Bounded multi-step model-tool loops with sequential tool execution.
 - Native provider streaming and durable, consultable runs.
 - Synchronous event observers and `AsyncIterable` event streaming.
-- Local traces, OpenTelemetry export and deterministic evaluation suites.
+- Local traces, OpenTelemetry export and deterministic evaluation suites, with
+  bounded export queues, timeouts and workflow → agent → tool correlation.
 - [Adaptable examples and repository run inspection](/docs/development/) through
   the public HTTP protocol.
 - Optional Standard Schema validation.
@@ -24,8 +27,12 @@ FEVEX is an early MVP. The API may change before the first stable release.
 - [Channel contracts and external resolvers](/docs/channels/) for elicitation,
   with correlated requests and stable keys for delivery retries.
 - Durable workflows and explicit team delegation, parallel work, and handoffs.
-- Official OpenAI and DeepSeek model adapters, MCP and OpenAPI connections,
-  and SQLite and PostgreSQL stores.
+- Graceful shutdown with a deadline, crash recovery after `SIGKILL`, and a
+  repeatable load/soak harness with memory, history and overhead gates.
+- Three official packages in the npm release pipeline: `@fevex/core`,
+  `@fevex/openai` and `@fevex/deepseek`. MCP, OpenAPI, SQLite, PostgreSQL,
+  OpenTelemetry and browser integrations are built, tested and tarball-smoked
+  in CI but are not published by the release pipeline.
 
 The default run store is in memory. Use a [persistent store](/docs/adapters/)
 to retain runs and sessions across process restarts. [Workflow recovery](/docs/workflows/#recovery)

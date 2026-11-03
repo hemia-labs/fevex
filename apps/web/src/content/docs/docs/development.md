@@ -130,6 +130,13 @@ explicit recovery and scheduling.
 The starter collects the public `RunTrace` exported through
 `observability.exporters`. Traces include model/tool spans and duration, with
 metadata only by default. Call `flushObservability()` before shutdown to finish
-pending exports. The event journal is the durable run history; an `onEvent`
-callback is a local observer. Choose a [persistent store](/docs/adapters/) when
-you need history after restarting the host.
+pending exports; pass `{ timeoutMs }` to bound the drain. The event journal is
+the durable run history; an `onEvent` callback is a local observer. Choose a
+[persistent store](/docs/adapters/) when you need history after restarting the
+host.
+
+Exports are bounded by `observability.exportQueue`: concurrency, waiting traces,
+per-exporter timeout and retained failures. `getObservabilityStats()` exposes
+exported, failed and dropped counts. Workflow and team traces carry `kind` and
+step spans with `childRunId`; agent traces carry `parentRunId` and `rootRunId`,
+so a coordinator, its agents and their tools remain correlated.

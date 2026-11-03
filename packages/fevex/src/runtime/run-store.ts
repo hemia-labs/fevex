@@ -120,7 +120,15 @@ export type ResumeRunResolution =
   | TimerResolution
   | EventResolution;
 
-export interface AgentRun<TOutput = JsonValue> {
+/** Correlation fields for runs created by a workflow or team coordinator. */
+export interface RunCorrelation {
+  /** Run that created this one. */
+  parentRunId?: RunId;
+  /** Top-level run in the correlation tree. */
+  rootRunId?: RunId;
+}
+
+export interface AgentRun<TOutput = JsonValue> extends RunCorrelation {
   kind?: 'agent';
   id: RunId;
   sessionId: SessionId;
@@ -140,7 +148,7 @@ export interface AgentRun<TOutput = JsonValue> {
   usage?: ModelUsage;
 }
 
-export interface WorkflowRun<TOutput = JsonValue> {
+export interface WorkflowRun<TOutput = JsonValue> extends RunCorrelation {
   kind: 'workflow';
   id: RunId;
   sessionId: SessionId;
@@ -157,7 +165,7 @@ export interface WorkflowRun<TOutput = JsonValue> {
   usage?: ModelUsage;
 }
 
-export interface TeamRun<TOutput = JsonValue> {
+export interface TeamRun<TOutput = JsonValue> extends RunCorrelation {
   kind: 'team';
   id: RunId;
   sessionId: SessionId;

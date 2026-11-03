@@ -12,6 +12,7 @@ const registry = 'https://registry.npmjs.org';
 const repository = 'git+https://github.com/hemia-labs/fevex.git';
 const visibilityTimeoutMs = 30 * 60_000;
 const visibilityPollMs = 30_000;
+// Official published inventory. Keep the public package inventory docs in sync.
 export const npmPackages = new Set(['@fevex/core', '@fevex/deepseek', '@fevex/openai']);
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const run = (command, args, cwd = root) => execFileSync(command, args, { cwd, stdio: 'inherit' });

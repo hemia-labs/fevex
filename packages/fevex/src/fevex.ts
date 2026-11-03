@@ -5,7 +5,7 @@ import { createComposition } from './internal/configuration';
 import { createRuntime } from './internal/runtime';
 import type { ContextProvider, MemoryStore } from './knowledge';
 import type { ModelGateway } from './models';
-import type { ObservabilityOptions } from './observability';
+import type { ObservabilityOptions, ObservabilityStats } from './observability';
 import type { PolicyDefinition } from './policies';
 import type { Sandbox } from './sandbox';
 import type {
@@ -46,6 +46,27 @@ export interface FevexAdmission {
   tenantKey?: (context?: ExecutionContext) => string | undefined;
   /** Custom admission check, called after the built-in limits. */
   authorize?: (request: FevexAdmissionRequest) => boolean | Promise<boolean>;
+}
+
+export interface FevexShutdownOptions {
+  /**
+   * Maximum time to wait for active runs before cancelling them. Defaults to
+   * 30 seconds. Use `0` to cancel immediately. If the deadline expires,
+   * shutdown allows up to 5 additional seconds for forced cancellation and the
+   * final trace flush.
+   */
+  timeoutMs?: number;
+}
+
+export interface FevexShutdownResult {
+  /** Runs that were still active when the grace period expired. */
+  cancelledRunIds: RunId[];
+  /** True when the grace deadline expired before all active runs finished. */
+  timedOut: boolean;
+  /** Error surfaced while flushing pending traces, if any. */
+  exportError?: unknown;
+  /** Observability counters after the shutdown flush. */
+  observability: ObservabilityStats;
 }
 
 export interface FevexLimits {
@@ -125,7 +146,15 @@ export interface Fevex {
   ): Promise<RunRecord<TOutput>>;
   purgeRuns(options?: PurgeRunsOptions): Promise<PurgeRunsResult>;
   compactSession(sessionId: SessionId, summary: string): Promise<Session>;
-  flushObservability(): Promise<void>;
+  /** Waits for queued exports and rejects with failures accumulated since the previous flush. */
+  flushObservability(options?: { timeoutMs?: number }): Promise<void>;
+  /** Cumulative trace export counters for this runtime. */
+  getObservabilityStats(): ObservabilityStats;
+  /**
+   * Stops admitting new work, drains or cancels active runs, and flushes trace
+   * exports. The host still owns closing its stores and external adapters.
+   */
+  shutdown(options?: FevexShutdownOptions): Promise<FevexShutdownResult>;
 }
 
 /**

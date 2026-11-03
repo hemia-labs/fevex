@@ -6,12 +6,23 @@ description: Provider integrations live outside the core package, so your app in
 Provider integrations live outside the core package, so your app installs only
 what it uses.
 
-## Available adapters
+## Official published packages
+
+The npm release pipeline publishes `@fevex/core` plus these official adapters:
 
 | Package | Purpose |
 | --- | --- |
 | `@fevex/openai` | OpenAI model adapter over the native HTTP API |
 | `@fevex/deepseek` | DeepSeek model adapter |
+
+## Repository-only integrations
+
+These packages are built, typechecked, tested and tarball-smoked in CI, but
+they are **not published to npm** by the release pipeline. Use them from this
+repository until they are published:
+
+| Package | Purpose |
+| --- | --- |
 | `@fevex/mcp` | Model Context Protocol tools and connections |
 | `@fevex/openapi` | Tools generated from an OpenAPI spec |
 | `@fevex/sqlite` | SQLite run and session store |

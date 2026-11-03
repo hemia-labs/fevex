@@ -249,7 +249,12 @@ export interface AgentEventPayloads {
   'run.cancelled': { reason: 'aborted' | 'timeout' | 'approval_rejected' };
   'workflow.run.started': undefined;
   'workflow.run.recovered': { actorId: string };
-  'workflow.step.started': { stepId: string; kind: 'agent' | 'parallel'; agentName?: string };
+  'workflow.step.started': {
+    stepId: string;
+    kind: 'agent' | 'parallel';
+    agentName?: string;
+    childRunId?: string;
+  };
   'workflow.step.completed': { stepId: string; kind: 'agent' | 'parallel' };
   'workflow.step.failed': { stepId: string; kind: 'agent' | 'parallel'; error: string };
   'workflow.compensation.started': { stepId: string; kind: 'agent' | 'parallel' };
@@ -285,6 +290,7 @@ export interface AgentEventPayloads {
     action: 'delegate' | 'handoff';
     expectedOutput?: string;
     constraints?: string[];
+    childRunId?: string;
   };
   'team.handoff.created': {
     delegationId: string;

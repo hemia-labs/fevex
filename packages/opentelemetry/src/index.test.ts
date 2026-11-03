@@ -122,4 +122,69 @@ describe('createOpenTelemetryExporter', () => {
     await tracerProvider.shutdown();
     await meterProvider.shutdown();
   });
+
+  test('exports coordinator steps and parent correlation', async () => {
+    const spanExporter = new InMemorySpanExporter();
+    const tracerProvider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+    });
+    const exporter = createOpenTelemetryExporter({
+      tracer: tracerProvider.getTracer('test'),
+      meter: new MeterProvider().getMeter('test'),
+    });
+    const run: RunTrace = {
+      schemaVersion: '1',
+      kind: 'workflow',
+      traceId: 'workflow-1',
+      runId: 'workflow-1',
+      sessionId: 'session-1',
+      agentName: 'research-flow',
+      rootRunId: 'workflow-1',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      endedAt: '2026-01-01T00:00:00.100Z',
+      durationMs: 100,
+      status: 'completed',
+      attributes: { stepCount: 1 },
+      annotations: [],
+      spans: [{
+        id: 'step-1',
+        parentId: 'workflow-1',
+        kind: 'step',
+        name: 'research',
+        startedAt: '2026-01-01T00:00:00.010Z',
+        endedAt: '2026-01-01T00:00:00.090Z',
+        durationMs: 80,
+        status: 'completed',
+        attributes: {
+          stepId: 'research',
+          stepKind: 'agent',
+          agentName: 'worker',
+          childRunId: 'agent-1',
+        },
+        annotations: [],
+      }],
+    };
+
+    await exporter.export(run);
+    await tracerProvider.forceFlush();
+
+    const spans = spanExporter.getFinishedSpans();
+    expect(spans.map(({ name }) => name)).toEqual(['step research', 'invoke_workflow research-flow']);
+    expect(spans[1]?.attributes).toMatchObject({
+      'gen_ai.operation.name': 'invoke_workflow',
+      'fevex.run.kind': 'workflow',
+      'fevex.run.id': 'workflow-1',
+      'fevex.root_run.id': 'workflow-1',
+    });
+    expect(spans[1]?.attributes['gen_ai.agent.name']).toBeUndefined();
+    expect(spans[0]?.attributes).toMatchObject({
+      'fevex.step.id': 'research',
+      'fevex.step.kind': 'agent',
+      'gen_ai.agent.name': 'worker',
+      'fevex.child_run.id': 'agent-1',
+    });
+    expect(spans[0]?.parentSpanContext?.spanId).toBe(spans[1]?.spanContext().spanId);
+
+    await tracerProvider.shutdown();
+  });
 });

@@ -5,7 +5,7 @@ import type {
   ExecutionContext,
   JsonValue,
 } from '../core';
-import type { ModelRef } from '../models';
+import type { ModelMetadata, ModelRef } from '../models';
 import type { PolicyDecision } from '../policies';
 import { FevexRunError } from '../run-error';
 import {
@@ -22,10 +22,11 @@ import {
 import type { ToolDefinition } from '../tools';
 import type { FevexComposition } from './configuration';
 import { definitionHash } from './definition-hash';
-import { buildRunTrace } from './observability';
+import { buildRunTrace, isTraceTerminalEvent } from './observability';
 import { isCoordinatorRun, isTeamRun } from './run-helpers';
 import type { ExecutionState, WorkflowExecutionState } from './run-state';
 import { cancellationReason } from './run-support';
+import { createTraceExportQueue, withTimeout } from './trace-export';
 import { LEASE_MS, LEASE_RENEW_MS } from './runtime-constants';
 
 /**
@@ -54,11 +55,30 @@ export function createRunCore({
   const activeSessions = new Set<string>();
   const internalRuns = new Set<string>();
   const pendingTenantStarts = new Map<string, number>();
+  const idleWaiters = new Set<() => void>();
   let pendingStarts = 0;
-  const pendingExports = new Set<Promise<void>>();
-  const exportFailures: unknown[] = [];
-  const exportedRuns = new Set<string>();
+  let closed = false;
+  const traceExports = createTraceExportQueue(observability?.exportQueue);
   const runtimeOwner = crypto.randomUUID();
+
+  const isIdle = (): boolean => activeRuns.size === 0 && activeWorkflowRuns.size === 0;
+
+  const notifyIdle = (): void => {
+    if (!isIdle()) return;
+    for (const resolve of idleWaiters) resolve();
+    idleWaiters.clear();
+  };
+
+  const waitForIdle = (): Promise<void> => {
+    if (isIdle()) return Promise.resolve();
+    return new Promise((resolve) => idleWaiters.add(resolve));
+  };
+
+  const closeAdmission = (): void => {
+    closed = true;
+  };
+
+  const isClosed = (): boolean => closed;
   const unboundedEvents = new Set<AgentEventType>([
     'run.started',
     'run.recovered',
@@ -133,6 +153,9 @@ export function createRunCore({
     name: string,
     request: RunRequest,
   ): Promise<() => void> => {
+    if (closed) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
     if (!admission) return () => {};
     const running = activeTopLevelRuns() + pendingStarts;
     const tenant = tenantOf(request.context);
@@ -232,52 +255,49 @@ export function createRunCore({
   };
 
   const scheduleTraceExport = (event: AgentEvent): void => {
-    if (
-      !observability ||
-      !['run.completed', 'run.failed', 'run.cancelled'].includes(event.type) ||
-      exportedRuns.has(event.runId)
-    ) {
-      return;
-    }
-    exportedRuns.add(event.runId);
-    let task!: Promise<void>;
-    task = (async () => {
+    if (!observability || !isTraceTerminalEvent(event)) return;
+    traceExports.enqueue(event.runId, async () => {
       const run = await runStore.getRun<RunRecord>(event.runId);
       if (!run) throw new Error(`Run "${event.runId}" does not exist`);
-      if (isCoordinatorRun(run)) return;
-      const agentRun = run as AgentRun;
-      let modelRegistryName = agentRun.modelName;
-      let modelMetadata = agentRun.modelMetadata;
-      if (modelRegistryName === undefined) {
-        const agent = agents.get(agentRun.agentName);
-        if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
-        const checkpoint = isDurableRunStore(runStore)
-          ? await runStore.getCheckpoint<RunCheckpoint>(agentRun.id)
-          : undefined;
-        const resolved = resolveModel(agent, checkpoint?.modelName);
-        modelRegistryName = resolved.modelName;
-        modelMetadata = resolved.model.metadata;
+      const coordinator = isCoordinatorRun(run);
+      let modelRegistryName: string | undefined;
+      let modelMetadata: ModelMetadata | undefined;
+      if (!coordinator) {
+        const agentRun = run as AgentRun;
+        modelRegistryName = agentRun.modelName;
+        modelMetadata = agentRun.modelMetadata;
+        if (modelRegistryName === undefined) {
+          const agent = agents.get(agentRun.agentName);
+          if (!agent) throw new Error(`Agent "${agentRun.agentName}" is not registered`);
+          const checkpoint = isDurableRunStore(runStore)
+            ? await runStore.getCheckpoint<RunCheckpoint>(agentRun.id)
+            : undefined;
+          const resolved = resolveModel(agent, checkpoint?.modelName);
+          modelRegistryName = resolved.modelName;
+          modelMetadata = resolved.model.metadata;
+        }
       }
       const trace = buildRunTrace(
-        agentRun,
-        await runStore.listEvents(agentRun.id),
+        run,
+        await runStore.listEvents(run.id),
         modelRegistryName,
         modelMetadata,
         observability,
       );
       const results = await Promise.allSettled(
-        observability.exporters.map((exporter) => Promise.resolve().then(() => exporter.export(trace))),
+        observability.exporters.map((exporter) =>
+          withTimeout(
+            Promise.resolve().then(() => exporter.export(trace)),
+            traceExports.timeoutMs,
+            `Trace exporter timed out after ${traceExports.timeoutMs}ms for run "${run.id}"`,
+          ),
+        ),
       );
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map(({ reason }) => reason);
       if (failures.length) throw new AggregateError(failures, 'Trace export failed');
-    })()
-      .catch((error) => {
-        exportFailures.push(error);
-      })
-      .finally(() => pendingExports.delete(task));
-    pendingExports.add(task);
+    });
   };
 
   const notifyObserver = (event: AgentEvent): void => {
@@ -353,6 +373,7 @@ export function createRunCore({
     if (state.lease && isDurableRunStore(runStore)) {
       await runStore.releaseLease(state.run.id, state.lease.ownerId, state.lease.generation).catch(() => {});
     }
+    notifyIdle();
   };
 
   const commit = async (
@@ -479,6 +500,7 @@ export function createRunCore({
     if (state.lease && isDurableRunStore(runStore)) {
       await runStore.releaseLease(state.run.id, state.lease.ownerId, state.lease.generation).catch(() => {});
     }
+    notifyIdle();
   };
 
   const commitWorkflow = async (
@@ -533,8 +555,11 @@ export function createRunCore({
     activeRuns,
     activeWorkflowRuns,
     activeSessions,
-    pendingExports,
-    exportFailures,
+    isIdle,
+    waitForIdle,
+    closeAdmission,
+    isClosed,
+    traceExports,
     runtimeOwner,
     admitStart,
     markInternalRun,

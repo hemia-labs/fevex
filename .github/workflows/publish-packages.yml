@@ -79,7 +79,9 @@ jobs:
       - run: node scripts/release.mjs inspect "$RUNNER_TEMP/release"
       - name: Explain publication state
         if: github.event_name != 'push' || needs.release-plan.outputs.publishable != 'true' || vars.ENABLE_NPM_PUBLISH != 'true'
-        run: echo 'Nothing published. Automatic publication currently covers @fevex/core, @fevex/deepseek and @fevex/openai; it requires a merged version-only release plan, ENABLE_NPM_PUBLISH=true and npm Trusted Publishing.' >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          PUBLISHED=$(node --input-type=module -e "import { npmPackages } from './scripts/release.mjs'; console.log([...npmPackages].join(', '))")
+          echo "Nothing published. Automatic publication currently covers $PUBLISHED; it requires a merged version-only release plan, ENABLE_NPM_PUBLISH=true and npm Trusted Publishing." >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     needs: [release-plan, rehearse]

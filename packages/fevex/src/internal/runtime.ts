@@ -1,4 +1,8 @@
-import type { Fevex } from '../fevex';
+import type {
+  Fevex,
+  FevexShutdownOptions,
+  FevexShutdownResult,
+} from '../fevex';
 import { FevexRunError } from '../run-error';
 import {
   isDurableRunStore,
@@ -22,6 +26,9 @@ import { createWorkflowEngine } from './workflow-engine';
 import type { WorkflowExecutionState } from './run-state';
 import { LEASE_MS } from './runtime-constants';
 
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
+const SHUTDOWN_CLEANUP_MS = 5_000;
+
 export function createRuntime(composition: FevexComposition): Fevex {
   const {
     models,
@@ -42,8 +49,11 @@ export function createRuntime(composition: FevexComposition): Fevex {
     activeRuns,
     activeWorkflowRuns,
     activeSessions,
-    pendingExports,
-    exportFailures,
+    isIdle,
+    waitForIdle,
+    closeAdmission,
+    isClosed,
+    traceExports,
     runtimeOwner,
     createEvent,
     createCoordinatorEvent,
@@ -79,6 +89,9 @@ export function createRuntime(composition: FevexComposition): Fevex {
     runId: string,
     resolution: ResumeRunResolution,
   ): Promise<RunRecord<TOutput>> => {
+    if (isClosed()) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs', runId);
+    }
     const run = await runStore.getRun<RunRecord>(runId);
     if (run && isCoordinatorRun(run)) return resumeWorkflow<TOutput>(runId, resolution);
     return resumeAgent<TOutput>(runId, resolution);
@@ -88,6 +101,13 @@ export function createRuntime(composition: FevexComposition): Fevex {
     runId: string,
     actor: { id: string; type?: string },
   ): Promise<RunRecord<TOutput>> => {
+    if (isClosed()) {
+      throw new FevexRunError(
+        'RUNTIME_CLOSED',
+        'Runtime is not accepting new runs',
+        runId,
+      );
+    }
     const run = await runStore.getRun<RunRecord>(runId);
     if (!run) {
       throw new FevexRunError(
@@ -98,6 +118,71 @@ export function createRuntime(composition: FevexComposition): Fevex {
     }
     if (isCoordinatorRun(run)) return resumeWorkflow<TOutput>(runId, undefined, actor);
     return resumeAgent<TOutput>(runId, undefined, false, actor);
+  };
+
+  const waitForIdleUntil = async (deadline: number): Promise<boolean> => {
+    if (isIdle()) return true;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (idle: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(idle);
+      };
+      timer = setTimeout(() => finish(false), remaining);
+      void waitForIdle().then(() => finish(true));
+    });
+  };
+
+  const shutdown = async (options: FevexShutdownOptions = {}): Promise<FevexShutdownResult> => {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
+      throw new TypeError('Shutdown timeoutMs must be a non-negative safe integer');
+    }
+    closeAdmission();
+    const deadline = Date.now() + timeoutMs;
+    let cleanupDeadline = deadline;
+    let timedOut = false;
+    const cancelled = new Set<string>();
+
+    if (!(await waitForIdleUntil(deadline))) {
+      timedOut = true;
+      cleanupDeadline = Date.now() + SHUTDOWN_CLEANUP_MS;
+      for (const { run } of activeWorkflowRuns.values()) cancelled.add(run.id);
+      for (const { run } of activeRuns.values()) cancelled.add(run.id);
+      for (const state of [...activeWorkflowRuns.values(), ...activeRuns.values()]) {
+        if (!state.request.signal.aborted) {
+          state.controller.abort(new DOMException('Run cancelled', 'AbortError'));
+        }
+      }
+      for (const state of [...activeWorkflowRuns.values()]) {
+        if (!state.advancing) await cancelWorkflowExecution(state).catch(() => {});
+      }
+      for (const state of [...activeRuns.values()]) {
+        if (!state.advancing) await cancelExecution(state).catch(() => {});
+      }
+      await waitForIdleUntil(cleanupDeadline);
+    }
+
+    let exportError: unknown;
+    try {
+      await traceExports.flush({
+        timeoutMs: Math.max(1, cleanupDeadline - Date.now()),
+      });
+    } catch (error) {
+      exportError = error;
+    }
+
+    return {
+      cancelledRunIds: [...cancelled],
+      timedOut,
+      ...(exportError === undefined ? {} : { exportError }),
+      observability: traceExports.stats(),
+    };
   };
 
   return {
@@ -277,12 +362,12 @@ export function createRuntime(composition: FevexComposition): Fevex {
       await runStore.saveSession(session);
       return structuredClone(session);
     },
-    async flushObservability() {
-      while (pendingExports.size) await Promise.all([...pendingExports]);
-      if (exportFailures.length) {
-        const failures = exportFailures.splice(0);
-        throw new AggregateError(failures, 'Observability export failed');
-      }
+    flushObservability(options) {
+      return traceExports.flush(options);
     },
+    getObservabilityStats() {
+      return traceExports.stats();
+    },
+    shutdown,
   };
 }

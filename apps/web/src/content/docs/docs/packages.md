@@ -20,6 +20,6 @@ domains it uses, and each subpath is a small export barrel.
 | `@fevex/core/knowledge` | Context providers, skills and memory contracts |
 | `@fevex/core/sandbox` | Sandbox contract and local development sandbox |
 | `@fevex/core/policies` | Authorization policy contracts |
-| `@fevex/core/observability` | Trace, redaction and cost contracts |
+| `@fevex/core/observability` | Trace, bounded export queue, redaction and cost contracts |
 | `@fevex/core/evals` | Datasets, scorers, reporters and regressions |
 | `@fevex/core/testing` | Deterministic testing helpers |

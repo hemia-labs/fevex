@@ -83,6 +83,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     activeRuns,
     activeSessions,
     runtimeOwner,
+    isClosed,
     admitStart,
     markInternalRun,
     resolveModel,
@@ -101,7 +102,11 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     name: string,
     request: RunRequest<TInput, TOutput>,
     internal = false,
+    correlation: { parentRunId?: string; rootRunId?: string } = {},
   ): Promise<ExecutionState<TInput, TOutput>> => {
+    if (!internal && isClosed()) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
     const agent = agents.get(name);
     if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
@@ -135,6 +140,10 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       agentName: name,
       modelName,
       ...(model.metadata === undefined ? {} : { modelMetadata: structuredClone(model.metadata) }),
+      ...(correlation.parentRunId === undefined
+        ? {}
+        : { parentRunId: correlation.parentRunId }),
+      ...(correlation.rootRunId === undefined ? {} : { rootRunId: correlation.rootRunId }),
       status: 'running',
       revision: 0,
       createdAt: now,
@@ -232,13 +241,20 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
   const prepareExecution = async <TInput, TOutput>(
     name: string,
     request: RunRequest<TInput, TOutput>,
-    options: { admit?: boolean } = {},
+    options: {
+      admit?: boolean;
+      parentRunId?: string;
+      rootRunId?: string;
+    } = {},
   ): Promise<ExecutionState<TInput, TOutput>> => {
     const release = options.admit === false
       ? undefined
       : await admitStart('agent', name, request);
     try {
-      return await prepareExecutionBody(name, request, options.admit === false);
+      return await prepareExecutionBody(name, request, options.admit === false, {
+        ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
+        ...(options.rootRunId === undefined ? {} : { rootRunId: options.rootRunId }),
+      });
     } finally {
       release?.();
     }

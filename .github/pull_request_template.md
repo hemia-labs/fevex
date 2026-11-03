@@ -10,7 +10,8 @@
 ## Compatibility
 
 <!-- Note changes to API/types/exports, errors/events, checkpoints/storage,
-     workflow replay or tool behavior. Give migration steps, or write "None". -->
+     workflow replay or tool behavior. Give migration steps, or write "None".
+     See apps/web/src/content/docs/docs/compatibility.md for the public policy. -->
 
 ## Documentation
 

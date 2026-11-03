@@ -56,7 +56,10 @@ export default defineConfig({
         },
         {
           label: 'Durable execution',
-          items: [{ label: 'Workflows & teams', slug: 'docs/workflows' }],
+          items: [
+            { label: 'Workflows & teams', slug: 'docs/workflows' },
+            { label: 'Operations & soak tests', slug: 'docs/operations' },
+          ],
         },
         {
           label: 'Reference',
@@ -65,6 +68,7 @@ export default defineConfig({
             { label: 'Channels & resolvers', slug: 'docs/channels' },
             { label: 'Package subpaths', slug: 'docs/packages' },
             { label: 'Status & scope', slug: 'docs/status' },
+            { label: 'Compatibility & releases', slug: 'docs/compatibility' },
           ],
         },
       ],

@@ -1,0 +1,106 @@
+name: Soak and recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_ms:
+        description: Load window in milliseconds
+        required: true
+        default: '300000'
+      concurrency:
+        description: Concurrent runs
+        required: true
+        default: '8'
+      store:
+        description: Store under test
+        required: true
+        type: choice
+        options:
+          - memory
+          - postgres
+        default: memory
+      run_recovery:
+        description: Run the SIGKILL recovery check
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  memory:
+    if: github.event.inputs.store == 'memory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 480
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bun run soak -- --duration-ms "$DURATION_MS" --concurrency "$CONCURRENCY" --report soak-memory.json
+        env:
+          DURATION_MS: ${{ inputs.duration_ms }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: soak-memory
+          path: soak-memory.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  postgres:
+    if: github.event.inputs.store == 'postgres'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 480
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fevex
+          POSTGRES_PASSWORD: fevex_test
+          POSTGRES_DB: fevex_soak
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fevex -d fevex_soak"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      FEVEX_POSTGRES_URL: postgresql://fevex:fevex_test@localhost:5432/fevex_soak
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bun run soak -- --store postgres --duration-ms "$DURATION_MS" --concurrency "$CONCURRENCY" --overhead-budget-ms 50 --report soak-postgres.json
+        env:
+          DURATION_MS: ${{ inputs.duration_ms }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: soak-postgres
+          path: soak-postgres.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  recovery:
+    if: github.event.inputs.run_recovery == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bun run scripts/soak-recovery.ts | tee recovery.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: soak-recovery
+          path: recovery.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,10 +1,15 @@
 # @fevex/postgres
 
+> **Publication status:** validated in CI but not published to npm. Use this
+> package from the Fevex repository until it is published.
+
 PostgreSQL 16 `DurableRunStore` adapter for Fevex.
 
 ```bash
 npm install @fevex/core @fevex/postgres
 ```
+
+The install command above applies once the package is published to npm.
 
 ```ts
 import { createPostgresRunStore } from '@fevex/postgres';

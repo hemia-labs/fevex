@@ -1,6 +1,7 @@
 # @fevex/openai
 
-Official OpenAI `ModelGateway` adapter for Fevex.
+Official OpenAI `ModelGateway` adapter for Fevex. See the
+[compatibility and release policy](https://fevex.dev/docs/compatibility/).
 
 ```bash
 npm install @fevex/core @fevex/openai

@@ -356,6 +356,16 @@ describe('createFevex', () => {
         workflows: [{ name: ' ', run() {} }],
       }),
     ).toThrow('Workflow name cannot be empty');
+    expect(() =>
+      createFevex({
+        models: { default: model },
+        agents: [],
+        observability: {
+          exporters: [],
+          exportQueue: { concurrency: 0 },
+        },
+      }),
+    ).toThrow('Fevex config "observability.exportQueue" must contain positive safe integers');
   });
 
   test('uses stable codes for configuration errors', () => {

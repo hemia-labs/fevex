@@ -76,6 +76,7 @@ export function createWorkflowEngine(
     activeWorkflowRuns,
     activeSessions,
     runtimeOwner,
+    isClosed,
     admitStart,
     createEvent,
     createCoordinatorEvent,
@@ -250,6 +251,9 @@ export function createWorkflowEngine(
     request: RunRequest<TInput, TOutput>,
     kind: 'workflow' | 'team' = 'workflow',
   ): Promise<WorkflowExecutionState<TInput, TOutput>> => {
+    if (isClosed()) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
     const workflow = workflows.get(name);
     const team = kind === 'team' ? teams.get(name) : undefined;
     if (
@@ -709,7 +713,11 @@ export function createWorkflowEngine(
             remainingWorkflowLimits(state.checkpoint.limits, state.checkpoint.budget),
           ),
           signal: childSignal,
-        }, { admit: false });
+        }, {
+          admit: false,
+          parentRunId: state.run.id,
+          rootRunId: state.run.rootRunId ?? state.run.id,
+        });
         const action = options?.metadata?.teamAction === 'handoff' ? 'handoff' : 'delegate';
         const lifecycleEvents: AgentEvent[] = [];
         if (isTeamRun(state.run) && action === 'handoff') {
@@ -725,12 +733,13 @@ export function createWorkflowEngine(
         const started = createCoordinatorEvent(
           state,
           'workflow.step.started',
-          { stepId, kind: 'agent', agentName },
+          { stepId, kind: 'agent', agentName, childRunId: childState.run.id },
           'team.agent.assigned',
           {
             delegationId: stepId,
             agentName,
             action,
+            childRunId: childState.run.id,
             ...(typeof options?.metadata?.expectedOutput === 'string'
               ? { expectedOutput: options.metadata.expectedOutput }
               : {}),
