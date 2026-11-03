@@ -101,6 +101,13 @@ lease expires; it takes about 30 seconds. See the
 [operations guide](apps/web/src/content/docs/docs/operations.md) for gates and
 report fields.
 
+## Consumer pilots
+
+`bun run pilots` builds release tarballs, creates a clean consumer and runs the
+support, research and crash-recovery pilots. Evidence is written to
+`pilots/reports/latest.json`; incidents and manual work are recorded in
+[pilots/INCIDENTS.md](pilots/INCIDENTS.md).
+
 ## Pull requests
 
 1. Create a short-lived branch from `main`, such as `fix/session-conflict`,
