@@ -1,10 +1,15 @@
 # @fevex/sqlite
 
+> **Publication status:** validated in CI but not published to npm. Use this
+> package from the Fevex repository until it is published.
+
 Local durable storage for Fevex on Node and Bun.
 
 ```bash
 npm install @fevex/core @fevex/sqlite
 ```
+
+The install command above applies once the package is published to npm.
 
 ```ts
 import { createSQLiteRunStore } from '@fevex/sqlite';

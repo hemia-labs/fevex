@@ -1,5 +1,8 @@
 # @fevex/openapi
 
+> **Publication status:** validated in CI but not published to npm. Use this
+> package from the Fevex repository until it is published.
+
 OpenAPI 3.1 JSON adapter for Fevex connections.
 
 ```ts

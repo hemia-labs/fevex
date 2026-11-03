@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareVersions, internalDependencies, loadPackage, orderPackages, selectBatch, selectNpmBatch, parseVersion, readRegistry, recordReleases, registryStatus, selectPackage, validateContents, waitForRegistryVisibility } from './release.mjs';
+import { compareVersions, internalDependencies, loadPackage, npmPackages, orderPackages, packages as workspacePackages, selectBatch, selectNpmBatch, parseVersion, readRegistry, recordReleases, registryStatus, selectPackage, validateContents, waitForRegistryVisibility } from './release.mjs';
 
 const manifest = {
   name: '@fevex/core', version: '0.1.0-alpha.2',
@@ -162,6 +162,28 @@ test('orders internal dependencies and selects only reviewed, increasing version
   expect(() => selectBatch([...plan, ...plan], entries)).toThrow('Duplicate');
   expect(() => selectBatch([{ ...plan[0], version: '0.1.0-alpha.3' }], entries)).toThrow('does not match');
   expect(() => selectBatch([{ ...plan[0], oldVersion: manifest.version }], entries)).toThrow('increase');
+});
+
+test('keeps a deliberate published inventory', () => {
+  const published = ['@fevex/core', '@fevex/deepseek', '@fevex/openai'];
+  const repositoryOnly = [
+    '@fevex/browser',
+    '@fevex/mcp',
+    '@fevex/openapi',
+    '@fevex/opentelemetry',
+    '@fevex/postgres',
+    '@fevex/sqlite',
+  ];
+  const workspace = workspacePackages();
+  expect([...npmPackages].sort()).toEqual(published);
+  expect(workspace.map(({ manifest }) => manifest.name).sort()).toEqual(
+    [...published, ...repositoryOnly].sort(),
+  );
+  for (const name of published) {
+    const manifest = workspace.find((candidate) => candidate.manifest.name === name)?.manifest;
+    expect(manifest?.private).not.toBe(true);
+    expect(manifest?.publishConfig?.access).toBe('public');
+  }
 });
 
 test('publishes only core, DeepSeek and OpenAI in dependency order', () => {

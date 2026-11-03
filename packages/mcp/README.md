@@ -1,5 +1,8 @@
 # @fevex/mcp
 
+> **Publication status:** validated in CI but not published to npm. Use this
+> package from the Fevex repository until it is published.
+
 MCP Streamable HTTP adapter for Fevex connections.
 
 ```ts

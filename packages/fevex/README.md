@@ -28,17 +28,25 @@ adapters, validation and tests without adopting a heavy runtime.
 npm install @fevex/core
 ```
 
-For official model adapters:
+The npm release pipeline publishes exactly three official packages:
 
 ```bash
 npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
-npm install @fevex/core @fevex/mcp
-npm install @fevex/core @fevex/openapi
-npm install @fevex/core @fevex/sqlite
-npm install @fevex/core @fevex/postgres
-npm install @fevex/core @fevex/opentelemetry @opentelemetry/api
 ```
+
+CI builds, typechecks, tests and tarball-smokes all nine packages. The
+repository-only integrations below are **not published to npm** by the release
+pipeline; use them from this repository until they are published:
+
+| Package | Purpose |
+| --- | --- |
+| `@fevex/mcp` | Model Context Protocol tools and connections |
+| `@fevex/openapi` | Tools generated from an OpenAPI document |
+| `@fevex/sqlite` | SQLite run and session store |
+| `@fevex/postgres` | PostgreSQL run and session store |
+| `@fevex/opentelemetry` | OpenTelemetry trace and metric export |
+| `@fevex/browser` | Browser automation tools |
 
 Schemas are optional. The examples use Zod 4, but any Standard
 Schema-compatible validator can be used:
@@ -730,8 +738,34 @@ Traces contain only metadata by default. Output and safe error capture require
 an explicit `content.include` policy; sensitive object keys are redacted before
 an optional application redactor runs. Exporters run outside the run path: their
 errors never change the run result, and `flushObservability()` reports pending
-export failures. OpenTelemetry SDK setup, OTLP export and shutdown remain
-application responsibilities.
+export failures. Export work is bounded and deduplicated:
+
+```ts
+const app = createFevex({
+  models,
+  agents,
+  observability: {
+    exporters: [createOpenTelemetryExporter()],
+    exportQueue: {
+      concurrency: 4,
+      maxQueued: 100,
+      timeoutMs: 30_000,
+      maxFailures: 100,
+    },
+  },
+});
+
+await app.flushObservability({ timeoutMs: 5_000 });
+console.log(app.getObservabilityStats());
+```
+
+Workflow and team traces carry `kind` and a span per step. Agent steps expose
+`childRunId`; child agent traces carry `parentRunId` and `rootRunId`, and tool
+spans are nested under the model call that requested them. A dropped trace or a
+failed export is counted in `getObservabilityStats()`, and the next
+`flushObservability()` rejects with the failures accumulated since the previous
+flush. OpenTelemetry SDK setup, OTLP export and shutdown remain application
+responsibilities.
 
 ## Evaluations
 
@@ -1049,7 +1083,7 @@ the artifact available.
 | `@fevex/core/runtime` | Runs, sessions and store contracts |
 | `@fevex/core/sandbox` | Sandbox contract and local development sandbox |
 | `@fevex/core/policies` | Authorization policy contracts |
-| `@fevex/core/observability` | Trace, redaction and cost contracts |
+| `@fevex/core/observability` | Trace, bounded export queue, redaction and cost contracts |
 | `@fevex/core/evals` | Datasets, scorers, reporters and regressions |
 | `@fevex/core/testing` | Deterministic testing helpers |
 

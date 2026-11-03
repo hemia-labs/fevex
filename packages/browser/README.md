@@ -1,5 +1,8 @@
 # @fevex/browser
 
+> **Publication status:** validated in CI but not published to npm. Use this
+> package from the Fevex repository until it is published.
+
 Curated `browser__*` navigation tools for Fevex, backed by the external
 [`agent-browser`](https://github.com/vercel-labs/agent-browser) binary.
 
