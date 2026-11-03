@@ -1,5 +1,27 @@
 # @fevex/opentelemetry
 
+## 0.1.0-alpha.5
+
+### Minor Changes
+
+- 7f203fe: Bound trace export work with a deduplicated queue, configurable concurrency,
+  queue limits, per-exporter timeouts and retained failure caps. `flushObservability`
+  accepts a deadline and `getObservabilityStats()` exposes exported, failed and
+  dropped counts. Workflow and team runs now emit correlated traces with step
+  spans and `childRunId`; child agent traces carry `parentRunId` and `rootRunId`,
+  and tool spans are nested under their model call.
+
+### Patch Changes
+
+- 7f203fe: Document the official npm inventory: only `@fevex/core`, `@fevex/openai` and
+  `@fevex/deepseek` are published. The other six integrations remain
+  repository-validated and are not published by the release pipeline.
+- Updated dependencies [7f203fe]
+- Updated dependencies [7f203fe]
+- Updated dependencies [7f203fe]
+- Updated dependencies [7f203fe]
+  - @fevex/core@0.1.0-alpha.6
+
 ## 0.1.0-alpha.4
 
 ### Patch Changes

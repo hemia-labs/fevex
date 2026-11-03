@@ -1,5 +1,18 @@
 # @fevex/mcp
 
+## 0.1.0-alpha.6
+
+### Patch Changes
+
+- 7f203fe: Document the official npm inventory: only `@fevex/core`, `@fevex/openai` and
+  `@fevex/deepseek` are published. The other six integrations remain
+  repository-validated and are not published by the release pipeline.
+- Updated dependencies [7f203fe]
+- Updated dependencies [7f203fe]
+- Updated dependencies [7f203fe]
+- Updated dependencies [7f203fe]
+  - @fevex/core@0.1.0-alpha.6
+
 ## 0.1.0-alpha.5
 
 ### Patch Changes

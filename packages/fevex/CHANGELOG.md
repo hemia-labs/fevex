@@ -1,5 +1,32 @@
 # @fevex/core
 
+## 0.1.0-alpha.6
+
+### Minor Changes
+
+- 7f203fe: Bound trace export work with a deduplicated queue, configurable concurrency,
+  queue limits, per-exporter timeouts and retained failure caps. `flushObservability`
+  accepts a deadline and `getObservabilityStats()` exposes exported, failed and
+  dropped counts. Workflow and team runs now emit correlated traces with step
+  spans and `childRunId`; child agent traces carry `parentRunId` and `rootRunId`,
+  and tool spans are nested under their model call.
+- 7f203fe: Add `shutdown({ timeoutMs })` with admission closure, graceful drain, forced
+  cancellation at the deadline, a bounded trace flush and a result that reports
+  timed-out or cancelled runs. New starts, resumes and recoveries fail with
+  `RUNTIME_CLOSED` (HTTP 503) after shutdown begins. Add repeatable soak and
+  crash-recovery harnesses covering memory stability, history integrity, overhead,
+  retention and recovery after `SIGKILL`.
+
+### Patch Changes
+
+- 7f203fe: Document the official npm inventory: only `@fevex/core`, `@fevex/openai` and
+  `@fevex/deepseek` are published. The other six integrations remain
+  repository-validated and are not published by the release pipeline.
+- 7f203fe: Publish the compatibility and release policy: public API surface, alpha
+  versioning, breaking-change and deprecation rules, forward-only store
+  migrations, private versioned checkpoints, upgrade guidance and the tested
+  environment matrix. The repository `docs/` directory remains internal.
+
 ## 0.1.0-alpha.5
 
 ### Minor Changes
