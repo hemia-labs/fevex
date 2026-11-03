@@ -40,6 +40,7 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
   'RUN_DEFINITION_CHANGED',
   'POLICY_DENIED',
   'ADMISSION_DENIED',
+  'RUNTIME_CLOSED',
   'CREDENTIAL_NOT_FOUND',
   'SANDBOX_REQUIRED',
   'ELICITATION_INVALID',
@@ -865,6 +866,7 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
   if (code === 'APPROVAL_INVALID' || code === 'INVALID_CURSOR') return 400;
   if (code === 'POLICY_DENIED') return 403;
   if (code === 'ADMISSION_DENIED') return 429;
+  if (code === 'RUNTIME_CLOSED') return 503;
   return 409;
 }
 

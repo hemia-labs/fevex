@@ -76,6 +76,7 @@ export function createWorkflowEngine(
     activeWorkflowRuns,
     activeSessions,
     runtimeOwner,
+    isClosed,
     admitStart,
     createEvent,
     createCoordinatorEvent,
@@ -250,6 +251,9 @@ export function createWorkflowEngine(
     request: RunRequest<TInput, TOutput>,
     kind: 'workflow' | 'team' = 'workflow',
   ): Promise<WorkflowExecutionState<TInput, TOutput>> => {
+    if (isClosed()) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
     const workflow = workflows.get(name);
     const team = kind === 'team' ? teams.get(name) : undefined;
     if (

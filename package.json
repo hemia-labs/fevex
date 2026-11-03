@@ -23,6 +23,8 @@
     "demo:research": "bun run examples/research/index.ts",
     "eval:research": "bun run examples/research/index.ts --eval",
     "inspect": "bun run scripts/inspect-run.ts",
+    "soak": "bun run scripts/soak.ts",
+    "soak:recovery": "bun run scripts/soak-recovery.ts",
     "build": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run build); fi; done",
     "test": "set -e; for d in packages/*; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run test); fi; done; bun run --cwd examples/nest-api test",
     "typecheck": "set -e; for d in packages/* examples/* apps/web; do if [ -f \"$d/package.json\" ]; then (cd \"$d\" && bun run typecheck); fi; done"

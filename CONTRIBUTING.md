@@ -85,6 +85,22 @@ Browser tests use a simulated sandbox. They do not install Chrome or validate
 the external `agent-browser` binary. See the [browser package](packages/browser/README.md)
 and [PostgreSQL package](packages/postgres/README.md) for their boundaries.
 
+## Soak and recovery checks
+
+The short soak test runs in `scripts/*.test.ts`. Longer memory, latency and
+retention checks use the same public API:
+
+```sh
+bun run soak -- --duration-ms 60000 --concurrency 8 --report soak.json
+FEVEX_POSTGRES_URL=postgresql://user:pass@localhost:5432/fevex_soak bun run soak -- --store postgres --duration-ms 3600000 --report soak-postgres.json
+bun run soak:recovery
+```
+
+`soak:recovery` sends `SIGKILL` to a child worker and verifies recovery after the
+lease expires; it takes about 30 seconds. See the
+[operations guide](apps/web/src/content/docs/docs/operations.md) for gates and
+report fields.
+
 ## Pull requests
 
 1. Create a short-lived branch from `main`, such as `fix/session-conflict`,

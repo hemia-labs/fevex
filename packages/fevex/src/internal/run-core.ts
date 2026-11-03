@@ -55,9 +55,30 @@ export function createRunCore({
   const activeSessions = new Set<string>();
   const internalRuns = new Set<string>();
   const pendingTenantStarts = new Map<string, number>();
+  const idleWaiters = new Set<() => void>();
   let pendingStarts = 0;
+  let closed = false;
   const traceExports = createTraceExportQueue(observability?.exportQueue);
   const runtimeOwner = crypto.randomUUID();
+
+  const isIdle = (): boolean => activeRuns.size === 0 && activeWorkflowRuns.size === 0;
+
+  const notifyIdle = (): void => {
+    if (!isIdle()) return;
+    for (const resolve of idleWaiters) resolve();
+    idleWaiters.clear();
+  };
+
+  const waitForIdle = (): Promise<void> => {
+    if (isIdle()) return Promise.resolve();
+    return new Promise((resolve) => idleWaiters.add(resolve));
+  };
+
+  const closeAdmission = (): void => {
+    closed = true;
+  };
+
+  const isClosed = (): boolean => closed;
   const unboundedEvents = new Set<AgentEventType>([
     'run.started',
     'run.recovered',
@@ -132,6 +153,9 @@ export function createRunCore({
     name: string,
     request: RunRequest,
   ): Promise<() => void> => {
+    if (closed) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
     if (!admission) return () => {};
     const running = activeTopLevelRuns() + pendingStarts;
     const tenant = tenantOf(request.context);
@@ -349,6 +373,7 @@ export function createRunCore({
     if (state.lease && isDurableRunStore(runStore)) {
       await runStore.releaseLease(state.run.id, state.lease.ownerId, state.lease.generation).catch(() => {});
     }
+    notifyIdle();
   };
 
   const commit = async (
@@ -475,6 +500,7 @@ export function createRunCore({
     if (state.lease && isDurableRunStore(runStore)) {
       await runStore.releaseLease(state.run.id, state.lease.ownerId, state.lease.generation).catch(() => {});
     }
+    notifyIdle();
   };
 
   const commitWorkflow = async (
@@ -529,6 +555,10 @@ export function createRunCore({
     activeRuns,
     activeWorkflowRuns,
     activeSessions,
+    isIdle,
+    waitForIdle,
+    closeAdmission,
+    isClosed,
     traceExports,
     runtimeOwner,
     admitStart,

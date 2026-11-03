@@ -817,6 +817,23 @@ Dropped traces and failed exports are counted in `getObservabilityStats()`;
 flush. OpenTelemetry SDK setup, OTLP export and shutdown remain application
 responsibilities.
 
+## Graceful shutdown
+
+`shutdown` stops admission, drains active runs, cancels what remains at the
+deadline and flushes trace exports:
+
+```ts
+const result = await app.shutdown({ timeoutMs: 30_000 });
+console.log(result.timedOut, result.cancelledRunIds, result.observability);
+```
+
+New starts, resumes and recoveries fail with `RUNTIME_CLOSED` (HTTP `503`) once
+shutdown begins. The host closes its HTTP server, stores and external adapters
+after `shutdown` returns. See
+[Operations & soak tests](https://fevex.dev/docs/operations/) for crash recovery
+and the 1–8 hour load harness, or run `bun run soak:recovery` from the repository
+to verify recovery after `SIGKILL`.
+
 ## Evaluations
 
 `@fevex/core/evals` runs local datasets sequentially with fresh sessions:
@@ -897,6 +914,7 @@ human evaluation workflows.
 - [Public documentation](https://fevex.dev/docs/)
 - [Install and package inventory](https://fevex.dev/docs/install/)
 - [Compatibility and releases](https://fevex.dev/docs/compatibility/)
+- [Operations and soak tests](https://fevex.dev/docs/operations/)
 - [Adapters](https://fevex.dev/docs/adapters/)
 - [Example catalog](examples/README.md)
 

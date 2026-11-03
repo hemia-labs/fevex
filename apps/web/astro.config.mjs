@@ -56,7 +56,10 @@ export default defineConfig({
         },
         {
           label: 'Durable execution',
-          items: [{ label: 'Workflows & teams', slug: 'docs/workflows' }],
+          items: [
+            { label: 'Workflows & teams', slug: 'docs/workflows' },
+            { label: 'Operations & soak tests', slug: 'docs/operations' },
+          ],
         },
         {
           label: 'Reference',

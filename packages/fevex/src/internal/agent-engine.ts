@@ -83,6 +83,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     activeRuns,
     activeSessions,
     runtimeOwner,
+    isClosed,
     admitStart,
     markInternalRun,
     resolveModel,
@@ -103,6 +104,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     internal = false,
     correlation: { parentRunId?: string; rootRunId?: string } = {},
   ): Promise<ExecutionState<TInput, TOutput>> => {
+    if (!internal && isClosed()) {
+      throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
     const agent = agents.get(name);
     if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
