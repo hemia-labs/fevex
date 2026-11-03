@@ -42,8 +42,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
     activeRuns,
     activeWorkflowRuns,
     activeSessions,
-    pendingExports,
-    exportFailures,
+    traceExports,
     runtimeOwner,
     createEvent,
     createCoordinatorEvent,
@@ -277,12 +276,11 @@ export function createRuntime(composition: FevexComposition): Fevex {
       await runStore.saveSession(session);
       return structuredClone(session);
     },
-    async flushObservability() {
-      while (pendingExports.size) await Promise.all([...pendingExports]);
-      if (exportFailures.length) {
-        const failures = exportFailures.splice(0);
-        throw new AggregateError(failures, 'Observability export failed');
-      }
+    flushObservability(options) {
+      return traceExports.flush(options);
+    },
+    getObservabilityStats() {
+      return traceExports.stats();
     },
   };
 }

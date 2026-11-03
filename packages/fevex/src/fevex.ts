@@ -5,7 +5,7 @@ import { createComposition } from './internal/configuration';
 import { createRuntime } from './internal/runtime';
 import type { ContextProvider, MemoryStore } from './knowledge';
 import type { ModelGateway } from './models';
-import type { ObservabilityOptions } from './observability';
+import type { ObservabilityOptions, ObservabilityStats } from './observability';
 import type { PolicyDefinition } from './policies';
 import type { Sandbox } from './sandbox';
 import type {
@@ -125,7 +125,10 @@ export interface Fevex {
   ): Promise<RunRecord<TOutput>>;
   purgeRuns(options?: PurgeRunsOptions): Promise<PurgeRunsResult>;
   compactSession(sessionId: SessionId, summary: string): Promise<Session>;
-  flushObservability(): Promise<void>;
+  /** Waits for queued exports and rejects with failures accumulated since the previous flush. */
+  flushObservability(options?: { timeoutMs?: number }): Promise<void>;
+  /** Cumulative trace export counters for this runtime. */
+  getObservabilityStats(): ObservabilityStats;
 }
 
 /**

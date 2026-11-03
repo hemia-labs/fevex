@@ -631,6 +631,19 @@ export function createComposition(config: FevexConfig): FevexComposition {
         'Fevex config "observability.content" is invalid',
       );
     }
+    if (config.observability.exportQueue !== undefined) {
+      const queue = config.observability.exportQueue;
+      assertConfiguration(
+        isRecord(queue) &&
+          ['concurrency', 'maxQueued', 'timeoutMs', 'maxFailures'].every((key) => {
+            const value = queue[key];
+            return value === undefined
+              || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0);
+          }),
+        'INVALID_CONFIG',
+        'Fevex config "observability.exportQueue" must contain positive safe integers',
+      );
+    }
   }
 
   const models = new Map<string, ModelGateway>();
@@ -1474,6 +1487,9 @@ export function createComposition(config: FevexConfig): FevexComposition {
                       : {}),
                   },
                 }
+              : {}),
+            ...(config.observability.exportQueue
+              ? { exportQueue: { ...config.observability.exportQueue } }
               : {}),
           },
   };

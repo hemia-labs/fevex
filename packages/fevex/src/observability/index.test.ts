@@ -4,6 +4,8 @@ import { createFevex } from '../fevex';
 import type { ModelGateway } from '../models';
 import type { RunTrace } from './index';
 import { defineTool } from '../tools';
+import { defineTeam } from '../teams';
+import { defineWorkflow } from '../workflows';
 import { fakeModel } from '../testing';
 import { InMemoryRunStore } from '../runtime';
 
@@ -294,5 +296,267 @@ describe('observability', () => {
       'approval.resolved',
     ]);
     expect(traces[0]?.spans.map(({ kind }) => kind)).toEqual(['model', 'tool', 'model']);
+  });
+
+  test('correlates workflow, agent and tool traces', async () => {
+    const traces: RunTrace[] = [];
+    const model = fakeModel(
+      { toolCalls: [{ id: 'lookup-1', name: 'lookup', input: { query: 'x' } }] },
+      { output: 'done' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({ name: 'worker', instructions: 'Work.', tools: ['lookup'] }),
+      ],
+      tools: [
+        defineTool({ name: 'lookup', execute: () => ({ found: true }) }),
+      ],
+      workflows: [
+        defineWorkflow({
+          name: 'research-flow',
+          async run(step, input) {
+            return (await step.agent('research', 'worker', { input })).output;
+          },
+        }),
+      ],
+      observability: {
+        exporters: [{ export(trace) { traces.push(structuredClone(trace)); } }],
+      },
+    });
+
+    const result = await app.runWorkflow('research-flow', { input: 'go' });
+    await app.flushObservability();
+
+    expect(traces).toHaveLength(2);
+    const workflowTrace = traces.find(({ kind }) => kind === 'workflow')!;
+    const agentTrace = traces.find(({ kind }) => kind === 'agent')!;
+    expect(workflowTrace).toMatchObject({
+      runId: result.runId,
+      agentName: 'research-flow',
+      rootRunId: result.runId,
+      status: 'completed',
+      attributes: { stepCount: 1, modelCallCount: 2, toolCallCount: 1 },
+    });
+    expect(workflowTrace.spans).toEqual([
+      expect.objectContaining({
+        kind: 'step',
+        name: 'research',
+        parentId: result.runId,
+        status: 'completed',
+        attributes: expect.objectContaining({
+          stepId: 'research',
+          stepKind: 'agent',
+          agentName: 'worker',
+          childRunId: agentTrace.runId,
+        }),
+      }),
+    ]);
+    expect(agentTrace).toMatchObject({
+      agentName: 'worker',
+      parentRunId: result.runId,
+      rootRunId: result.runId,
+      status: 'completed',
+    });
+    const modelSpan = agentTrace.spans.find(({ kind }) => kind === 'model')!;
+    const toolSpan = agentTrace.spans.find(({ kind }) => kind === 'tool')!;
+    expect(toolSpan.parentId).toBe(modelSpan.id);
+    expect(app.getObservabilityStats()).toMatchObject({
+      exported: 2,
+      failed: 0,
+      dropped: 0,
+      queued: 0,
+      active: 0,
+    });
+  });
+
+  test('correlates team delegations with child agent traces', async () => {
+    const traces: RunTrace[] = [];
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'done' }) },
+      agents: [
+        defineAgent({ name: 'lead', instructions: 'Lead.' }),
+        defineAgent({ name: 'worker', instructions: 'Work.' }),
+      ],
+      teams: [
+        defineTeam({
+          name: 'delivery-team',
+          supervisor: 'lead',
+          members: [{ agent: 'worker', role: 'work' }],
+          async run(team, input) {
+            return (await team.delegate('work', {
+              agent: 'worker',
+              task: input as string,
+            })).output;
+          },
+        }),
+      ],
+      observability: {
+        exporters: [{ export(trace) { traces.push(structuredClone(trace)); } }],
+      },
+    });
+
+    const result = await app.runTeam('delivery-team', { input: 'go' });
+    await app.flushObservability();
+
+    const teamTrace = traces.find(({ kind }) => kind === 'team')!;
+    const agentTrace = traces.find(({ kind }) => kind === 'agent')!;
+    expect(teamTrace).toMatchObject({
+      runId: result.runId,
+      agentName: 'delivery-team',
+      rootRunId: result.runId,
+      status: 'completed',
+    });
+    expect(teamTrace.spans).toEqual([
+      expect.objectContaining({
+        kind: 'step',
+        name: 'work',
+        attributes: expect.objectContaining({
+          stepId: 'work',
+          stepKind: 'agent',
+          agentName: 'worker',
+          childRunId: agentTrace.runId,
+        }),
+      }),
+    ]);
+    expect(agentTrace).toMatchObject({
+      agentName: 'worker',
+      parentRunId: result.runId,
+      rootRunId: result.runId,
+    });
+  });
+
+  test('bounds exporter concurrency', async () => {
+    let active = 0;
+    let peak = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const model: ModelGateway = {
+      async *stream() {
+        yield { type: 'output.delta', delta: 'ok' };
+        yield { type: 'completed', result: { output: 'ok' } };
+      },
+    };
+    const app = createFevex({
+      models: { default: model },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
+      observability: {
+        exportQueue: { concurrency: 1, maxQueued: 10, timeoutMs: 1_000 },
+        exporters: [{
+          async export() {
+            active += 1;
+            peak = Math.max(peak, active);
+            await gate;
+            active -= 1;
+          },
+        }],
+      },
+    });
+
+    await Promise.all([
+      app.runAgent('assistant', { input: 'one' }),
+      app.runAgent('assistant', { input: 'two' }),
+      app.runAgent('assistant', { input: 'three' }),
+    ]);
+    expect(app.getObservabilityStats()).toMatchObject({ active: 1, queued: 2 });
+    release();
+    await app.flushObservability();
+
+    expect(peak).toBe(1);
+    expect(app.getObservabilityStats()).toMatchObject({
+      exported: 3,
+      failed: 0,
+      dropped: 0,
+      queued: 0,
+      active: 0,
+    });
+  });
+
+  test('drops traces beyond the queue limit and reports them on flush', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const model: ModelGateway = {
+      async *stream() {
+        yield { type: 'output.delta', delta: 'ok' };
+        yield { type: 'completed', result: { output: 'ok' } };
+      },
+    };
+    const app = createFevex({
+      models: { default: model },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
+      observability: {
+        exportQueue: { concurrency: 1, maxQueued: 1, timeoutMs: 1_000 },
+        exporters: [{ export: () => gate }],
+      },
+    });
+
+    await Promise.all([
+      app.runAgent('assistant', { input: 'one' }),
+      app.runAgent('assistant', { input: 'two' }),
+      app.runAgent('assistant', { input: 'three' }),
+    ]);
+    expect(app.getObservabilityStats()).toMatchObject({
+      active: 1,
+      queued: 1,
+      dropped: 1,
+      failed: 1,
+    });
+
+    release();
+    await expect(app.flushObservability()).rejects.toThrow('Observability export failed');
+    expect(app.getObservabilityStats()).toMatchObject({
+      exported: 2,
+      failed: 1,
+      dropped: 1,
+      queued: 0,
+      active: 0,
+      retainedFailures: 0,
+    });
+    await expect(app.flushObservability()).resolves.toBeUndefined();
+  });
+
+  test('times out exporters that never settle', async () => {
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'ok' }) },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
+      observability: {
+        exportQueue: { concurrency: 1, maxQueued: 1, timeoutMs: 20 },
+        exporters: [{ export: () => new Promise<void>(() => {}) }],
+      },
+    });
+
+    await app.runAgent('assistant', { input: 'go' });
+    await expect(app.flushObservability()).rejects.toThrow('Observability export failed');
+    expect(app.getObservabilityStats()).toMatchObject({ exported: 0, failed: 1 });
+  });
+
+  test('gives flushObservability a deadline', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'ok' }) },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
+      observability: {
+        exportQueue: { concurrency: 1, maxQueued: 1, timeoutMs: 1_000 },
+        exporters: [{ export: () => gate }],
+      },
+    });
+
+    await app.runAgent('assistant', { input: 'go' });
+    await expect(app.flushObservability({ timeoutMs: 0 })).rejects.toThrow(
+      'Observability flush timeoutMs must be a positive safe integer',
+    );
+    await expect(app.flushObservability({ timeoutMs: 10 })).rejects.toThrow(
+      'Observability flush timed out after 10ms',
+    );
+    release();
+    await expect(app.flushObservability()).resolves.toBeUndefined();
+    expect(app.getObservabilityStats()).toMatchObject({ exported: 1, queued: 0, active: 0 });
   });
 });

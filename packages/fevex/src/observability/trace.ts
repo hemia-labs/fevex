@@ -4,7 +4,10 @@ import type { SessionId } from '../runtime';
 
 /** Final state represented by an exported run trace. */
 export type TraceStatus = 'completed' | 'failed' | 'cancelled';
-export type TraceSpanKind = 'model' | 'tool';
+/** Kind of run that produced a trace. Absent means `agent` for older traces. */
+export type TraceRunKind = 'agent' | 'workflow' | 'team';
+/** Model and tool calls are agent spans; steps belong to workflow and team traces. */
+export type TraceSpanKind = 'model' | 'tool' | 'step';
 export type TraceContentKind = 'run.output' | 'model.output' | 'error.message';
 
 export interface TraceCost {
@@ -25,6 +28,7 @@ export interface TraceAnnotation {
 
 export interface TraceSpan {
   id: string;
+  /** Run or span that contains this span. */
   parentId: string;
   kind: TraceSpanKind;
   name: string;
@@ -41,11 +45,19 @@ export interface TraceSpan {
 
 export interface RunTrace {
   schemaVersion: '1';
+  /** Absent on traces produced before coordinator traces existed; treat as `agent`. */
+  kind?: TraceRunKind;
   traceId: string;
   runId: RunId;
   sessionId: SessionId;
+  /** Agent, workflow or team name. */
   agentName: string;
-  modelRegistryName: string;
+  /** Run that created this one, when it belongs to a workflow or team. */
+  parentRunId?: RunId;
+  /** Top-level run in the correlation tree. Defaults to `runId`. */
+  rootRunId?: RunId;
+  /** Only present on agent traces. */
+  modelRegistryName?: string;
   model?: ModelMetadata;
   startedAt: string;
   endedAt: string;
@@ -83,8 +95,36 @@ export interface TraceExporter {
   export(trace: Readonly<RunTrace>): void | Promise<void>;
 }
 
+export interface TraceExportQueueOptions {
+  /** Traces exported at once. Defaults to 4. */
+  concurrency?: number;
+  /** Traces waiting for an export slot before new traces are dropped. Defaults to 100. */
+  maxQueued?: number;
+  /** Deadline for each exporter call. Defaults to 30 seconds. */
+  timeoutMs?: number;
+  /** Failures retained for the next `flushObservability` call. Defaults to 100. */
+  maxFailures?: number;
+}
+
+/** Queue and failure counters for the runtime's trace exporters. */
+export interface ObservabilityStats {
+  /** Traces exported successfully since the runtime started. */
+  exported: number;
+  /** Failed exports and dropped traces since the runtime started. */
+  failed: number;
+  /** Traces dropped because the queue was full. */
+  dropped: number;
+  /** Traces waiting for an export slot. */
+  queued: number;
+  /** Traces currently being exported. */
+  active: number;
+  /** Failures retained for the next flush. */
+  retainedFailures: number;
+}
+
 export interface ObservabilityOptions {
   exporters: readonly TraceExporter[];
   calculateCost?: CostCalculator;
   content?: TraceContentPolicy;
+  exportQueue?: TraceExportQueueOptions;
 }
