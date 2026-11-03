@@ -42,7 +42,8 @@ from this repository until they are published:
 | `@fevex/opentelemetry` | OpenTelemetry trace and metric export |
 | `@fevex/browser` | Browser automation tools |
 
-See [Adapters](/docs/adapters/) for the full integration list.
+See [Adapters](/docs/adapters/) for the full integration list. Before upgrading a
+durable deployment, read [Compatibility & releases](/docs/compatibility/).
 
 ## Schemas
 

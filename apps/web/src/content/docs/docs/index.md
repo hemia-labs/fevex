@@ -32,3 +32,5 @@ first stable release.
   with no network access.
 - Learn the core concepts: [Agents](/docs/agents/), [Tools](/docs/tools/) and
   [Models](/docs/models/).
+- Read [Compatibility & releases](/docs/compatibility/) before upgrading a
+  durable deployment.

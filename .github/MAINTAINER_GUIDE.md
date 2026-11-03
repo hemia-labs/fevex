@@ -11,6 +11,7 @@ already enabled.
 | --- | --- | --- |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Development and contribution process | Merge into the default branch |
 | [`SECURITY.md`](../SECURITY.md) | Vulnerability reporting and maintenance scope | Merge; separately enable private reporting |
+| [`compatibility.md`](../apps/web/src/content/docs/docs/compatibility.md) | Public API, checkpoint and release policy | Publish with the docs site |
 | [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md) | Community expectations and moderation contact | Merge; monitor the listed contact |
 | [`pull_request_template.md`](pull_request_template.md) | Problem, validation, compatibility and docs checklist | Merge into the default branch |
 | [`bug_report.yml`](ISSUE_TEMPLATE/bug_report.yml) | Package versions, environment, behavior and reproduction | Merge into the default branch |

@@ -55,6 +55,20 @@ Schema-compatible validator can be used:
 npm install zod
 ```
 
+## Compatibility & releases
+
+FEVEX is pre-1.0. Documented imports from official packages are the public API;
+`src/internal`, undocumented paths and checkpoint shapes are not. While in alpha,
+`minor` releases may contain breaking changes with migration notes; `patch`
+releases stay compatible. Store migrations are forward-only, checkpoints are
+versioned and private, and downgrades are not supported.
+
+Only the latest alpha is supported; pin exact versions in production. Releases
+come from reviewed changesets, publish only the three official packages, and
+place alpha versions on the npm `latest` tag. Read the full
+[compatibility and release policy](https://fevex.dev/docs/compatibility/) before
+upgrading a durable deployment.
+
 ## Templates and debugging
 
 For an adaptable starting point, see the [example catalog](examples/README.md):
@@ -880,10 +894,13 @@ human evaluation workflows.
 
 ## Documentation
 
-- [Core MVP roadmap](docs/fevex_core_mvp_roadmap.md)
-- [Integrations roadmap](docs/fevex_integrations_roadmap.md)
-- [Release guide](docs/fevex_release_guide.md)
-- [Foundational brief](docs/fevex_brief_fundacional.md)
+- [Public documentation](https://fevex.dev/docs/)
+- [Install and package inventory](https://fevex.dev/docs/install/)
+- [Compatibility and releases](https://fevex.dev/docs/compatibility/)
+- [Adapters](https://fevex.dev/docs/adapters/)
+- [Example catalog](examples/README.md)
+
+The repository `docs/` directory is internal and is not published.
 
 ## Deploy de `fevex.dev`
 

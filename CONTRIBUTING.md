@@ -115,7 +115,9 @@ in code, logs, screenshots or reports. Use synthetic reproduction data.
 Update the relevant README or public documentation with behavior changes.
 Public website documentation lives in `apps/web/src/content/docs/`.
 The root `docs/` directory is currently ignored by Git; do not put required
-contributor documentation there and assume it will be published.
+contributor documentation there and assume it will be published. The public
+[compatibility and release policy](apps/web/src/content/docs/docs/compatibility.md)
+defines the API, checkpoint and upgrade expectations to preserve.
 
 Package publishing is a maintainer responsibility. Do not change package
 versions or publish as part of an unrelated PR. Contributions use the repository's

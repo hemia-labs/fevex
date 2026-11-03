@@ -6,6 +6,8 @@ Fevex is in alpha. Security reports for code on `main` and the latest published
 version of each official `@fevex/*` package are welcome. Fixes target current
 development and upcoming releases; backports to older alpha versions are not
 guaranteed. This is not a long-term support or production-readiness commitment.
+See the public [compatibility and release policy](https://fevex.dev/docs/compatibility/)
+for the supported version and environment matrix.
 
 Report suspected authorization bypasses, cross-session or cross-tenant access,
 credential exposure, unsafe tool execution, persistence integrity issues, or

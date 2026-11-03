@@ -4,6 +4,8 @@ description: What the FEVEX MVP supports today, and what is intentionally out of
 ---
 
 FEVEX is an early MVP. The API may change before the first stable release.
+See [Compatibility & releases](/docs/compatibility/) for the public API,
+checkpoint, upgrade and support guarantees.
 
 ## Supported today
 

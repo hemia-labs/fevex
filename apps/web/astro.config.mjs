@@ -65,6 +65,7 @@ export default defineConfig({
             { label: 'Channels & resolvers', slug: 'docs/channels' },
             { label: 'Package subpaths', slug: 'docs/packages' },
             { label: 'Status & scope', slug: 'docs/status' },
+            { label: 'Compatibility & releases', slug: 'docs/compatibility' },
           ],
         },
       ],

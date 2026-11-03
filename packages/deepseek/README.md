@@ -1,6 +1,7 @@
 # @fevex/deepseek
 
-Official DeepSeek `ModelGateway` adapter for Fevex.
+Official DeepSeek `ModelGateway` adapter for Fevex. See the
+[compatibility and release policy](https://fevex.dev/docs/compatibility/).
 
 ```bash
 npm install @fevex/core @fevex/deepseek

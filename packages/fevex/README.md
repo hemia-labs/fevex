@@ -55,6 +55,20 @@ Schema-compatible validator can be used:
 npm install zod
 ```
 
+## Compatibility & releases
+
+FEVEX is pre-1.0. Documented imports from official packages are the public API;
+`src/internal`, undocumented paths and checkpoint shapes are not. While in alpha,
+`minor` releases may contain breaking changes with migration notes; `patch`
+releases stay compatible. Store migrations are forward-only, checkpoints are
+versioned and private, and downgrades are not supported.
+
+Only the latest alpha is supported; pin exact versions in production. Releases
+come from reviewed changesets, publish only the three official packages, and
+place alpha versions on the npm `latest` tag. Read the full
+[compatibility and release policy](https://fevex.dev/docs/compatibility/) before
+upgrading a durable deployment.
+
 ## Quickstart
 
 This example executes a complete model-tool-model cycle without network access:
