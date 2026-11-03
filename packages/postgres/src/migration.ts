@@ -43,4 +43,20 @@ export const migration = `
   );
 
   ALTER TABLE fevex.leases ADD COLUMN IF NOT EXISTS generation bigint NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS fevex.artifacts (
+    id text PRIMARY KEY,
+    tenant_id text NOT NULL,
+    run_id text,
+    session_id text,
+    actor_id text,
+    mime_type text NOT NULL,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz,
+    data jsonb NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS artifacts_tenant_run ON fevex.artifacts(tenant_id, run_id);
+  CREATE INDEX IF NOT EXISTS artifacts_tenant_created ON fevex.artifacts(tenant_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS artifacts_tenant_expires ON fevex.artifacts(tenant_id, expires_at);
 `;

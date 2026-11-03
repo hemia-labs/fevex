@@ -29,6 +29,7 @@ import {
   createFevexHttpHandler,
   FEVEX_HTTP_PROTOCOL_VERSION,
 } from './http';
+import type { ArtifactDescriptor } from './artifacts';
 import {
   createMemoryContextProvider,
   defineContextProvider,
@@ -187,6 +188,9 @@ createFevexHttpHandler({ fevex: app }) satisfies (
   context?: { context?: import('./core').ExecutionContext },
 ) => Promise<Response>;
 createFevexHttpClient({ baseUrl: 'https://example.com' }).getRun(run.id) satisfies Promise<RunRecord>;
+createFevexHttpClient({ baseUrl: 'https://example.com' }).getArtifact('artifact-id') satisfies Promise<Response>;
+createFevexHttpClient({ baseUrl: 'https://example.com' }).listArtifacts('run-id') satisfies Promise<ArtifactDescriptor[]>;
+createFevexHttpClient({ baseUrl: 'https://example.com' }).deleteArtifact('artifact-id') satisfies Promise<void>;
 FEVEX_HTTP_PROTOCOL_VERSION satisfies '3';
 
 declare const knowledgeContext: KnowledgeContext;

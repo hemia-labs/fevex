@@ -1,4 +1,5 @@
 import type { AgentEvent, ExecutionContext, JsonValue, RunId } from '../core';
+import type { ArtifactCatalog, ArtifactDescriptor, ArtifactStore } from '../artifacts';
 import type { Fevex } from '../fevex';
 import type { ReasoningEffort } from '../models';
 import type {
@@ -63,6 +64,21 @@ export type FevexHttpAccess =
       context?: ExecutionContext;
     };
 
+/** Host-facing artifact access check. */
+export type FevexArtifactAccess =
+  | {
+      action: 'read' | 'delete';
+      kind: 'artifact';
+      artifactId: string;
+      context?: ExecutionContext;
+    }
+  | {
+      action: 'read';
+      kind: 'artifacts';
+      runId: RunId;
+      context?: ExecutionContext;
+    };
+
 export interface FevexHttpHandlerOptions {
   fevex: Fevex;
   pollIntervalMs?: number;
@@ -76,6 +92,21 @@ export interface FevexHttpHandlerOptions {
    * Omit to preserve the host's existing trusted-network behavior.
    */
   authorize?: (access: FevexHttpAccess) => boolean | Promise<boolean>;
+  /**
+   * Byte store used by the artifact routes. When omitted, artifact routes
+   * return 501.
+   */
+  artifacts?: ArtifactStore;
+  /**
+   * Metadata catalog used to list artifacts for a run. When omitted, the
+   * run-artifact listing route returns 501.
+   */
+  artifactCatalog?: ArtifactCatalog;
+  /**
+   * Authorizes artifact reads, listings and deletions. Omit to preserve the
+   * host's existing trusted-network behavior.
+   */
+  authorizeArtifact?: (access: FevexArtifactAccess) => boolean | Promise<boolean>;
   /**
    * Called after a run starts so the host can persist run and session ownership.
    * If it throws, the handler cancels the new run and returns 500. A process
@@ -131,4 +162,7 @@ export interface FevexHttpClient {
   ): Promise<RunRecord<TOutput>>;
   recoverRun<TOutput = JsonValue>(runId: string): Promise<RunRecord<TOutput>>;
   cancelRun(runId: string): Promise<void>;
+  getArtifact(artifactId: string): Promise<Response>;
+  listArtifacts(runId: string): Promise<ArtifactDescriptor[]>;
+  deleteArtifact(artifactId: string): Promise<void>;
 }

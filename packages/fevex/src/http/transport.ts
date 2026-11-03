@@ -1,4 +1,9 @@
 import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
+import {
+  ArtifactError,
+  type ArtifactDescriptor,
+  type ArtifactStoreContext,
+} from '../artifacts';
 import type { Fevex } from '../fevex';
 import { MAX_DEADLINE_MS } from '../internal/run-support';
 import type { ReasoningEffort } from '../models';
@@ -7,6 +12,7 @@ import type { ResumeRunResolution, RunRecord } from '../runtime';
 import {
   FEVEX_HTTP_PROTOCOL_VERSION,
   FEVEX_HTTP_PROTOCOL_VERSION_HEADER,
+  type FevexArtifactAccess,
   type FevexHttpAccess,
   type FevexHttpClient,
   type FevexHttpClientOptions,
@@ -60,6 +66,11 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
 
   const authorize = async (access: FevexHttpAccess) => {
     if (options.authorize && !(await options.authorize(access))) {
+      throw new HttpProtocolError(403, 'FORBIDDEN', 'Forbidden');
+    }
+  };
+  const authorizeArtifact = async (access: FevexArtifactAccess) => {
+    if (options.authorizeArtifact && !(await options.authorizeArtifact(access))) {
       throw new HttpProtocolError(403, 'FORBIDDEN', 'Forbidden');
     }
   };
@@ -226,6 +237,79 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         return json(await options.fevex.recoverRun(runId, { actor }), 202);
       }
 
+      const runArtifacts = path.match(/^\/v1\/runs\/([^/]+)\/artifacts$/);
+      if (runArtifacts && request.method === 'GET') {
+        const runId = decodeURIComponent(runArtifacts[1]!);
+        await authorizeArtifact({
+          action: 'read',
+          kind: 'artifacts',
+          runId,
+          context: handlerContext.context,
+        });
+        if (!options.artifactCatalog) {
+          throw new HttpProtocolError(
+            501,
+            'ARTIFACT_CATALOG_NOT_CONFIGURED',
+            'Artifact catalog is not configured',
+          );
+        }
+        if (!(await options.fevex.getRun(runId))) throw notFound('RUN_NOT_FOUND', 'Run not found');
+        const limit = optionalLimit(url.searchParams.get('limit'));
+        const records = await options.artifactCatalog.list(
+          { runId, ...(limit === undefined ? {} : { limit }) },
+          artifactContext(handlerContext, request),
+        );
+        return json(records.map(({ descriptor }) => descriptor));
+      }
+
+      const artifactRoute = path.match(/^\/v1\/artifacts\/([^/]+)$/);
+      if (artifactRoute && (request.method === 'GET' || request.method === 'HEAD')) {
+        const artifactId = decodeURIComponent(artifactRoute[1]!);
+        await authorizeArtifact({
+          action: 'read',
+          kind: 'artifact',
+          artifactId,
+          context: handlerContext.context,
+        });
+        if (!options.artifacts) {
+          throw new HttpProtocolError(501, 'ARTIFACTS_NOT_CONFIGURED', 'Artifact store is not configured');
+        }
+        const context = artifactContext(handlerContext, request);
+        if (request.method === 'HEAD' && options.artifacts.head) {
+          const descriptor = await options.artifacts.head(artifactId, context);
+          if (!descriptor) throw notFound('ARTIFACT_NOT_FOUND', 'Artifact not found');
+          return artifactResponse(descriptor, null);
+        }
+        const content = await options.artifacts.get(artifactId, context);
+        if (!content) throw notFound('ARTIFACT_NOT_FOUND', 'Artifact not found');
+        return artifactResponse(content.descriptor, request.method === 'HEAD' ? null : content.bytes);
+      }
+      if (artifactRoute && request.method === 'DELETE') {
+        const artifactId = decodeURIComponent(artifactRoute[1]!);
+        await authorizeArtifact({
+          action: 'delete',
+          kind: 'artifact',
+          artifactId,
+          context: handlerContext.context,
+        });
+        if (!options.artifacts) {
+          throw new HttpProtocolError(501, 'ARTIFACTS_NOT_CONFIGURED', 'Artifact store is not configured');
+        }
+        if (!options.artifacts.delete) {
+          throw new HttpProtocolError(
+            501,
+            'ARTIFACT_DELETE_UNSUPPORTED',
+            'Artifact store does not support deletion',
+          );
+        }
+        const deleted = await options.artifacts.delete(
+          artifactId,
+          artifactContext(handlerContext, request),
+        );
+        if (!deleted) throw notFound('ARTIFACT_NOT_FOUND', 'Artifact not found');
+        return versioned(new Response(null, { status: 204 }));
+      }
+
       const run = path.match(/^\/v1\/runs\/([^/]+)$/);
       if (run && request.method === 'GET') {
         const runId = decodeURIComponent(run[1]!);
@@ -248,7 +332,17 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         return versioned(new Response(null, { status: 204 }));
       }
 
-      if (start || startWorkflow || startTeam || events || resume || recover || run) {
+      if (
+        start ||
+        startWorkflow ||
+        startTeam ||
+        events ||
+        resume ||
+        recover ||
+        runArtifacts ||
+        artifactRoute ||
+        run
+      ) {
         throw new HttpProtocolError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
       }
       throw notFound('ROUTE_NOT_FOUND', 'Route not found');
@@ -329,6 +423,20 @@ export function createFevexHttpClient(options: FevexHttpClientOptions): FevexHtt
     },
     async cancelRun(runId) {
       const response = await fetcher(`${baseUrl}/v1/runs/${encodeURIComponent(runId)}`, {
+        method: 'DELETE',
+      });
+      await assertResponse(response);
+    },
+    async getArtifact(artifactId) {
+      const response = await fetcher(`${baseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}`);
+      await assertResponse(response);
+      return response;
+    },
+    listArtifacts(runId) {
+      return request<ArtifactDescriptor[]>(`/v1/runs/${encodeURIComponent(runId)}/artifacts`);
+    },
+    async deleteArtifact(artifactId) {
+      const response = await fetcher(`${baseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}`, {
         method: 'DELETE',
       });
       await assertResponse(response);
@@ -452,6 +560,55 @@ function findBoundary(value: string) {
 
 function formatEvent(event: AgentEvent) {
   return `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function artifactContext(
+  handlerContext: { context?: ExecutionContext },
+  request: Request,
+): ArtifactStoreContext {
+  const tenantId = handlerContext.context?.attributes?.tenantId;
+  if (tenantId !== undefined && typeof tenantId !== 'string') {
+    throw badRequest('tenantId attribute must be a string');
+  }
+  const actor = handlerContext.context?.actor;
+  return {
+    ...(typeof tenantId === 'string' ? { tenantId } : {}),
+    ...(actor === undefined ? {} : { actor }),
+    signal: request.signal,
+  };
+}
+
+function optionalLimit(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw badRequest('limit must be a positive integer');
+  }
+  return parsed;
+}
+
+function artifactResponse(
+  descriptor: ArtifactDescriptor,
+  bytes: Uint8Array | null,
+) {
+  return versioned(new Response(bytes === null ? null : bytes.slice().buffer, {
+    headers: {
+      'content-type': descriptor.mimeType,
+      'content-length': String(descriptor.size),
+      'content-disposition': contentDisposition(descriptor.filename),
+      'cache-control': 'private, max-age=0, must-revalidate',
+      etag: `"${descriptor.sha256}"`,
+      'x-content-type-options': 'nosniff',
+      'fevex-artifact-id': descriptor.artifactId,
+      'fevex-artifact-sha256': descriptor.sha256,
+    },
+  }));
+}
+
+function contentDisposition(filename: string) {
+  const fallback = filename.replace(/[^\x20-\x7e]/gu, '_').replace(/["\\]/gu, '_');
+  const encoded = encodeURIComponent(filename).replace(/'/gu, '%27');
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
 function readResolution(
@@ -653,6 +810,11 @@ function problem(
     ({ status, code } = error);
     title = error.message;
     detail = error.message;
+  } else if (error instanceof ArtifactError) {
+    code = error.code;
+    status = statusForArtifactErrorCode(error.code);
+    title = titleForStatus(status);
+    detail = error.message;
   } else {
     const runError = readFevexRunError(error);
     if (runError) {
@@ -706,12 +868,28 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
   return 409;
 }
 
+function statusForArtifactErrorCode(code: ArtifactError['code']) {
+  if (
+    code === 'ARTIFACT_INVALID_ID' ||
+    code === 'ARTIFACT_INVALID_INPUT' ||
+    code === 'ARTIFACT_INVALID_CONTEXT'
+  ) return 400;
+  if (code === 'ARTIFACT_TOO_LARGE') return 413;
+  if (code === 'ARTIFACT_MIME_UNSUPPORTED') return 415;
+  if (code === 'ARTIFACT_CONFLICT') return 409;
+  return 500;
+}
+
 function titleForStatus(status: number) {
-  if (status === 404) return 'Not Found';
   if (status === 400) return 'Bad Request';
   if (status === 403) return 'Forbidden';
+  if (status === 404) return 'Not Found';
+  if (status === 409) return 'Conflict';
+  if (status === 413) return 'Payload Too Large';
+  if (status === 415) return 'Unsupported Media Type';
   if (status === 429) return 'Too Many Requests';
-  return 'Conflict';
+  if (status === 501) return 'Not Implemented';
+  return 'Internal Server Error';
 }
 
 function wait(ms: number, signal: AbortSignal) {

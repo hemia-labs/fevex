@@ -18,6 +18,9 @@ FEVEX is an early MVP. The API may change before the first stable release.
 - Per-runtime admission limits, per-run deadlines, event caps and terminal-run
   retention through `purgeRuns`.
 - Conversation sessions, tool approval checkpoints, and resumable runs.
+- Artifact descriptors with local filesystem and S3-compatible stores,
+  SQLite and PostgreSQL metadata catalogs, authenticated HTTP delivery, and
+  `context.artifacts` for tools with `artifact.created` events.
 - [Channel contracts and external resolvers](/docs/channels/) for elicitation,
   with correlated requests and stable keys for delivery retries.
 - Durable workflows and explicit team delegation, parallel work, and handoffs.

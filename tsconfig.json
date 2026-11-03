@@ -13,6 +13,7 @@
     "paths": {
       "@fevex/core": ["packages/fevex/src/index.ts"],
       "@fevex/core/agents": ["packages/fevex/src/agents/index.ts"],
+      "@fevex/core/artifacts": ["packages/fevex/src/artifacts/index.ts"],
       "@fevex/core/channels": ["packages/fevex/src/channels/index.ts"],
       "@fevex/core/http": ["packages/fevex/src/http/index.ts"],
       "@fevex/deepseek": ["packages/deepseek/src/index.ts"],

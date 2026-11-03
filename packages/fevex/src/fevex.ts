@@ -1,4 +1,5 @@
 import type { AgentDefinition } from './agents';
+import type { ArtifactStore } from './artifacts';
 import type { AgentEvent, ExecutionContext, RunId } from './core';
 import { createComposition } from './internal/configuration';
 import { createRuntime } from './internal/runtime';
@@ -68,6 +69,8 @@ export interface FevexConfig {
   runStore?: RunStore;
   credentialStore?: CredentialStore;
   sandbox?: Sandbox;
+  /** Optional artifact store exposed to tools as `context.artifacts`. */
+  artifacts?: ArtifactStore;
   policies?: PolicyDefinition[];
   onEvent?: (event: AgentEvent) => void;
   observability?: ObservabilityOptions;

@@ -46,3 +46,20 @@ index to filter and limit rows in SQL before decoding event payloads. An unknown
 cursor or one from another run raises `INVALID_CURSOR`. To read only the latest
 event, pass `{ order: 'desc', limit: 1 }`. Without a limit, existing full-log reads
 remain supported. No schema migration is needed for pagination.
+
+## Artifact metadata
+
+`createSQLiteArtifactCatalog` stores artifact metadata without the bytes:
+
+```ts
+import { createSQLiteArtifactCatalog } from '@fevex/sqlite';
+
+const catalog = createSQLiteArtifactCatalog({
+  filename: '.fevex/artifacts.db',
+});
+```
+
+Compose it with a byte store using `CatalogedArtifactStore` from
+`@fevex/core/artifacts`. The catalog supports `list`, `get`, `delete` and
+`deleteByRun`, scoped by tenant, run, session and actor. Migration v4 adds the
+`artifacts` table and indexes.

@@ -1,5 +1,6 @@
 import type { AgentDefinition } from '../agents';
 import { FevexConfigurationError, type FevexConfigurationErrorCode } from '../configuration-error';
+import type { ArtifactStore } from '../artifacts';
 import type { JsonObject, JsonValue, ToolEventSource } from '../core';
 import type { FevexConfig } from '../fevex';
 import {
@@ -52,6 +53,7 @@ export interface FevexComposition {
   runStore: RunStore;
   credentialStore: FevexConfig['credentialStore'];
   sandbox: Sandbox | undefined;
+  artifacts: ArtifactStore | undefined;
   policies: PolicyDefinition[];
   onEvent: FevexConfig['onEvent'];
   observability: ObservabilityOptions | undefined;
@@ -96,6 +98,14 @@ function isRunStore(value: unknown): value is RunStore {
 
 function isSandbox(value: unknown): value is Sandbox {
   return isRecord(value) && typeof value.run === 'function';
+}
+
+function isArtifactStore(value: unknown): value is ArtifactStore {
+  return (
+    ((typeof value === 'object' && value !== null) || typeof value === 'function') &&
+    typeof (value as { put?: unknown }).put === 'function' &&
+    typeof (value as { get?: unknown }).get === 'function'
+  );
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -536,6 +546,11 @@ export function createComposition(config: FevexConfig): FevexComposition {
     config.sandbox === undefined || isSandbox(config.sandbox),
     'INVALID_CONFIG',
     'Fevex config "sandbox" must implement Sandbox',
+  );
+  assertConfiguration(
+    config.artifacts === undefined || isArtifactStore(config.artifacts),
+    'INVALID_CONFIG',
+    'Fevex config "artifacts" must implement ArtifactStore',
   );
   assertConfiguration(
     config.policies === undefined || Array.isArray(config.policies),
@@ -1437,6 +1452,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
     runStore: config.runStore ?? new InMemoryRunStore(),
     credentialStore: config.credentialStore,
     sandbox: config.sandbox,
+    artifacts: config.artifacts,
     policies,
     onEvent: config.onEvent,
     admission: config.admission === undefined ? undefined : { ...config.admission },

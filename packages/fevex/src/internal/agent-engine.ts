@@ -1,4 +1,9 @@
 import type { AgentEvent, AgentEventPayloads, AgentEventType, AgentMessage, JsonValue } from '../core';
+import type {
+  ArtifactDescriptor,
+  ArtifactStore,
+  ArtifactStoreContext,
+} from '../artifacts';
 import type { KnowledgeContext } from '../knowledge';
 import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import { FevexRunError, RunPausedError } from '../run-error';
@@ -71,6 +76,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     runStore,
     credentialStore,
     sandbox,
+    artifacts,
     policies,
   } = composition;
   const {
@@ -1113,6 +1119,24 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             }
             events.push(started);
             yield started;
+            const createdArtifacts: AgentEvent[] = [];
+            const toolArtifacts = artifacts === undefined
+              ? undefined
+              : scopedArtifacts(artifacts, {
+                  runId: state.run.id,
+                  sessionId: state.session.id,
+                  request,
+                  emit: async (descriptor) => {
+                    createdArtifacts.push(
+                      await emit('artifact.created', {
+                        descriptor,
+                        toolCallId: pending.call.id,
+                        toolName: pending.call.name,
+                        ...toolSourcePayload(tool),
+                      }),
+                    );
+                  },
+                });
             try {
               const raw = await abortable(
                 () =>
@@ -1123,11 +1147,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                     idempotencyKey: pending.idempotencyKey,
                     getCredential,
                     ...(scopedSandbox === undefined ? {} : { sandbox: scopedSandbox }),
+                    ...(toolArtifacts === undefined ? {} : { artifacts: toolArtifacts }),
                     context: request.context,
                     signal: request.signal,
                   }),
                 request.signal,
               );
+              for (const event of createdArtifacts.splice(0)) yield event;
               const validated =
                 tool.outputSchema === undefined
                   ? raw
@@ -1165,6 +1191,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               yield completed;
               break;
             } catch (error) {
+              for (const event of createdArtifacts.splice(0)) yield event;
               if (request.signal.aborted) throw error;
               const safeError = redact(toErrorMessage(error), secrets);
               record = {
@@ -1755,3 +1782,52 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
 /** The agent-run surface the workflow engine and the public runtime consume. */
 export type AgentEngine = ReturnType<typeof createAgentEngine>;
+
+function scopedArtifacts(
+  store: ArtifactStore,
+  options: {
+    runId: string;
+    sessionId: string;
+    request: RunRequest;
+    emit: (descriptor: ArtifactDescriptor) => Promise<void>;
+  },
+): ArtifactStore {
+  const scopedContext = (value?: ArtifactStoreContext): ArtifactStoreContext => {
+    const contextTenant = options.request.context?.attributes?.tenantId;
+    const tenantId = typeof contextTenant === 'string' ? contextTenant : value?.tenantId;
+    const actor = options.request.context?.actor;
+    return {
+      ...value,
+      runId: options.runId,
+      sessionId: options.sessionId,
+      ...(tenantId === undefined ? {} : { tenantId }),
+      ...(actor === undefined ? {} : { actor }),
+      signal: options.request.signal,
+    };
+  };
+
+  return {
+    async put(input, context) {
+      const descriptor = await store.put(input, scopedContext(context));
+      await options.emit(descriptor);
+      return descriptor;
+    },
+    get(artifactId, context) {
+      return store.get(artifactId, scopedContext(context));
+    },
+    ...(store.head === undefined
+      ? {}
+      : {
+          head(artifactId: string, context?: ArtifactStoreContext) {
+            return store.head!(artifactId, scopedContext(context));
+          },
+        }),
+    ...(store.delete === undefined
+      ? {}
+      : {
+          delete(artifactId: string, context?: ArtifactStoreContext) {
+            return store.delete!(artifactId, scopedContext(context));
+          },
+        }),
+  };
+}

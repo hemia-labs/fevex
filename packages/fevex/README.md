@@ -568,6 +568,31 @@ Hosts pass authenticated `ExecutionContext` separately to `handler(request,
 SSE response never cancels its run. Cancellation is explicit through
 `client.cancelRun(run.id)`.
 
+Artifacts use the same handler:
+
+```ts
+const handler = createFevexHttpHandler({
+  fevex: app,
+  artifacts: artifactStore,       // FileSystemArtifactStore or S3ArtifactStore
+  artifactCatalog: artifactCatalog, // optional; enables listing by run
+  authorizeArtifact(access) {
+    return access.context?.actor?.id === 'alice';
+  },
+});
+```
+
+Routes:
+
+- `GET /v1/artifacts/:id` streams the bytes with `content-type`,
+  `content-length`, `content-disposition`, `etag` and artifact headers.
+- `HEAD /v1/artifacts/:id` returns the same metadata without a body.
+- `DELETE /v1/artifacts/:id` deletes bytes and catalog metadata.
+- `GET /v1/runs/:runId/artifacts?limit=100` lists descriptors for a run.
+
+The client exposes `getArtifact`, `listArtifacts` and `deleteArtifact`. Keep the
+bucket private; the handler authorizes the request and streams the bytes, or a
+host can use the descriptor to mint a short-lived signed URL.
+
 ## Approvals and durable runs
 
 Tools can declare risk, approval, idempotency, retries and credential names.
@@ -893,12 +918,128 @@ Context providers are lazy per run. Memory is a replaceable store; the built-in
 store is in-memory substring search, not embeddings, vector search or durable
 storage.
 
+## Artifacts
+
+`@fevex/core/artifacts` stores large or binary outputs as references. Runs,
+events and prompts carry an `ArtifactDescriptor`; bytes stay in an
+`ArtifactStore`.
+
+```ts
+import {
+  FileSystemArtifactStore,
+  InMemoryArtifactStore,
+  S3ArtifactStore,
+  type S3ObjectClient,
+} from '@fevex/core/artifacts';
+
+const artifacts = new FileSystemArtifactStore({
+  rootDir: '.fevex/artifacts',
+  maxBytes: 10 * 1024 * 1024,
+});
+
+const descriptor = await artifacts.put(
+  {
+    filename: 'report.pdf',
+    mimeType: 'application/pdf',
+    bytes,
+  },
+  { tenantId: 'acme', runId: 'run-1' },
+);
+
+const stored = await artifacts.get(descriptor.artifactId, { tenantId: 'acme' });
+```
+
+Use `InMemoryArtifactStore` for tests. For S3, R2, MinIO or another
+S3-compatible service, wrap its SDK with the small `S3ObjectClient` interface;
+Fevex does not ship an object-storage SDK:
+
+```ts
+const client: S3ObjectClient = {
+  async putObject({ key, body, contentType }) {
+    await s3.send(new PutObjectCommand({
+      Bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }));
+  },
+  async getObject({ key }) {
+    try {
+      const result = await s3.send(new GetObjectCommand({ Bucket, Key: key }));
+      return new Uint8Array(await result.Body!.transformToByteArray());
+    } catch (error) {
+      if ((error as { name?: string }).name === 'NoSuchKey') return null;
+      throw error;
+    }
+  },
+  async deleteObject({ key }) {
+    await s3.send(new DeleteObjectCommand({ Bucket, Key: key }));
+  },
+};
+
+const artifacts = new S3ArtifactStore({ client, prefix: 'fevex' });
+```
+
+The bucket should stay private. The host authorizes the actor and serves a
+short-lived signed URL or streams the bytes; do not expose bucket URLs to the
+model. This subpath is local-first: use the filesystem store for development and
+single-node deployments, and the S3-compatible store for multi-instance
+production.
+
+For a queryable metadata index, compose the byte store with a catalog:
+
+```ts
+import { CatalogedArtifactStore, FileSystemArtifactStore } from '@fevex/core/artifacts';
+import { createSQLiteArtifactCatalog } from '@fevex/sqlite';
+
+const catalog = createSQLiteArtifactCatalog({ filename: '.fevex/artifacts.db' });
+const artifacts = new CatalogedArtifactStore({
+  store: new FileSystemArtifactStore({ rootDir: '.fevex/artifacts' }),
+  catalog,
+});
+
+const records = await artifacts.list({ runId: 'run-1' }, { tenantId: 'acme' });
+await artifacts.deleteByRun('run-1', { tenantId: 'acme' });
+```
+
+`@fevex/postgres` exposes the same catalog contract with
+`createPostgresArtifactCatalog`. The catalog stores only metadata; bytes stay in
+the filesystem or object storage.
+
+Pass the store to `createFevex` to expose it to tools as `context.artifacts`:
+
+```ts
+const save = defineTool({
+  name: 'save_report',
+  async execute(_input, context) {
+    return context.artifacts!.put({
+      filename: 'report.txt',
+      mimeType: 'text/plain',
+      bytes: new TextEncoder().encode('report'),
+    });
+  },
+});
+
+createFevex({
+  models,
+  agents,
+  tools: [save],
+  artifacts,
+});
+```
+
+The runtime injects `runId`, `sessionId`, tenant and actor into every artifact
+call. Each successful `put` emits `artifact.created` with the descriptor before
+`tool.completed`; a tool that writes and then fails still leaves the event and
+the artifact available.
+
 ## Public Exports
 
 | Import | Purpose |
 | --- | --- |
 | `@fevex/core` | Common runtime, definitions and contracts |
 | `@fevex/core/agents` | Agent definitions |
+| `@fevex/core/artifacts` | Artifact descriptors, local stores and S3-compatible adapter |
 | `@fevex/core/channels` | Channel adapters and message handling |
 | `@fevex/core/knowledge` | Context providers, skills and memory contracts |
 | `@fevex/core/models` | Provider-neutral model contracts |

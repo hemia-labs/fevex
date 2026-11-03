@@ -72,3 +72,22 @@ index to filter and limit rows in SQL before decoding event payloads. An unknown
 cursor or one from another run raises `INVALID_CURSOR`. To read only the latest
 event, pass `{ order: 'desc', limit: 1 }`. Without a limit, existing full-log reads
 remain supported. No schema migration is needed for pagination.
+
+## Artifact metadata
+
+`createPostgresArtifactCatalog` stores artifact metadata in `fevex.artifacts`
+without the bytes:
+
+```ts
+import { createPostgresArtifactCatalog } from '@fevex/postgres';
+
+const catalog = createPostgresArtifactCatalog({
+  connectionString: process.env.DATABASE_URL!,
+});
+
+await catalog.migrate();
+```
+
+Compose it with an S3-compatible byte store using `CatalogedArtifactStore` from
+`@fevex/core/artifacts`. The catalog supports `list`, `get`, `delete` and
+`deleteByRun`, scoped by tenant, run, session and actor.
