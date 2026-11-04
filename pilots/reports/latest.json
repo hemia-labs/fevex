@@ -1,0 +1,166 @@
+{
+  "schemaVersion": "1",
+  "commit": "a8f5dac46dfaa7d016c630b0174217b68ac462e9",
+  "startedAt": "2026-11-03T21:28:21.746Z",
+  "endedAt": "2026-11-03T21:29:03.441Z",
+  "durationMs": 41694,
+  "source": {
+    "kind": "clean-tarball-consumer",
+    "workingTreeDirty": false,
+    "packages": [
+      {
+        "name": "@fevex/core",
+        "version": "0.1.0-alpha.6"
+      },
+      {
+        "name": "@fevex/openai",
+        "version": "0.1.0-alpha.6"
+      },
+      {
+        "name": "@fevex/deepseek",
+        "version": "0.1.0-alpha.6"
+      },
+      {
+        "name": "@fevex/sqlite",
+        "version": "0.1.0-alpha.5"
+      }
+    ]
+  },
+  "pilots": [
+    {
+      "pilot": "support-api",
+      "pass": true,
+      "steps": [
+        {
+          "name": "http.start",
+          "at": "2026-11-03T21:28:31.894Z",
+          "runId": "5af9a2da-9dd9-41ea-9366-65da353e3ba7",
+          "status": "running"
+        },
+        {
+          "name": "approval.requested",
+          "at": "2026-11-03T21:28:31.906Z",
+          "approvalId": "975eedc3-96a1-4f6a-9a1c-ff1fdb5ffe7b"
+        },
+        {
+          "name": "approval.resolved",
+          "at": "2026-11-03T21:28:31.918Z",
+          "status": "completed"
+        },
+        {
+          "name": "shutdown",
+          "at": "2026-11-03T21:28:32.128Z",
+          "timedOut": false
+        }
+      ],
+      "eventTypes": [
+        "run.started",
+        "model.started",
+        "model.completed",
+        "approval.requested",
+        "run.paused",
+        "run.resumed",
+        "approval.resolved",
+        "tool.started",
+        "tool.completed",
+        "model.started",
+        "model.output.delta",
+        "model.completed",
+        "run.completed"
+      ],
+      "runId": "5af9a2da-9dd9-41ea-9366-65da353e3ba7",
+      "approvalId": "975eedc3-96a1-4f6a-9a1c-ff1fdb5ffe7b",
+      "output": {
+        "status": "refunded"
+      }
+    },
+    {
+      "pilot": "research-workflow",
+      "pass": true,
+      "steps": [
+        {
+          "name": "workflow.start",
+          "at": "2026-11-03T21:28:32.205Z",
+          "runId": "4b7aac84-82f2-4d95-bd68-d9af10f1218c",
+          "status": "running"
+        },
+        {
+          "name": "workflow.paused",
+          "at": "2026-11-03T21:28:32.215Z",
+          "eventName": "publish-approval"
+        },
+        {
+          "name": "workflow.resumed",
+          "at": "2026-11-03T21:28:32.228Z",
+          "status": "completed"
+        },
+        {
+          "name": "evaluation.completed",
+          "at": "2026-11-03T21:28:32.229Z",
+          "cases": 1,
+          "failedScores": 0,
+          "averageScore": 1
+        },
+        {
+          "name": "shutdown",
+          "at": "2026-11-03T21:28:32.229Z",
+          "timedOut": false
+        }
+      ],
+      "eventTypes": [
+        "workflow.run.started",
+        "workflow.step.started",
+        "model.started",
+        "model.output.delta",
+        "model.completed",
+        "workflow.step.completed",
+        "workflow.wait.started",
+        "workflow.run.paused",
+        "workflow.run.resumed",
+        "workflow.wait.completed",
+        "workflow.run.completed"
+      ],
+      "runId": "4b7aac84-82f2-4d95-bd68-d9af10f1218c",
+      "output": {
+        "draft": "draft",
+        "approvedBy": "pilot-reviewer"
+      },
+      "evaluation": {
+        "cases": 1,
+        "failedScores": 0,
+        "averageScore": 1
+      }
+    }
+  ],
+  "recovery": {
+    "pilot": "crash-recovery",
+    "pass": true,
+    "runId": "872a4760-dc74-4558-97d2-d391c23e14b6",
+    "recoveredAfterMs": 9,
+    "eventTypes": [
+      "run.started",
+      "model.started",
+      "run.recovered",
+      "model.started",
+      "model.output.delta",
+      "model.completed",
+      "run.completed"
+    ],
+    "runStarts": 1,
+    "recoveredEvent": true,
+    "output": "recovered",
+    "ordered": true,
+    "shutdown": {
+      "timedOut": false,
+      "exportError": ""
+    }
+  },
+  "observations": [
+    "Official packages were installed from locally built tarballs; @fevex/sqlite is repository-only.",
+    "HTTP resume requires an authenticated actor supplied by the handler context.",
+    "Workflow event resume preserves the parent run and child agent history.",
+    "Crash recovery waits for the 30 second lease before acquiring the orphaned run.",
+    "Upgrade is a documented manual pilot step; this harness validates install, operation and crash recovery."
+  ],
+  "pass": true
+}
