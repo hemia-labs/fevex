@@ -7,7 +7,11 @@ import {
   type ToolProviderTool,
 } from '@fevex/core';
 
-export const FEVEX_MCP_PROTOCOL_VERSION = '2025-11-25';
+export const FEVEX_MCP_PROTOCOL_VERSION = '2026-07-28';
+
+const PROTOCOL_VERSION_META = 'io.modelcontextprotocol/protocolVersion';
+const CLIENT_INFO_META = 'io.modelcontextprotocol/clientInfo';
+const CLIENT_CAPABILITIES_META = 'io.modelcontextprotocol/clientCapabilities';
 
 export interface McpClientInfo {
   name: string;
@@ -35,12 +39,6 @@ interface JsonRpcRequest {
   params?: JsonObject;
 }
 
-interface JsonRpcNotification {
-  jsonrpc: '2.0';
-  method: string;
-  params?: JsonObject;
-}
-
 interface JsonRpcResponse {
   jsonrpc: '2.0';
   id?: number;
@@ -48,9 +46,24 @@ interface JsonRpcResponse {
   error?: { code?: number; message?: string; data?: unknown };
 }
 
-interface McpState {
-  protocolVersion: string;
-  sessionId?: string;
+interface McpDiscovery {
+  supportedVersions: string[];
+  capabilities: JsonObject;
+}
+
+class McpRemoteError extends IntegrationError {
+  constructor(
+    readonly rpcError: NonNullable<JsonRpcResponse['error']>,
+    readonly httpStatus?: number,
+  ) {
+    super('MCP_REMOTE_ERROR', 'remote', false, 'MCP server returned an error');
+  }
+}
+
+class McpHttpError extends IntegrationError {
+  constructor(readonly status: number, retryable: boolean, safeMessage: string) {
+    super('MCP_HTTP_ERROR', 'network', retryable, safeMessage);
+  }
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -61,6 +74,11 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   const endpoint = String(options.url);
   const fetchImpl = options.fetch ?? fetch;
   const requestedVersion = options.protocolVersion ?? FEVEX_MCP_PROTOCOL_VERSION;
+  if (requestedVersion !== FEVEX_MCP_PROTOCOL_VERSION) {
+    throw new TypeError(
+      `MCP protocolVersion must be "${FEVEX_MCP_PROTOCOL_VERSION}"; legacy handshake versions are not supported`,
+    );
+  }
   const clientInfo = options.clientInfo ?? { name: 'fevex', version: '0.1.0-alpha.1' };
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxPages = options.maxDiscoveryPages ?? 100;
@@ -80,15 +98,15 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     return headers;
   }
   let nextId = 1;
-  let state: McpState | undefined;
-  let initializing: Promise<McpState> | undefined;
+  let discovery: McpDiscovery | undefined;
+  let discovering: Promise<McpDiscovery> | undefined;
 
   const provider: ToolProvider = {
     kind: 'mcp',
 
     async listTools(context) {
       const headers = await connectionHeaders(context);
-      const connection = await ensureInitialized(context, headers);
+      await ensureDiscovered(context, headers);
       const tools: ToolProviderTool[] = [];
       let cursor: string | undefined;
       const cursors = new Set<string>();
@@ -97,7 +115,14 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
       let count = 0;
       do {
         if (++pages > maxPages) throw discoveryLimit();
-        const result = await request('tools/list', cursor ? { cursor } : {}, context, headers, connection, budget);
+        const result = await request(
+          'tools/list',
+          cursor ? { cursor } : {},
+          context,
+          headers,
+          budget,
+        );
+        assertCompleteResult(result, 'tools/list');
         if (!isRecord(result) || !Array.isArray(result.tools)) {
           throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tools/list result');
         }
@@ -123,8 +148,14 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
 
     async callTool(name, input, context) {
       const headers = await connectionHeaders(context);
-      const connection = await ensureInitialized(context, headers);
-      const result = await request('tools/call', { name, arguments: input }, context, headers, connection);
+      await ensureDiscovered(context, headers);
+      const result = await request(
+        'tools/call',
+        { name, arguments: input },
+        context,
+        headers,
+      );
+      assertCompleteResult(result, 'tools/call');
       if (!isRecord(result)) {
         throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tools/call result');
       }
@@ -137,41 +168,51 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     },
   };
 
-  async function ensureInitialized(context: ToolProviderContext | undefined, headers: Headers): Promise<McpState> {
-    if (state) return state;
-    initializing ??= (async () => {
-      const response = await send({
-        jsonrpc: '2.0',
-        id: nextId++,
-        method: 'initialize',
-        params: {
-          protocolVersion: requestedVersion,
-          capabilities: {},
-          clientInfo: clientInfo as unknown as JsonObject,
-        },
-      }, context, headers);
-      const result = response.result;
-      if (!isRecord(result) || typeof result.protocolVersion !== 'string') {
-        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid initialize result');
+  async function ensureDiscovered(
+    context: ToolProviderContext | undefined,
+    headers: Headers,
+  ): Promise<McpDiscovery> {
+    if (discovery) return discovery;
+    discovering ??= (async () => {
+      let response: JsonRpcResponse;
+      try {
+        response = await send({
+          jsonrpc: '2.0',
+          id: nextId++,
+          method: 'server/discover',
+          params: { _meta: requestMetadata() },
+        }, context, headers);
+      } catch (error) {
+        throw mapDiscoveryError(error);
       }
-      if (result.protocolVersion !== requestedVersion) {
-        throw integrationError('MCP_VERSION_UNSUPPORTED', 'validation', false, 'MCP protocol version is unsupported');
+      const result = response.result;
+      assertCompleteResult(result, 'server/discover');
+      if (!isRecord(result)) {
+        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid server/discover result');
+      }
+      const supportedVersions = Array.isArray(result.supportedVersions)
+        ? result.supportedVersions.filter((version): version is string => typeof version === 'string')
+        : [];
+      if (!supportedVersions.length) {
+        throw legacyServer();
+      }
+      if (!supportedVersions.includes(requestedVersion)) {
+        throw versionUnsupported(supportedVersions);
       }
       if (!isRecord(result.capabilities) || !isRecord(result.capabilities.tools)) {
         throw integrationError('MCP_CAPABILITY_UNSUPPORTED', 'validation', false, 'MCP server does not expose tools capability');
       }
-      const initialized: McpState = {
-        protocolVersion: result.protocolVersion,
-        ...(response.sessionId ? { sessionId: response.sessionId } : {}),
+      const found: McpDiscovery = {
+        supportedVersions,
+        capabilities: result.capabilities,
       };
-      await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, context, headers, initialized);
-      state = initialized;
-      return initialized;
+      discovery = found;
+      return found;
     })().catch((error) => {
-      initializing = undefined;
+      discovering = undefined;
       throw error;
     });
-    return initializing;
+    return discovering;
   }
 
   async function request(
@@ -179,34 +220,40 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     params: JsonObject,
     context: ToolProviderContext | undefined,
     headers: Headers,
-    connection: McpState,
     budget?: { remaining: number },
   ): Promise<unknown> {
     const response = await send({
       jsonrpc: '2.0',
       id: nextId++,
       method,
-      params,
-    }, context, headers, connection, budget);
+      params: { ...params, _meta: requestMetadata() },
+    }, context, headers, budget);
     return response.result;
   }
 
+  function requestMetadata(): JsonObject {
+    return {
+      [PROTOCOL_VERSION_META]: requestedVersion,
+      [CLIENT_INFO_META]: clientInfo as unknown as JsonObject,
+      [CLIENT_CAPABILITIES_META]: {},
+    };
+  }
+
   async function send(
-    message: JsonRpcRequest | JsonRpcNotification,
+    message: JsonRpcRequest,
     context: ToolProviderContext | undefined,
     baseHeaders: Headers,
-    connection?: McpState,
     budget = { remaining: maxBytes },
-  ): Promise<JsonRpcResponse & { sessionId?: string }> {
+  ): Promise<JsonRpcResponse> {
     const signal = timeoutSignal(context?.signal, requestTimeoutMs);
     try {
       const headers = new Headers(baseHeaders);
       headers.set('accept', 'application/json, text/event-stream');
       headers.set('content-type', 'application/json');
-      if (connection?.protocolVersion) {
-        headers.set('mcp-protocol-version', connection.protocolVersion);
-      }
-      if (connection?.sessionId) headers.set('mcp-session-id', connection.sessionId);
+      headers.set('mcp-protocol-version', requestedVersion);
+      headers.set('mcp-method', message.method);
+      const name = requestName(message);
+      if (name !== undefined) headers.set('mcp-name', encodeHeaderValue(name));
 
       const response = await fetchImpl(endpoint, {
         method: 'POST',
@@ -215,33 +262,21 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
         signal: signal.signal,
       });
       if (!response.ok) {
-        if (response.status === 404 && connection?.sessionId && state === connection) {
-          // A late response from an old session must not invalidate its replacement.
-          state = undefined;
-          initializing = undefined;
+        if (response.status === 401 || response.status === 403) {
+          await response.body?.cancel();
+          throw integrationError('MCP_AUTH_REQUIRED', 'auth', false, 'MCP authentication is required');
         }
-        await response.body?.cancel();
-        throw integrationError(
-          response.status === 401 || response.status === 403 ? 'MCP_AUTH_REQUIRED' : 'MCP_HTTP_ERROR',
-          response.status === 401 || response.status === 403 ? 'auth' : 'network',
+        const rpc = await readErrorResponse(response, budget);
+        if (rpc?.error) throw new McpRemoteError(rpc.error, response.status);
+        throw new McpHttpError(
+          response.status,
           response.status >= 500,
-          'MCP server request failed',
+          `MCP server request failed with HTTP ${response.status}`,
         );
       }
-      if (!('id' in message)) {
-        await response.body?.cancel();
-        return { jsonrpc: '2.0', result: undefined };
-      }
       const rpc = await readJsonRpcResponse(response, message.id, budget);
-      if (rpc.error) {
-        throw integrationError('MCP_REMOTE_ERROR', 'remote', false, 'MCP server returned an error');
-      }
-      return {
-        ...rpc,
-        ...(response.headers.get('mcp-session-id')
-          ? { sessionId: response.headers.get('mcp-session-id')! }
-          : {}),
-      };
+      if (rpc.error) throw new McpRemoteError(rpc.error, response.status);
+      return rpc;
     } catch (error) {
       if (error instanceof IntegrationError) throw error;
       if (signal.signal.aborted) {
@@ -253,7 +288,87 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     }
   }
 
+  function mapDiscoveryError(error: unknown): unknown {
+    if (error instanceof McpRemoteError) {
+      if (error.rpcError.code === -32022) {
+        return versionUnsupported(supportedFromError(error.rpcError.data));
+      }
+      if (error.rpcError.code === -32601) return legacyServer();
+    }
+    if (
+      error instanceof McpHttpError
+      && (error.status === 400 || error.status === 404 || error.status === 405)
+    ) {
+      return legacyServer();
+    }
+    return error;
+  }
+
+  function versionUnsupported(supported: readonly string[]): IntegrationError {
+    const detail = supported.length ? `; supported versions: ${supported.join(', ')}` : '';
+    return integrationError(
+      'MCP_VERSION_UNSUPPORTED',
+      'validation',
+      false,
+      `MCP server does not support protocol ${requestedVersion}${detail}`,
+    );
+  }
+
+  function legacyServer(): IntegrationError {
+    return integrationError(
+      'MCP_VERSION_UNSUPPORTED',
+      'validation',
+      false,
+      `MCP server does not implement server/discover for protocol ${FEVEX_MCP_PROTOCOL_VERSION}; upgrade it or use a compatible MCP client`,
+    );
+  }
+
   return provider;
+}
+
+function requestName(message: JsonRpcRequest): string | undefined {
+  if (!isRecord(message.params)) return undefined;
+  if (message.method === 'tools/call' && typeof message.params.name === 'string') {
+    return message.params.name;
+  }
+  if (message.method === 'resources/read' && typeof message.params.uri === 'string') {
+    return message.params.uri;
+  }
+  if (message.method === 'prompts/get' && typeof message.params.name === 'string') {
+    return message.params.name;
+  }
+  return undefined;
+}
+
+/** Encode an MCP header value per the Streamable HTTP value-encoding rules. */
+function encodeHeaderValue(value: string): string {
+  const plain = /^[\x20-\x7E\t]*$/.test(value)
+    && value.trim() === value
+    && !(value.startsWith('=?base64?') && value.endsWith('?='));
+  if (plain) return value;
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `=?base64?${btoa(binary)}?=`;
+}
+
+function supportedFromError(data: unknown): string[] {
+  if (!isRecord(data) || !Array.isArray(data.supported)) return [];
+  return data.supported.filter((value): value is string => typeof value === 'string');
+}
+
+function assertCompleteResult(result: unknown, method: string): void {
+  if (!isRecord(result)) return;
+  if (result.resultType === undefined || result.resultType === 'complete') return;
+  if (result.resultType === 'input_required') {
+    throw integrationError(
+      'MCP_INPUT_REQUIRED',
+      'validation',
+      false,
+      `MCP ${method} returned an input_required result; multi-round-trip requests are not supported yet`,
+    );
+  }
+  throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, `MCP ${method} returned an unknown result type`);
 }
 
 async function resolveHeaders(
@@ -281,6 +396,24 @@ async function readJsonRpcResponse(response: Response, id: number, budget: { rem
   const rpc = parseJsonRpc(text);
   if (rpc.id !== id) throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP response ID does not match request');
   return rpc;
+}
+
+async function readErrorResponse(
+  response: Response,
+  budget: { remaining: number },
+): Promise<JsonRpcResponse | undefined> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  try {
+    let text = '';
+    for await (const chunk of readText(response, budget)) text += chunk;
+    return parseJsonRpc(text);
+  } catch {
+    return undefined;
+  }
 }
 
 function discoveryLimit(): IntegrationError {

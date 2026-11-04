@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { IntegrationError } from '@fevex/core';
 import { testToolProvider } from '@fevex/core/testing';
-import { createMcpToolProvider } from './index';
+import { createMcpToolProvider, FEVEX_MCP_PROTOCOL_VERSION } from './index';
+
+const PROTOCOL = FEVEX_MCP_PROTOCOL_VERSION;
+const VERSION_META = 'io.modelcontextprotocol/protocolVersion';
+const CLIENT_INFO_META = 'io.modelcontextprotocol/clientInfo';
+const CAPABILITIES_META = 'io.modelcontextprotocol/clientCapabilities';
 
 function json(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -21,42 +26,59 @@ function sse(chunks: string[]) {
   });
 }
 
+function discovery(overrides: Record<string, unknown> = {}) {
+  return {
+    resultType: 'complete',
+    supportedVersions: [PROTOCOL],
+    capabilities: { tools: {} },
+    _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'test', version: '1' } },
+    ...overrides,
+  };
+}
+
+function server(
+  handle: (body: any, headers: Headers) => Response | Promise<Response>,
+  discover = discovery(),
+) {
+  return async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    const headers = new Headers(init?.headers);
+    if (body.method === 'server/discover') {
+      return json({ jsonrpc: '2.0', id: body.id, result: discover });
+    }
+    return handle(body, headers);
+  };
+}
+
 describe('createMcpToolProvider', () => {
-  test('negotiates tools, preserves session header and calls tools', async () => {
-    const seenSessions: (string | null)[] = [];
+  test('discovers once, sends per-request metadata and standard headers, and calls tools', async () => {
+    const requests: Array<{ method: string; body: any; headers: Headers }> = [];
     const provider = createMcpToolProvider({
       url: 'https://mcp.test/mcp',
+      clientInfo: { name: 'pilot', version: '1.0.0' },
       fetch: async (_url, init) => {
-        const headers = new Headers(init?.headers);
-        seenSessions.push(headers.get('mcp-session-id'));
         const body = JSON.parse(String(init?.body));
-        if (body.method === 'initialize') {
-          return json({
-            jsonrpc: '2.0',
-            id: body.id,
-            result: {
-              protocolVersion: '2025-11-25',
-              capabilities: { tools: {} },
-              serverInfo: { name: 'test', version: '1' },
-            },
-          }, { headers: { 'mcp-session-id': 'session-1' } });
-        }
-        if (body.method === 'notifications/initialized') {
-          return new Response(null, { status: 202 });
+        const headers = new Headers(init?.headers);
+        requests.push({ method: body.method, body, headers });
+        if (body.method === 'server/discover') {
+          return json({ jsonrpc: '2.0', id: body.id, result: discovery() });
         }
         if (body.method === 'tools/list') {
           return json({
             jsonrpc: '2.0',
             id: body.id,
             result: {
+              resultType: 'complete',
               tools: [{ name: 'lookup', description: 'Lookup.', inputSchema: { type: 'object' } }],
+              ttlMs: 60_000,
+              cacheScope: 'private',
             },
           });
         }
         return json({
           jsonrpc: '2.0',
           id: body.id,
-          result: { structuredContent: { answer: 'ok' } },
+          result: { resultType: 'complete', structuredContent: { answer: 'ok' } },
         });
       },
     });
@@ -66,53 +88,107 @@ describe('createMcpToolProvider', () => {
       allowedTool: 'lookup',
       disallowedTool: 'delete',
     })).resolves.toBeUndefined();
-    expect(seenSessions).toEqual([null, 'session-1', 'session-1', 'session-1']);
+
+    expect(requests.map(({ method }) => method)).toEqual([
+      'server/discover',
+      'tools/list',
+      'tools/call',
+    ]);
+    for (const request of requests) {
+      expect(request.body.params._meta).toMatchObject({
+        [VERSION_META]: PROTOCOL,
+        [CLIENT_INFO_META]: { name: 'pilot', version: '1.0.0' },
+        [CAPABILITIES_META]: {},
+      });
+      expect(request.headers.get('mcp-protocol-version')).toBe(PROTOCOL);
+      expect(request.headers.get('mcp-method')).toBe(request.method);
+      expect(request.headers.get('mcp-session-id')).toBeNull();
+    }
+    expect(requests[2]?.headers.get('mcp-name')).toBe('lookup');
+    expect(requests[2]?.body.params).toMatchObject({
+      name: 'lookup',
+      arguments: { query: 'value' },
+    });
   });
 
   test('parses fragmented SSE JSON-RPC responses', async () => {
     const provider = createMcpToolProvider({
       url: 'https://mcp.test/mcp',
-      fetch: async (_url, init) => {
-        const body = JSON.parse(String(init?.body));
-        if (body.method === 'initialize') {
-          return json({
-            jsonrpc: '2.0',
-            id: body.id,
-            result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
-          });
-        }
-        if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
-        return sse([
-          'id: 1\r\ndata: {"jsonrpc":"2.0",',
-          `"id":${body.id},"result":{"structuredContent":{"answer":"ok"}}}\r\n\r\n`,
-        ]);
-      },
+      fetch: server((body) => sse([
+        'id: 1\r\ndata: {"jsonrpc":"2.0",',
+        `"id":${body.id},"result":{"resultType":"complete","structuredContent":{"answer":"ok"}}}\r\n\r\n`,
+      ])),
     });
 
     await expect(provider.callTool('lookup', {}, {})).resolves.toEqual({ answer: 'ok' });
   });
 
-  test('classifies incompatible versions, missing capabilities and tool errors safely', async () => {
+  test('rejects unsupported protocol versions with actionable supported versions', async () => {
     const incompatible = createMcpToolProvider({
       url: 'https://mcp.test/mcp',
-      fetch: async (_url, init) => json({
-        jsonrpc: '2.0',
-        id: JSON.parse(String(init?.body)).id,
-        result: { protocolVersion: '2024-11-05', capabilities: { tools: {} } },
-      }),
+      fetch: server(() => json({ jsonrpc: '2.0', error: { code: -32603, message: 'unreachable' } }), discovery({
+        supportedVersions: ['2025-11-25'],
+      })),
     });
     await expect(incompatible.listTools()).rejects.toMatchObject({
       code: 'MCP_VERSION_UNSUPPORTED',
-      safeMessage: 'MCP protocol version is unsupported',
+      safeMessage: expect.stringContaining('2025-11-25'),
     });
 
+    const versionError = createMcpToolProvider({
+      url: 'https://mcp.test/mcp',
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: {
+            code: -32022,
+            message: 'Unsupported protocol version',
+            data: { supported: ['2025-11-25'], requested: PROTOCOL },
+          },
+        }, { status: 400 });
+      },
+    });
+    await expect(versionError.listTools()).rejects.toMatchObject({
+      code: 'MCP_VERSION_UNSUPPORTED',
+      safeMessage: expect.stringContaining('2025-11-25'),
+    });
+  });
+
+  test('fails clearly for legacy servers without server/discover', async () => {
+    const missing = createMcpToolProvider({
+      url: 'https://mcp.test/mcp',
+      fetch: async () => new Response(null, { status: 404 }),
+    });
+    await expect(missing.listTools()).rejects.toMatchObject({
+      code: 'MCP_VERSION_UNSUPPORTED',
+      safeMessage: expect.stringContaining('server/discover'),
+    });
+
+    const methodNotFound = createMcpToolProvider({
+      url: 'https://mcp.test/mcp',
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: { code: -32601, message: 'Method not found' },
+        });
+      },
+    });
+    await expect(methodNotFound.listTools()).rejects.toMatchObject({
+      code: 'MCP_VERSION_UNSUPPORTED',
+      safeMessage: expect.stringContaining(PROTOCOL),
+    });
+  });
+
+  test('rejects missing tools capability and classifies tool errors safely', async () => {
     const noTools = createMcpToolProvider({
       url: 'https://mcp.test/mcp',
-      fetch: async (_url, init) => json({
-        jsonrpc: '2.0',
-        id: JSON.parse(String(init?.body)).id,
-        result: { protocolVersion: '2025-11-25', capabilities: {} },
-      }),
+      fetch: server(() => json({ jsonrpc: '2.0', error: { code: -32603, message: 'unreachable' } }), discovery({
+        capabilities: {},
+      })),
     });
     await expect(noTools.listTools()).rejects.toMatchObject({
       code: 'MCP_CAPABILITY_UNSUPPORTED',
@@ -120,229 +196,162 @@ describe('createMcpToolProvider', () => {
 
     const erroring = createMcpToolProvider({
       url: 'https://mcp.test/mcp',
-      fetch: async (_url, init) => {
-        const body = JSON.parse(String(init?.body));
-        if (body.method === 'initialize') {
-          return json({
-            jsonrpc: '2.0',
-            id: body.id,
-            result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
-          });
-        }
-        if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
-        return json({
-          jsonrpc: '2.0',
-          id: body.id,
-          result: { isError: true, content: [{ type: 'text', text: 'secret body' }] },
-        });
-      },
+      fetch: server((body) => json({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: { resultType: 'complete', isError: true, content: [{ type: 'text', text: 'secret body' }] },
+      })),
     });
     await expect(erroring.callTool('lookup', {}, {})).rejects.toBeInstanceOf(IntegrationError);
     await expect(erroring.callTool('lookup', {}, {})).rejects.toMatchObject({
       safeMessage: 'MCP tool returned an error',
     });
   });
-});
 
-function server(handle: (body: any, headers: Headers) => Response | Promise<Response>) {
-  return async (_url: string | URL | Request, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.method === 'initialize') return json({ jsonrpc: '2.0', id: body.id,
-      result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
-    }, { headers: { 'mcp-session-id': 'session' } });
-    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
-    return handle(body, new Headers(init?.headers));
-  };
-}
-
-for (const stage of ['initialize', 'notifications/initialized', 'tools/list']) {
-  test(`recovers on the next call after ${stage} fails`, async () => {
+  test('retries discovery after a network failure and caches success', async () => {
+    let discoveries = 0;
     let failed = false;
-    let initializations = 0;
-    const base = server((body) => json({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'lookup' }] } }));
-    const provider = createMcpToolProvider({ url: 'https://mcp.test', fetch: async (url, init) => {
-      const body = JSON.parse(String(init?.body));
-      if (body.method === 'initialize') initializations++;
-      if (body.method === stage && !failed) { failed = true; throw new Error('offline'); }
-      return base(url, init);
-    } });
-    await expect(provider.listTools()).rejects.toMatchObject({ code: 'MCP_NETWORK_ERROR' });
-    await expect(provider.listTools()).resolves.toEqual([{ name: 'lookup' }]);
-    expect(initializations).toBe(stage === 'tools/list' ? 1 : 2);
-  });
-}
-
-for (const method of ['tools/list', 'tools/call']) {
-  test(`reinitializes after an expired session on ${method} without replaying the failed request`, async () => {
-    let initializations = 0;
-    let expired = false;
-    const requests: Array<{ method: string; session: string | null }> = [];
     const provider = createMcpToolProvider({
       url: 'https://mcp.test',
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body));
-        const session = new Headers(init?.headers).get('mcp-session-id');
-        requests.push({ method: body.method, session });
-        if (body.method === 'initialize') {
-          initializations++;
-          return json({ jsonrpc: '2.0', id: body.id,
-            result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
-          }, { headers: { 'mcp-session-id': `session-${initializations}` } });
+        if (body.method === 'server/discover') {
+          discoveries++;
+          if (!failed) {
+            failed = true;
+            throw new Error('offline');
+          }
+          return json({ jsonrpc: '2.0', id: body.id, result: discovery() });
         }
-        if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
-        if (expired && session === 'session-1') return new Response(null, { status: 404 });
-        return json({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'lookup' }] } });
+        return json({ jsonrpc: '2.0', id: body.id, result: { resultType: 'complete', tools: [{ name: 'lookup' }] } });
       },
     });
-
-    await provider.listTools();
-    expired = true;
-    const beforeFailure = requests.length;
-    await expect(method === 'tools/list' ? provider.listTools() : provider.callTool('lookup', {}, {}))
-      .rejects.toMatchObject({ code: 'MCP_HTTP_ERROR' });
-    expect(requests.slice(beforeFailure)).toEqual([{ method, session: 'session-1' }]);
-    expect(initializations).toBe(1);
-
-    await expect(Promise.all([provider.listTools(), provider.listTools()]))
-      .resolves.toEqual([[{ name: 'lookup' }], [{ name: 'lookup' }]]);
-    expect(initializations).toBe(2);
-    expect(requests.slice(beforeFailure + 1)).toEqual([
-      { method: 'initialize', session: null },
-      { method: 'notifications/initialized', session: 'session-2' },
-      { method: 'tools/list', session: 'session-2' },
-      { method: 'tools/list', session: 'session-2' },
-    ]);
+    await expect(provider.listTools()).rejects.toMatchObject({ code: 'MCP_NETWORK_ERROR' });
+    await expect(provider.listTools()).resolves.toEqual([{ name: 'lookup' }]);
+    await expect(provider.listTools()).resolves.toEqual([{ name: 'lookup' }]);
+    expect(discoveries).toBe(2);
   });
-}
 
-test('a late 404 from an old session does not invalidate its replacement', async () => {
-  let initializations = 0;
-  let expired = false;
-  let release!: () => void;
-  let entered!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const started = new Promise<void>((resolve) => { entered = resolve; });
-  const provider = createMcpToolProvider({
-    url: 'https://mcp.test',
-    fetch: async (_url, init) => {
-      const body = JSON.parse(String(init?.body));
-      if (body.method === 'initialize') {
-        initializations++;
-        return json({ jsonrpc: '2.0', id: body.id,
-          result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
-        }, { headers: { 'mcp-session-id': `session-${initializations}` } });
-      }
-      if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
-      if (body.method === 'tools/call') {
-        entered();
-        await gate;
-        return new Response(null, { status: 404 });
-      }
-      if (expired && new Headers(init?.headers).get('mcp-session-id') === 'session-1') {
-        return new Response(null, { status: 404 });
-      }
-      return json({ jsonrpc: '2.0', id: body.id, result: { tools: [] } });
-    },
-  });
-  await provider.listTools();
-  const lateFailure = Promise.resolve(provider.callTool('lookup', {}, {})).catch((error) => error);
-  await started;
-  try {
-    expired = true;
-    await expect(provider.listTools()).rejects.toMatchObject({ code: 'MCP_HTTP_ERROR' });
-    await expect(provider.listTools()).resolves.toEqual([]);
-  } finally {
-    release();
-    await expect(lateFailure).resolves.toMatchObject({ code: 'MCP_HTTP_ERROR' });
-  }
-  await expect(provider.listTools()).resolves.toEqual([]);
-  expect(initializations).toBe(2);
-});
-
-test('does not publish a session before the initialized notification completes', async () => {
-  let release!: () => void;
-  let entered!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const started = new Promise<void>((resolve) => { entered = resolve; });
-  let lists = 0;
-  let initializations = 0;
-  const base = server((body) => {
-    lists++;
-    return json({ jsonrpc: '2.0', id: body.id, result: { tools: [] } });
-  });
-  const provider = createMcpToolProvider({ url: 'https://mcp.test', fetch: async (url, init) => {
-    const body = JSON.parse(String(init?.body));
-    if (body.method === 'initialize') initializations++;
-    if (body.method === 'notifications/initialized') { entered(); await gate; }
-    return base(url, init);
-  } });
-  const first = provider.listTools();
-  await started;
-  const second = provider.listTools();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(lists).toBe(0);
-  release();
-  await Promise.all([first, second]);
-  expect(initializations).toBe(1);
-  expect(lists).toBe(2);
-});
-
-test('rejects identity changes before sending a session or executing a tool', async () => {
-  let calls = 0;
-  const provider = createMcpToolProvider({ url: 'https://mcp.test',
-    headers: (ctx) => ({ authorization: String(ctx?.runId) }),
-    fetch: server((body, headers) => {
-      calls++;
-      expect(headers.get('authorization')).toBe('alice');
-      return json({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'alice-tool' }] } });
-    }),
-  });
-  await provider.listTools({ runId: 'alice' });
-  await expect(provider.listTools({ runId: 'bob' })).rejects.toMatchObject({ code: 'MCP_IDENTITY_CHANGED' });
-  await expect(provider.callTool('alice-tool', {}, { runId: 'bob' })).rejects.toMatchObject({ code: 'MCP_IDENTITY_CHANGED' });
-  expect(calls).toBe(1);
-});
-
-for (const limit of ['pages', 'tools', 'bytes', 'cursor', 'sse'] as const) {
-  test(`bounds discovery ${limit} and can discover again after failure`, async () => {
-    let bad = true;
-    let pages = 0;
-    let cancelled = false;
-    const provider = createMcpToolProvider({ url: 'https://mcp.test',
-      maxDiscoveryPages: 2, maxDiscoveryTools: 2, maxDiscoveryBytes: 256,
-      fetch: server((body) => {
-        pages++;
-        if (bad && limit === 'sse') return new Response(new ReadableStream({
-          start(controller) { controller.enqueue(new TextEncoder().encode('data: ' + 'x'.repeat(257))); },
-          cancel() { cancelled = true; },
-        }), { headers: { 'content-type': 'text/event-stream' } });
-        return json({ jsonrpc: '2.0', id: body.id, result: bad ? {
-          tools: limit === 'tools' ? Array.from({ length: 3 }, () => ({ name: 'a' }))
-            : limit === 'bytes' ? [{ name: 'x'.repeat(257) }] : [],
-          ...(limit === 'pages' ? { nextCursor: String(pages) } : {}),
-          ...(limit === 'cursor' ? { nextCursor: 'repeat' } : {}),
-        } : { tools: [{ name: 'ok' }] } });
+  test('rejects identity changes before sending a request', async () => {
+    let calls = 0;
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      headers: (context) => ({ authorization: String(context?.runId) }),
+      fetch: server((body, headers) => {
+        calls++;
+        expect(headers.get('authorization')).toBe('alice');
+        return json({ jsonrpc: '2.0', id: body.id, result: { resultType: 'complete', tools: [{ name: 'alice-tool' }] } });
       }),
     });
-    await expect(provider.listTools()).rejects.toMatchObject({ code: limit === 'cursor' ? 'MCP_CURSOR_REPEATED' : 'MCP_DISCOVERY_LIMIT' });
-    expect(pages).toBeLessThanOrEqual(2);
-    if (limit === 'sse') expect(cancelled).toBe(true);
-    bad = false;
-    await expect(provider.listTools()).resolves.toEqual([{ name: 'ok' }]);
+    await provider.listTools({ runId: 'alice' });
+    await expect(provider.listTools({ runId: 'bob' })).rejects.toMatchObject({ code: 'MCP_IDENTITY_CHANGED' });
+    await expect(provider.callTool('alice-tool', {}, { runId: 'bob' })).rejects.toMatchObject({ code: 'MCP_IDENTITY_CHANGED' });
+    expect(calls).toBe(1);
   });
-}
 
-test('counts discovery bytes across pages and rejects invalid limits', async () => {
-  let pages = 0;
-  const provider = createMcpToolProvider({ url: 'https://mcp.test', maxDiscoveryBytes: 256,
-    fetch: server((body) => {
-      pages++;
-      return json({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'x'.repeat(60) }], nextCursor: String(pages) } });
-    }),
+  test('rejects input_required results until MRTR support is added', async () => {
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test/mcp',
+      fetch: server((body) => json({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: { resultType: 'input_required', inputRequests: [] },
+      })),
+    });
+    await expect(provider.callTool('lookup', {}, {})).rejects.toMatchObject({
+      code: 'MCP_INPUT_REQUIRED',
+    });
   });
-  await expect(provider.listTools()).rejects.toMatchObject({ code: 'MCP_DISCOVERY_LIMIT' });
-  expect(pages).toBe(2);
-  for (const value of [0, -1, NaN, Infinity, 1.5]) {
-    expect(() => createMcpToolProvider({ url: 'https://mcp.test', maxDiscoveryPages: value })).toThrow(TypeError);
+
+  test('base64-encodes unsafe Mcp-Name values', async () => {
+    let nameHeader = '';
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      fetch: server((body, headers) => {
+        nameHeader = headers.get('mcp-name') ?? '';
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: { resultType: 'complete', structuredContent: { ok: true } },
+        });
+      }),
+    });
+    await provider.callTool('café tool', {}, {});
+    expect(nameHeader.startsWith('=?base64?')).toBe(true);
+    expect(nameHeader.endsWith('?=')).toBe(true);
+    const decoded = atob(nameHeader.slice('=?base64?'.length, -2));
+    expect(new TextDecoder().decode(Uint8Array.from(decoded, (character) => character.charCodeAt(0))))
+      .toBe('café tool');
+  });
+
+  test('rejects legacy protocolVersion overrides', () => {
+    expect(() => createMcpToolProvider({
+      url: 'https://mcp.test',
+      protocolVersion: '2025-11-25',
+    })).toThrow('legacy handshake versions are not supported');
+  });
+
+  for (const limit of ['pages', 'tools', 'bytes', 'cursor', 'sse'] as const) {
+    test(`bounds discovery ${limit} and can discover again after failure`, async () => {
+      let bad = true;
+      let pages = 0;
+      let cancelled = false;
+      const provider = createMcpToolProvider({
+        url: 'https://mcp.test',
+        maxDiscoveryPages: 2,
+        maxDiscoveryTools: 2,
+        maxDiscoveryBytes: 1_024,
+        fetch: server((body) => {
+          pages++;
+          if (bad && limit === 'sse') return new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new TextEncoder().encode('data: ' + 'x'.repeat(1_025))); },
+            cancel() { cancelled = true; },
+          }), { headers: { 'content-type': 'text/event-stream' } });
+          return json({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: bad ? {
+              resultType: 'complete',
+              tools: limit === 'tools' ? Array.from({ length: 3 }, () => ({ name: 'a' }))
+                : limit === 'bytes' ? [{ name: 'x'.repeat(1_025) }] : [],
+              ...(limit === 'pages' ? { nextCursor: String(pages) } : {}),
+              ...(limit === 'cursor' ? { nextCursor: 'repeat' } : {}),
+            } : { resultType: 'complete', tools: [{ name: 'ok' }] },
+          });
+        }),
+      });
+      await expect(provider.listTools()).rejects.toMatchObject({
+        code: limit === 'cursor' ? 'MCP_CURSOR_REPEATED' : 'MCP_DISCOVERY_LIMIT',
+      });
+      expect(pages).toBeLessThanOrEqual(2);
+      if (limit === 'sse') expect(cancelled).toBe(true);
+      bad = false;
+      await expect(provider.listTools()).resolves.toEqual([{ name: 'ok' }]);
+    });
   }
+
+  test('counts discovery bytes across pages and rejects invalid limits', async () => {
+    let pages = 0;
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      maxDiscoveryBytes: 1_024,
+      fetch: server((body) => {
+        pages++;
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            resultType: 'complete',
+            tools: [{ name: 'x'.repeat(600) }],
+            nextCursor: String(pages),
+          },
+        });
+      }),
+    });
+    await expect(provider.listTools()).rejects.toMatchObject({ code: 'MCP_DISCOVERY_LIMIT' });
+    expect(pages).toBe(2);
+    for (const value of [0, -1, NaN, Infinity, 1.5]) {
+      expect(() => createMcpToolProvider({ url: 'https://mcp.test', maxDiscoveryPages: value })).toThrow(TypeError);
+    }
+  });
 });

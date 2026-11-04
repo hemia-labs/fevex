@@ -133,6 +133,8 @@ jobs:
       - run: bun run --cwd examples/nest-api typecheck
       - run: bun run --cwd examples/nest-api build
       - run: bun run --cwd examples/nest-api test
+      - run: bun run --cwd examples/nest-mcp typecheck
+      - run: bun run --cwd examples/nest-mcp test
       - run: bun x tsc -p examples/starter/tsconfig.json
       - run: bun run demo:starter
       - run: bun x tsc -p examples/channel-elicitation/tsconfig.json

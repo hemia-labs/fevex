@@ -17,7 +17,7 @@ requests through the Fevex agent loop.
 
 | Agent | Connection | What it demonstrates |
 | --- | --- | --- |
-| `researcher` | MCP `docs__search` | Initialization, tool discovery and searching the repository's public Markdown documentation with source URLs. |
+| `researcher` | MCP `docs__search` | `server/discover`, tool discovery and searching the repository's public Markdown documentation with source URLs. |
 | `support` | OpenAPI `accounts__getAccount` | Turning an OpenAPI 3.1 operation into a tool, encoding a path parameter and validating the JSON response. |
 
 The checks confirm one documentation search and one account request, tool results
@@ -53,7 +53,8 @@ allowlists, risk, approvals and policies remain local configuration. These
 examples deliberately expose read operations; add write tools only with the
 appropriate local controls.
 
-The fixture implements only the MCP methods needed here and returns one
-synthetic account. For a complete server backed by the installed MCP SDK, see
-[`examples/nest-mcp`](../nest-mcp/). Neither Fevex adapter requires that SDK in
-the core runtime.
+The fixture implements only the stateless MCP `2026-07-28` methods needed here
+(`server/discover`, `tools/list`, `tools/call`) and returns one synthetic account.
+Servers that only implement the legacy `2025-11-25` handshake are rejected by the
+adapter with `MCP_VERSION_UNSUPPORTED`. For a standalone Nest server implementing
+the same stateless subset, see [`examples/nest-mcp`](../nest-mcp/).

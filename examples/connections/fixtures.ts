@@ -90,19 +90,28 @@ export function createFixtureService(documentsPath: string) {
     }
     const reply = (result: unknown) => Response.json({ jsonrpc: '2.0', id: message.id, result });
     switch (message.method) {
-      case 'initialize':
+      case 'server/discover':
         return reply({
-          protocolVersion: FEVEX_MCP_PROTOCOL_VERSION,
+          resultType: 'complete',
+          supportedVersions: [FEVEX_MCP_PROTOCOL_VERSION],
           capabilities: { tools: {} },
-          serverInfo: { name: 'fevex-docs-fixture', version: '1.0.0' },
+          _meta: {
+            'io.modelcontextprotocol/serverInfo': {
+              name: 'fevex-docs-fixture',
+              version: '1.0.0',
+            },
+          },
         });
-      case 'notifications/initialized':
-        return new Response(null, { status: 202 });
       case 'tools/list':
-        return reply({ tools: [
-          { name: 'search', description: 'Search Fevex documentation and return sources.', inputSchema: searchSchema },
-          { name: 'deleteDocs', description: 'Example write tool excluded by the host.', inputSchema: { type: 'object' } },
-        ] });
+        return reply({
+          resultType: 'complete',
+          tools: [
+            { name: 'search', description: 'Search Fevex documentation and return sources.', inputSchema: searchSchema },
+            { name: 'deleteDocs', description: 'Example write tool excluded by the host.', inputSchema: { type: 'object' } },
+          ],
+          ttlMs: 0,
+          cacheScope: 'private',
+        });
       case 'tools/call': {
         if (message.params?.name !== 'search') break;
         let query: string;
@@ -116,6 +125,7 @@ export function createFixtureService(documentsPath: string) {
           .filter((section) => section.toLowerCase().includes(query.toLowerCase()) && section.length <= 6000)
           .map((excerpt) => ({ title, url, excerpt }))).slice(0, 3);
         return reply({
+          resultType: 'complete',
           content: [{ type: 'text', text: JSON.stringify({ matches }) }],
           structuredContent: { matches },
         });
