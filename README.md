@@ -103,7 +103,9 @@ are documented in
 
 Remote tools are registered as explicit connections. Fevex keeps the local
 allowlist, timeout, approvals and policies; the provider only handles remote
-discovery and calls.
+discovery and calls. The MCP adapter targets stateless protocol `2026-07-28`:
+it uses `server/discover` and per-request `_meta`, and rejects legacy
+`2025-11-25` servers with `MCP_VERSION_UNSUPPORTED`.
 
 ```ts
 import { createFevex, defineAgent, defineConnection } from '@fevex/core';
