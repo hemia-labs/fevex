@@ -6,3 +6,6 @@ export const LEASE_RENEW_MS = 10_000;
 
 /** Reserved name of the internal elicitation tool exposed to the model. */
 export const ELICIT_TOOL_NAME = 'fevex__elicit';
+
+/** Reserved name of the internal progressive skill loader exposed to the model. */
+export const LOAD_SKILL_TOOL_NAME = 'fevex__load_skill';

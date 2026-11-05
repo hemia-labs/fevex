@@ -17,7 +17,7 @@ domains it uses, and each subpath is a small export barrel.
 | `@fevex/core/teams` | Multiagent team definitions |
 | `@fevex/core/runtime` | Runs, sessions and store contracts |
 | `@fevex/core/channels` | Channel adapters and message handling |
-| `@fevex/core/knowledge` | Context providers, skills and memory contracts |
+| `@fevex/core/knowledge` | Context providers, code-first and `SKILL.md` skills, `AGENTS.md` and memory contracts |
 | `@fevex/core/sandbox` | Sandbox contract and local development sandbox |
 | `@fevex/core/policies` | Authorization policy contracts |
 | `@fevex/core/observability` | Trace, bounded export queue, redaction and cost contracts |

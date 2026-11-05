@@ -257,6 +257,34 @@ const app = createFevex({
 });
 ```
 
+For longer instructions, keep them in an explicit `SKILL.md` file. Only the
+frontmatter metadata enters the prompt; the body loads on demand:
+
+```ts
+import { createAgentsMdContextProvider, loadSkillFile } from '@fevex/core';
+
+const refunds = await loadSkillFile('./skills/refunds/SKILL.md');
+
+const app = createFevex({
+  models,
+  contextProviders: [refunds, createAgentsMdContextProvider('./AGENTS.md')],
+  agents: [
+    defineAgent({
+      name: 'support',
+      instructions: 'Answer with the available business context.',
+      skills: ['refunds'],
+      context: ['agents-md'],
+    }),
+  ],
+});
+```
+
+`SKILL.md` uses `name` and `description` frontmatter. The reserved
+`fevex__load_skill` tool loads the body and lists files under `references/`,
+`scripts/` and `assets/`; scripts are not executed by the runtime. Paths are
+explicit, with no automatic discovery. See the
+[knowledge guide](https://fevex.dev/docs/knowledge/) for details.
+
 Sessions keep conversation history; context providers add fresh business
 context; memory stores searchable prior facts. The built-in memory store is a
 local substring search only—vector DBs and durable storage belong in optional

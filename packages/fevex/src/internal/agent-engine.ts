@@ -4,7 +4,12 @@ import type {
   ArtifactStore,
   ArtifactStoreContext,
 } from '../artifacts';
-import type { KnowledgeContext } from '../knowledge';
+import {
+  isProgressiveSkillProvider,
+  type ContextBlock,
+  type KnowledgeContext,
+  type ProgressiveSkillProvider,
+} from '../knowledge';
 import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import { FevexRunError, RunPausedError } from '../run-error';
 import {
@@ -55,7 +60,7 @@ import {
   toolSourcePayload,
 } from './run-helpers';
 import type { ExecutionState } from './run-state';
-import { ELICIT_TOOL_NAME, LEASE_MS } from './runtime-constants';
+import { ELICIT_TOOL_NAME, LEASE_MS, LOAD_SKILL_TOOL_NAME } from './runtime-constants';
 
 import type { RunCore } from './run-core';
 
@@ -523,33 +528,65 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           inputSchema,
         );
       }));
-      const allTools = currentElicitationMode === 'pause'
-        ? [
-            ...agentTools,
-            {
-              name: ELICIT_TOOL_NAME,
-              description:
-                'Request external information required to continue this run. Use prompt for explanatory text shown outside the form. Put short field labels in responseSchema property titles and optional field help in property descriptions.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  prompt: {
-                    type: 'string',
-                    description: 'Explanatory text for the user; do not duplicate field labels here.',
-                  },
-                  responseSchema: {
-                    type: 'object',
-                    description:
-                      'JSON Schema for the expected response. Each property should include a short title for the form label and may include a description for field help.',
-                  },
-                  expiresAt: { type: 'string' },
+      const progressiveSkills = (agent.skills ?? [])
+        .map((skillName) => contextProviders.get(skillName))
+        .filter(
+          (provider): provider is ProgressiveSkillProvider =>
+            provider !== undefined && isProgressiveSkillProvider(provider),
+        );
+      const skillTool = progressiveSkills.length === 0
+        ? undefined
+        : {
+            name: LOAD_SKILL_TOOL_NAME,
+            description: `Load the full instructions for one of this agent's skills. Available skills: ${progressiveSkills
+              .map((skill) => skill.name)
+              .join(', ')}. Pass a resource path from the loaded skill to read one resource.`,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  enum: progressiveSkills.map((skill) => skill.name),
                 },
-                required: ['prompt', 'responseSchema'],
-                additionalProperties: false,
+                resource: {
+                  type: 'string',
+                  description: 'Optional resource path returned by a previous load.',
+                },
               },
+              required: ['name'],
+              additionalProperties: false,
             },
-          ]
-        : agentTools;
+          };
+      const allTools = [
+        ...agentTools,
+        ...(skillTool === undefined ? [] : [skillTool]),
+        ...(currentElicitationMode === 'pause'
+          ? [
+              {
+                name: ELICIT_TOOL_NAME,
+                description:
+                  'Request external information required to continue this run. Use prompt for explanatory text shown outside the form. Put short field labels in responseSchema property titles and optional field help in property descriptions.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    prompt: {
+                      type: 'string',
+                      description: 'Explanatory text for the user; do not duplicate field labels here.',
+                    },
+                    responseSchema: {
+                      type: 'object',
+                      description:
+                        'JSON Schema for the expected response. Each property should include a short title for the form label and may include a description for field help.',
+                    },
+                    expiresAt: { type: 'string' },
+                  },
+                  required: ['prompt', 'responseSchema'],
+                  additionalProperties: false,
+                },
+              },
+            ]
+          : []),
+      ];
       const effectiveLimits = state.checkpoint?.limits ?? combineLimits(agent.limits, request.limits);
       const maxSteps = effectiveLimits?.maxSteps ?? DEFAULT_MAX_STEPS;
       const maxToolCalls = effectiveLimits?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
@@ -700,6 +737,86 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           );
           if (result.toolCalls.length > maxToolCalls - toolCallCount) {
             throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
+          }
+          const loadSkillCall = progressiveSkills.length === 0
+            ? undefined
+            : result.toolCalls.find((call) => call.name === LOAD_SKILL_TOOL_NAME);
+          if (loadSkillCall) {
+            if (result.toolCalls.length !== 1) {
+              throw new Error(
+                `${LOAD_SKILL_TOOL_NAME} must be the only tool call in a model turn`,
+              );
+            }
+            if (!loadSkillCall.id?.trim()) throw new Error('Tool call id cannot be empty');
+            if (seenToolCallIds.has(loadSkillCall.id)) {
+              throw new Error(
+                `Tool call id "${loadSkillCall.id}" is duplicated in run "${state.run.id}"`,
+              );
+            }
+            if (toolCallCount + 1 > maxToolCalls) {
+              throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
+            }
+            const rawInput = toJsonValue(
+              loadSkillCall.input,
+              `Input for tool "${LOAD_SKILL_TOOL_NAME}" must be JSON-serializable`,
+            );
+            const skillInput = readSkillInput(rawInput);
+            const skill = progressiveSkills.find((item) => item.name === skillInput.name);
+            if (!skill) {
+              throw new Error(`Skill "${skillInput.name}" is not available to agent "${name}"`);
+            }
+            seenToolCallIds.add(loadSkillCall.id);
+            messages.push({
+              role: 'assistant',
+              content:
+                result.output === undefined
+                  ? ''
+                  : serializeValue(
+                      result.output,
+                      `Model output for agent "${name}" must be serializable`,
+                    ),
+              toolCalls: [{ ...loadSkillCall, input: rawInput }],
+            });
+            yield await emit('tool.started', {
+              step,
+              toolCallId: loadSkillCall.id,
+              toolName: LOAD_SKILL_TOOL_NAME,
+            });
+            let blocks: ContextBlock[];
+            try {
+              blocks = await abortable(
+                () => skill.load(knowledgeContext(state, inputContent), skillInput.resource),
+                request.signal,
+              );
+            } catch (error) {
+              yield await emit('tool.failed', {
+                step,
+                toolCallId: loadSkillCall.id,
+                toolName: LOAD_SKILL_TOOL_NAME,
+                error: toErrorMessage(error),
+              });
+              throw new Error(
+                `Skill provider "${skill.name}" failed: ${toErrorMessage(error)}`,
+                { cause: error },
+              );
+            }
+            messages.push({
+              role: 'tool',
+              name: LOAD_SKILL_TOOL_NAME,
+              toolCallId: loadSkillCall.id,
+              content: blocks
+                .filter((block) => block.content.trim())
+                .map((block) => `[Skill: ${skill.name}/${block.id}]\n${block.content}`)
+                .join('\n\n'),
+            });
+            yield await emit('tool.completed', {
+              step,
+              toolCallId: loadSkillCall.id,
+              toolName: LOAD_SKILL_TOOL_NAME,
+            });
+            toolCallCount += 1;
+            step += 1;
+            continue;
           }
           const elicitationCall = result.toolCalls.find(isElicitationToolCall);
           if (elicitationCall) {
@@ -1798,6 +1915,25 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
 /** The agent-run surface the workflow engine and the public runtime consume. */
 export type AgentEngine = ReturnType<typeof createAgentEngine>;
+
+function readSkillInput(input: JsonValue): { name: string; resource?: string } {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new TypeError(`${LOAD_SKILL_TOOL_NAME} input must be an object`);
+  }
+  const record = input as Record<string, JsonValue>;
+  const name = record.name;
+  const resource = record.resource;
+  if (typeof name !== 'string' || !name.trim()) {
+    throw new TypeError(`${LOAD_SKILL_TOOL_NAME} name must be a non-empty string`);
+  }
+  if (resource !== undefined && (typeof resource !== 'string' || !resource.trim())) {
+    throw new TypeError(`${LOAD_SKILL_TOOL_NAME} resource must be a non-empty string`);
+  }
+  return {
+    name: name.trim(),
+    ...(resource === undefined ? {} : { resource: resource.trim() }),
+  };
+}
 
 function scopedArtifacts(
   store: ArtifactStore,

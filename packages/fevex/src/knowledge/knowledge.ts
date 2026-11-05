@@ -55,6 +55,26 @@ export interface SkillDefinition {
   resources?: Array<string | JsonValue | { id?: string; content: string | JsonValue; metadata?: JsonObject }>;
 }
 
+/**
+ * Context provider that advertises a skill's metadata and defers its full
+ * instructions until the model calls the reserved load-skill tool.
+ *
+ * The provider name is the skill name referenced from `agent.skills`.
+ */
+export interface ProgressiveSkillProvider extends ContextProvider {
+  /** Short description shown to the model before the skill is loaded. */
+  readonly description: string;
+  /** Loads the full instructions, or one resource when `resource` is set. */
+  load(context: KnowledgeContext, resource?: string): Promise<ContextBlock[]>;
+}
+
+export function isProgressiveSkillProvider(
+  provider: ContextProvider,
+): provider is ProgressiveSkillProvider {
+  const candidate = provider as Partial<ProgressiveSkillProvider>;
+  return typeof candidate.load === 'function' && typeof candidate.description === 'string';
+}
+
 export function defineContextProvider<T extends ContextProvider>(provider: T): T {
   return provider;
 }

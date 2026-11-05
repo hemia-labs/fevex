@@ -1,0 +1,119 @@
+---
+title: Knowledge & skills
+description: Add code-first or SKILL.md context with progressive disclosure and AGENTS.md.
+---
+
+Knowledge providers add prompt context for a run without changing sessions or
+the run store.
+
+## Code-first skills
+
+```ts
+import { defineSkill } from '@fevex/core';
+
+const app = createFevex({
+  models,
+  contextProviders: [
+    defineSkill({
+      name: 'refunds',
+      instructions: 'Refunds are allowed for 30 days after purchase.',
+    }),
+  ],
+  agents: [
+    defineAgent({
+      name: 'support',
+      instructions: 'Answer with the available business context.',
+      skills: ['refunds'],
+    }),
+  ],
+});
+```
+
+`defineSkill` is eager: instructions and resources enter the prompt at the
+start of every run.
+
+## File skills
+
+`loadSkillFile` reads one explicit `SKILL.md` file:
+
+```ts
+import { loadSkillFile } from '@fevex/core';
+
+const refunds = await loadSkillFile('./skills/refunds/SKILL.md');
+```
+
+The file uses frontmatter:
+
+```md
+---
+name: refunds
+description: Handle refund requests and policy exceptions.
+---
+
+Refunds are allowed for 30 days after purchase. Escalate exceptions to a human.
+```
+
+Register the returned provider and reference its name from the agent:
+
+```ts
+const app = createFevex({
+  models,
+  contextProviders: [refunds],
+  agents: [
+    defineAgent({
+      name: 'support',
+      instructions: 'Answer with the available business context.',
+      skills: ['refunds'],
+    }),
+  ],
+});
+```
+
+Only `name` and `description` are advertised before the skill is loaded. When
+the task matches, the model calls the reserved `fevex__load_skill` tool and the
+body enters the conversation. `loadSkillFiles([...])` loads several explicit
+paths; Fevex never scans directories for skills.
+
+## Resources and scripts
+
+After the body loads, files under `references/`, `scripts/` and `assets/` are
+listed with their sizes. The model can read one on demand:
+
+```json
+{ "name": "refunds", "resource": "references/policy.md" }
+```
+
+Resources are read as UTF-8 text with a size cap. Scripts are listed but not
+executed by Fevex in this release; running them requires a sandbox provider.
+
+## AGENTS.md
+
+`createAgentsMdContextProvider` reads one explicit file:
+
+```ts
+import { createAgentsMdContextProvider } from '@fevex/core';
+
+const app = createFevex({
+  models,
+  contextProviders: [
+    createAgentsMdContextProvider('./AGENTS.md'),
+  ],
+  agents: [
+    defineAgent({
+      name: 'support',
+      instructions: 'Answer with the available business context.',
+      context: ['agents-md'],
+    }),
+  ],
+});
+```
+
+For multiple files, register one provider per file with a distinct `name`.
+
+## Boundaries
+
+- Explicit paths only; no automatic skill or `AGENTS.md` discovery.
+- Skill names use lowercase letters, numbers and hyphens, up to 64 characters.
+- Default size caps are 256 KiB for `SKILL.md` and 256 KiB per resource.
+- The original `SKILL.md` remains the source of truth; loaded content becomes
+  part of the run messages.

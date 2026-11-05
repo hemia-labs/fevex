@@ -21,6 +21,8 @@ checkpoint, upgrade and support guarantees.
 - Per-runtime admission limits, per-run deadlines, event caps and terminal-run
   retention through `purgeRuns`.
 - Conversation sessions, tool approval checkpoints, and resumable runs.
+- Code-first skills plus explicit `SKILL.md` files with progressive disclosure,
+  on-demand resources and optional `AGENTS.md` context.
 - Artifact descriptors with local filesystem and S3-compatible stores,
   SQLite and PostgreSQL metadata catalogs, authenticated HTTP delivery, and
   `context.artifacts` for tools with `artifact.created` events.

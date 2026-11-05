@@ -52,6 +52,7 @@ export default defineConfig({
             { label: 'Agents', slug: 'docs/agents' },
             { label: 'Tools', slug: 'docs/tools' },
             { label: 'Models', slug: 'docs/models' },
+            { label: 'Knowledge & skills', slug: 'docs/knowledge' },
           ],
         },
         {
