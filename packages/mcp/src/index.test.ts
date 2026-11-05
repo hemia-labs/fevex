@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { IntegrationError } from '@fevex/core';
 import { testToolProvider } from '@fevex/core/testing';
-import { createMcpToolProvider, FEVEX_MCP_PROTOCOL_VERSION } from './index';
+import {
+  createMcpToolProvider,
+  FEVEX_MCP_PROTOCOL_VERSION,
+  type McpNotification,
+} from './index';
 
 const PROTOCOL = FEVEX_MCP_PROTOCOL_VERSION;
 const VERSION_META = 'io.modelcontextprotocol/protocolVersion';
@@ -24,6 +28,15 @@ function sse(chunks: string[]) {
   }), {
     headers: { 'content-type': 'text/event-stream' },
   });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error('Timed out waiting for MCP event')), timeoutMs);
+    }),
+  ]);
 }
 
 function discovery(overrides: Record<string, unknown> = {}) {
@@ -98,7 +111,9 @@ describe('createMcpToolProvider', () => {
       expect(request.body.params._meta).toMatchObject({
         [VERSION_META]: PROTOCOL,
         [CLIENT_INFO_META]: { name: 'pilot', version: '1.0.0' },
-        [CAPABILITIES_META]: {},
+        [CAPABILITIES_META]: {
+          extensions: { 'io.modelcontextprotocol/tasks': {} },
+        },
       });
       expect(request.headers.get('mcp-protocol-version')).toBe(PROTOCOL);
       expect(request.headers.get('mcp-method')).toBe(request.method);
@@ -249,18 +264,231 @@ describe('createMcpToolProvider', () => {
     expect(calls).toBe(1);
   });
 
-  test('rejects input_required results until MRTR support is added', async () => {
+  test('handles MRTR elicitation and retries with inputResponses', async () => {
+    const calls: any[] = [];
+    const elicited: string[] = [];
     const provider = createMcpToolProvider({
-      url: 'https://mcp.test/mcp',
+      url: 'https://mcp.test',
+      onElicitation(request) {
+        elicited.push(request.message);
+        return { action: 'accept', content: { name: 'octocat' } };
+      },
+      fetch: server((body) => {
+        calls.push(body);
+        if (calls.length === 1) {
+          return json({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: {
+              resultType: 'input_required',
+              inputRequests: {
+                github_login: {
+                  method: 'elicitation/create',
+                  params: {
+                    mode: 'form',
+                    message: 'GitHub username',
+                    requestedSchema: {
+                      type: 'object',
+                      properties: { name: { type: 'string' } },
+                      required: ['name'],
+                    },
+                  },
+                },
+              },
+              requestState: 'opaque-state',
+            },
+          });
+        }
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: { resultType: 'complete', structuredContent: { ok: true } },
+        });
+      }),
+    });
+
+    await expect(provider.callTool('login', {}, {})).resolves.toEqual({ ok: true });
+    expect(elicited).toEqual(['GitHub username']);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].params._meta[CAPABILITIES_META]).toMatchObject({
+      elicitation: {},
+      extensions: { 'io.modelcontextprotocol/tasks': {} },
+    });
+    expect(calls[1].id).not.toBe(calls[0].id);
+    expect(calls[1].params).toMatchObject({
+      name: 'login',
+      arguments: {},
+      inputResponses: {
+        github_login: { action: 'accept', content: { name: 'octocat' } },
+      },
+      requestState: 'opaque-state',
+    });
+  });
+
+  test('rejects elicitation when no handler is configured', async () => {
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
       fetch: server((body) => json({
         jsonrpc: '2.0',
         id: body.id,
-        result: { resultType: 'input_required', inputRequests: [] },
+        result: {
+          resultType: 'input_required',
+          inputRequests: {
+            login: {
+              method: 'elicitation/create',
+              params: { message: 'Login', requestedSchema: { type: 'object' } },
+            },
+          },
+        },
       })),
     });
     await expect(provider.callTool('lookup', {}, {})).rejects.toMatchObject({
-      code: 'MCP_INPUT_REQUIRED',
+      code: 'MCP_ELICITATION_UNSUPPORTED',
     });
+  });
+
+  test('polls tasks/get until the task completes', async () => {
+    const calls: any[] = [];
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      taskPollIntervalMs: 10,
+      fetch: server((body) => {
+        calls.push(body);
+        if (body.method === 'tools/call') {
+          return json({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: {
+              resultType: 'task',
+              taskId: 'task-1',
+              status: 'working',
+              ttlMs: 5_000,
+              pollIntervalMs: 10,
+            },
+          });
+        }
+        const polls = calls.filter(({ method }) => method === 'tasks/get').length;
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: polls === 1
+            ? { taskId: 'task-1', status: 'working', pollIntervalMs: 10 }
+            : {
+                taskId: 'task-1',
+                status: 'completed',
+                result: { resultType: 'complete', structuredContent: { answer: 'done' } },
+              },
+        });
+      }, discovery({
+        capabilities: {
+          tools: {},
+          extensions: { 'io.modelcontextprotocol/tasks': {} },
+        },
+      })),
+    });
+
+    await expect(provider.callTool('slow', {}, {})).resolves.toEqual({ answer: 'done' });
+    const polls = calls.filter(({ method }) => method === 'tasks/get');
+    expect(polls).toHaveLength(2);
+    expect(polls.every(({ params }) => params.taskId === 'task-1')).toBe(true);
+  });
+
+  test('supplies task input_required responses through tasks/update', async () => {
+    const updates: any[] = [];
+    let polls = 0;
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      taskPollIntervalMs: 10,
+      onElicitation: () => ({ action: 'accept', content: { approved: true } }),
+      fetch: server((body) => {
+        if (body.method === 'tools/call') {
+          return json({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: { resultType: 'task', taskId: 'task-2', status: 'working', ttlMs: 5_000 },
+          });
+        }
+        if (body.method === 'tasks/update') {
+          updates.push(body);
+          return json({ jsonrpc: '2.0', id: body.id, result: { resultType: 'complete' } });
+        }
+        polls += 1;
+        return json({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: polls === 1
+            ? {
+                taskId: 'task-2',
+                status: 'input_required',
+                inputRequests: {
+                  confirm: {
+                    method: 'elicitation/create',
+                    params: { message: 'Approve?', requestedSchema: { type: 'object' } },
+                  },
+                },
+              }
+            : {
+                taskId: 'task-2',
+                status: 'completed',
+                result: { resultType: 'complete', structuredContent: { approved: true } },
+              },
+        });
+      }, discovery({
+        capabilities: {
+          tools: {},
+          extensions: { 'io.modelcontextprotocol/tasks': {} },
+        },
+      })),
+    });
+
+    await expect(provider.callTool('approval', {}, {})).resolves.toEqual({ approved: true });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].params).toMatchObject({
+      taskId: 'task-2',
+      inputResponses: { confirm: { action: 'accept', content: { approved: true } } },
+    });
+  });
+
+  test('listens to tools/list_changed notifications', async () => {
+    let listenBody: any;
+    let resolveNotification!: (notification: McpNotification) => void;
+    const notification = new Promise<McpNotification>((resolve) => {
+      resolveNotification = resolve;
+    });
+    const provider = createMcpToolProvider({
+      url: 'https://mcp.test',
+      subscriptions: { toolsListChanged: true },
+      onNotification: (item) => resolveNotification(item),
+      fetch: server((body) => {
+        if (body.method === 'tools/list') {
+          return json({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: { resultType: 'complete', tools: [{ name: 'lookup' }] },
+          });
+        }
+        listenBody = body;
+        return sse([
+          `data: ${JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'notifications/subscriptions/acknowledged',
+            params: { _meta: { 'io.modelcontextprotocol/subscriptionId': body.id } },
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'notifications/tools/list_changed',
+            params: { _meta: { 'io.modelcontextprotocol/subscriptionId': body.id } },
+          })}\n\n`,
+        ]);
+      }),
+    });
+
+    await expect(provider.listTools()).resolves.toEqual([{ name: 'lookup' }]);
+    await expect(withTimeout(notification, 1_000)).resolves.toMatchObject({
+      method: 'notifications/tools/list_changed',
+    });
+    expect(listenBody.params.notifications).toEqual({ toolsListChanged: true });
+    await provider.close?.();
   });
 
   test('base64-encodes unsafe Mcp-Name values', async () => {

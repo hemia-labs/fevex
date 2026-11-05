@@ -19,9 +19,7 @@ This adapter targets MCP `2026-07-28` Streamable HTTP:
 - servers that only implement legacy handshake versions `2025-11-25` or earlier
   fail with `MCP_VERSION_UNSUPPORTED` and an actionable message.
 
-The `protocolVersion` option only accepts `2026-07-28`. Multi-round-trip
-requests are not implemented yet: an `input_required` result fails with
-`MCP_INPUT_REQUIRED`.
+The `protocolVersion` option only accepts `2026-07-28`.
 
 ```ts
 import { createFevex, defineAgent, defineConnection } from '@fevex/core';
@@ -57,8 +55,57 @@ createFevex({
 });
 ```
 
-Only Streamable HTTP is supported. `stdio`, resources, prompts, sampling,
-elicitation and legacy HTTP+SSE are intentionally out of scope for this package.
+Only Streamable HTTP is supported. `stdio`, resources, prompts, sampling, roots
+and legacy HTTP+SSE are intentionally out of scope for this package.
+
+## MRTR, Tasks and subscriptions
+
+**MRTR elicitation.** Configure `onElicitation` to receive
+`elicitation/create` requests from `input_required` results:
+
+```ts
+const provider = createMcpToolProvider({
+  url: 'https://example.com/mcp',
+  onElicitation({ message, requestedSchema }) {
+    return { action: 'accept', content: { approved: true } };
+  },
+});
+```
+
+The adapter declares the elicitation client capability only when the handler is
+present, echoes the opaque `requestState`, retries with `inputResponses`, and
+caps consecutive rounds with `maxInputRounds` (default 5). Sampling and roots
+input requests fail with `MCP_INPUT_UNSUPPORTED`.
+
+**Tasks.** The adapter declares the `io.modelcontextprotocol/tasks` extension.
+When a tool returns `resultType: "task"`, it polls `tasks/get`, honors
+`pollIntervalMs`, sends `tasks/update` for `input_required` task input, and
+cancels best-effort on abort or deadline. Use `maxTaskWaitMs` (default 1 hour)
+and `taskPollIntervalMs` (fallback 1 second) to bound polling.
+
+**Subscriptions.** Opt into change notifications with `subscriptions` and
+receive them through `onNotification`:
+
+```ts
+const provider = createMcpToolProvider({
+  url: 'https://example.com/mcp',
+  subscriptions: { toolsListChanged: true },
+  onNotification(notification) {
+    if (notification.method === 'notifications/tools/list_changed') {
+      // Invalidate any host-side catalog cache.
+    }
+  },
+});
+```
+
+The listener opens `subscriptions/listen` after discovery and stays open until
+`provider.close()` aborts it. Call `close()` during host shutdown; Fevex does
+not own connection-provider lifecycle. The core still resolves `tools/list` per
+tool resolution; notification callbacks let the host invalidate its own cache.
+
+Use `onElicitation` for short interactive input. For approvals that may wait for
+minutes or survive a restart, the server should use a Task and expose
+`input_required` through `tasks/get` instead.
 
 ## Connection ownership and recovery
 
@@ -92,5 +139,11 @@ All limits are configurable positive safe integers:
 
 `maxDiscoveryBytes` also caps each `server/discover` and tool-call response. JSON
 and SSE are read incrementally; streams are cancelled on limit failure and after
-the matching SSE response. Limits raise `MCP_DISCOVERY_LIMIT`; repeated non-empty
+the matching SSE response.
+
+| Runtime option | Default | Scope |
+| --- | --- | --- |
+| `maxInputRounds` | 5 | Consecutive MRTR retries for one tool call |
+| `maxTaskWaitMs` | 1 hour | Total wait for one MCP task |
+| `taskPollIntervalMs` | 1,000 | Fallback polling interval when the task omits one | Limits raise `MCP_DISCOVERY_LIMIT`; repeated non-empty
 cursors raise `MCP_CURSOR_REPEATED`. Partial discovery results are not returned.

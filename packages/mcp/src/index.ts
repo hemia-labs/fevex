@@ -18,6 +18,34 @@ export interface McpClientInfo {
   version: string;
 }
 
+export interface McpElicitationRequest {
+  message: string;
+  requestedSchema?: JsonObject;
+  mode?: 'form' | 'url';
+}
+
+export interface McpElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: JsonValue;
+}
+
+export type McpElicitationHandler = (
+  request: McpElicitationRequest,
+  context?: ToolProviderContext,
+) => McpElicitationResponse | Promise<McpElicitationResponse>;
+
+export interface McpNotification {
+  method: string;
+  params?: JsonObject;
+}
+
+export interface McpSubscriptionFilter {
+  toolsListChanged?: boolean;
+  promptsListChanged?: boolean;
+  resourcesListChanged?: boolean;
+  resourceSubscriptions?: string[];
+}
+
 export type McpFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface McpToolProviderOptions {
@@ -30,6 +58,18 @@ export interface McpToolProviderOptions {
   maxDiscoveryPages?: number;
   maxDiscoveryTools?: number;
   maxDiscoveryBytes?: number;
+  /** Handles MCP `elicitation/create` requests from MRTR and Tasks. */
+  onElicitation?: McpElicitationHandler;
+  /** Maximum consecutive input-required retries for one tool call. */
+  maxInputRounds?: number;
+  /** Maximum time to wait for one MCP task. */
+  maxTaskWaitMs?: number;
+  /** Fallback polling interval when a task does not provide one. */
+  taskPollIntervalMs?: number;
+  /** Opt into server-to-client change notifications. */
+  subscriptions?: McpSubscriptionFilter;
+  /** Receives notifications from the subscription stream. */
+  onNotification?: (notification: McpNotification) => void;
 }
 
 interface JsonRpcRequest {
@@ -42,6 +82,8 @@ interface JsonRpcRequest {
 interface JsonRpcResponse {
   jsonrpc: '2.0';
   id?: number;
+  method?: string;
+  params?: JsonObject;
   result?: unknown;
   error?: { code?: number; message?: string; data?: unknown };
 }
@@ -67,6 +109,10 @@ class McpHttpError extends IntegrationError {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_INPUT_ROUNDS = 5;
+const DEFAULT_MAX_TASK_WAIT_MS = 3_600_000;
+const DEFAULT_TASK_POLL_MS = 1_000;
+const TASKS_EXTENSION = 'io.modelcontextprotocol/tasks';
 
 export function createMcpToolProvider(options: McpToolProviderOptions): ToolProvider {
   if (!options.url) throw new TypeError('MCP url is required');
@@ -84,9 +130,19 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   const maxPages = options.maxDiscoveryPages ?? 100;
   const maxTools = options.maxDiscoveryTools ?? 1_000;
   const maxBytes = options.maxDiscoveryBytes ?? 4 * 1024 * 1024;
-  for (const value of [requestTimeoutMs, maxPages, maxTools, maxBytes]) {
+  const maxInputRounds = options.maxInputRounds ?? DEFAULT_MAX_INPUT_ROUNDS;
+  const maxTaskWaitMs = options.maxTaskWaitMs ?? DEFAULT_MAX_TASK_WAIT_MS;
+  const taskPollIntervalMs = options.taskPollIntervalMs ?? DEFAULT_TASK_POLL_MS;
+  for (const value of [requestTimeoutMs, maxPages, maxTools, maxBytes, maxTaskWaitMs, taskPollIntervalMs]) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError('MCP limits must be positive safe integers');
   }
+  if (!Number.isSafeInteger(maxInputRounds) || maxInputRounds < 0) {
+    throw new TypeError('MCP maxInputRounds must be a non-negative safe integer');
+  }
+  const clientCapabilities: JsonObject = {
+    ...(options.onElicitation ? { elicitation: {} } : {}),
+    extensions: { [TASKS_EXTENSION]: {} },
+  };
   let identity: string | undefined;
   async function connectionHeaders(context?: ToolProviderContext): Promise<Headers> {
     const headers = new Headers(await resolveHeaders(options.headers, context));
@@ -100,6 +156,8 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   let nextId = 1;
   let discovery: McpDiscovery | undefined;
   let discovering: Promise<McpDiscovery> | undefined;
+  let subscriptionController: AbortController | undefined;
+  let subscriptionStarted = false;
 
   const provider: ToolProvider = {
     kind: 'mcp',
@@ -149,24 +207,259 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     async callTool(name, input, context) {
       const headers = await connectionHeaders(context);
       await ensureDiscovered(context, headers);
-      const result = await request(
-        'tools/call',
-        { name, arguments: input },
-        context,
-        headers,
-      );
-      assertCompleteResult(result, 'tools/call');
-      if (!isRecord(result)) {
-        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tools/call result');
+      let inputResponses: JsonObject | undefined;
+      let requestState: string | undefined;
+      for (let round = 0; ; round += 1) {
+        if (round > maxInputRounds) {
+          throw integrationError(
+            'MCP_INPUT_ROUNDS_EXCEEDED',
+            'validation',
+            false,
+            `MCP tool exceeded ${maxInputRounds} input rounds`,
+          );
+        }
+        const result = await request(
+          'tools/call',
+          {
+            name,
+            arguments: input,
+            ...(inputResponses === undefined ? {} : { inputResponses }),
+            ...(requestState === undefined ? {} : { requestState }),
+          },
+          context,
+          headers,
+        );
+        if (isInputRequiredResult(result)) {
+          const next = await resolveInputRequests(result, context);
+          inputResponses = next.inputResponses ?? {};
+          requestState = next.requestState;
+          continue;
+        }
+        if (isTaskResult(result)) {
+          const final = await resolveTask(result, context, headers);
+          return toolOutput(final);
+        }
+        return toolOutput(result);
       }
-      if (result.isError === true) {
-        throw integrationError('MCP_TOOL_ERROR', 'remote', false, 'MCP tool returned an error');
-      }
-      if (isJsonValue(result.structuredContent)) return result.structuredContent;
-      if (isJsonValue(result.content)) return result.content;
-      return null;
+    },
+
+    async close() {
+      subscriptionController?.abort();
+      subscriptionController = undefined;
+      subscriptionStarted = false;
     },
   };
+
+  function toolOutput(result: unknown): JsonValue {
+    if (!isRecord(result)) {
+      throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tools/call result');
+    }
+    if (result.isError === true) {
+      throw integrationError('MCP_TOOL_ERROR', 'remote', false, 'MCP tool returned an error');
+    }
+    if (isJsonValue(result.structuredContent)) return result.structuredContent;
+    if (isJsonValue(result.content)) return result.content;
+    return null;
+  }
+
+  async function resolveInputRequests(
+    result: JsonObject,
+    context: ToolProviderContext | undefined,
+  ): Promise<{ inputResponses?: JsonObject; requestState?: string }> {
+    const requestState = typeof result.requestState === 'string' ? result.requestState : undefined;
+    const requests = isRecord(result.inputRequests) ? result.inputRequests : undefined;
+    if (!requests) return requestState === undefined ? {} : { requestState };
+    if (!options.onElicitation) {
+      throw integrationError(
+        'MCP_ELICITATION_UNSUPPORTED',
+        'validation',
+        false,
+        'MCP server requested elicitation but no onElicitation handler is configured',
+      );
+    }
+    const responses: JsonObject = {};
+    for (const [key, request] of Object.entries(requests)) {
+      if (!isRecord(request) || typeof request.method !== 'string') {
+        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid input request');
+      }
+      if (request.method !== 'elicitation/create') {
+        throw integrationError(
+          'MCP_INPUT_UNSUPPORTED',
+          'validation',
+          false,
+          `MCP input request "${request.method}" is not supported`,
+        );
+      }
+      const params = isRecord(request.params) ? request.params : {};
+      if (typeof params.message !== 'string') {
+        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP elicitation request has no message');
+      }
+      const response = await options.onElicitation({
+        message: params.message,
+        ...(isRecord(params.requestedSchema) ? { requestedSchema: params.requestedSchema } : {}),
+        mode: params.mode === 'url' ? 'url' : 'form',
+      }, context);
+      if (
+        !isRecord(response)
+        || (response.action !== 'accept' && response.action !== 'decline' && response.action !== 'cancel')
+      ) {
+        throw integrationError(
+          'MCP_ELICITATION_INVALID',
+          'validation',
+          false,
+          'MCP elicitation handler must return accept, decline or cancel',
+        );
+      }
+      responses[key] = response as unknown as JsonValue;
+    }
+    return {
+      inputResponses: responses,
+      ...(requestState === undefined ? {} : { requestState }),
+    };
+  }
+
+  async function cancelTask(
+    taskId: string,
+    context: ToolProviderContext | undefined,
+    headers: Headers,
+  ): Promise<void> {
+    await request(
+      'tasks/cancel',
+      { taskId },
+      context === undefined ? { signal: undefined } : { ...context, signal: undefined },
+      headers,
+    ).catch(() => {});
+  }
+
+  async function resolveTask(
+    createResult: JsonObject,
+    context: ToolProviderContext | undefined,
+    headers: Headers,
+  ): Promise<unknown> {
+    const taskId = taskIdOf(createResult);
+    if (!taskId) {
+      throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP task result has no taskId');
+    }
+    const startedAt = Date.now();
+    let task: JsonObject = createResult;
+    let polls = 0;
+    while (true) {
+      const body = isRecord(task.task) ? task.task : task;
+      const status = taskStatus(task);
+      if (status === 'completed') {
+        if (!('result' in body)) {
+          throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP task completed without a result');
+        }
+        return body.result;
+      }
+      if (status === 'failed') {
+        throw integrationError('MCP_TASK_FAILED', 'remote', false, 'MCP task failed');
+      }
+      if (status === 'cancelled') {
+        throw integrationError('MCP_TASK_CANCELLED', 'remote', false, 'MCP task was cancelled');
+      }
+      if (status === 'input_required') {
+        const input = await resolveInputRequests(body, context);
+        if (input.inputResponses === undefined) {
+          throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP task requires input without requests');
+        }
+        await request(
+          'tasks/update',
+          { taskId, inputResponses: input.inputResponses },
+          context,
+          headers,
+        );
+      } else if (status !== 'working') {
+        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP task has an unknown status');
+      }
+      if (Date.now() - startedAt >= maxTaskWaitMs) {
+        await cancelTask(taskId, context, headers);
+        throw integrationError('MCP_TASK_EXPIRED', 'timeout', true, 'MCP task exceeded its wait deadline');
+      }
+      const requestedInterval = taskPollInterval(task);
+      const interval = requestedInterval !== undefined
+        && Number.isFinite(requestedInterval)
+        && requestedInterval > 0
+        ? Math.min(60_000, Math.max(10, requestedInterval))
+        : taskPollIntervalMs;
+      try {
+        await sleep(interval, context?.signal);
+      } catch (error) {
+        if (context?.signal?.aborted) await cancelTask(taskId, context, headers);
+        throw error;
+      }
+      const next = await request('tasks/get', { taskId }, context, headers);
+      if (!isRecord(next)) {
+        throw integrationError('MCP_INVALID_RESPONSE', 'remote', false, 'MCP server returned invalid tasks/get result');
+      }
+      task = next;
+      polls += 1;
+      if (polls > 10_000) {
+        await cancelTask(taskId, context, headers);
+        throw integrationError('MCP_TASK_EXPIRED', 'timeout', true, 'MCP task exceeded its poll limit');
+      }
+    }
+  }
+
+  function startSubscription(base: Headers): void {
+    if (!options.subscriptions || subscriptionStarted) return;
+    subscriptionStarted = true;
+    const controller = new AbortController();
+    subscriptionController = controller;
+    void listenSubscription(base, controller.signal)
+      .catch(() => {})
+      .finally(() => {
+        if (subscriptionController !== controller) return;
+        subscriptionController = undefined;
+        subscriptionStarted = false;
+      });
+  }
+
+  async function listenSubscription(base: Headers, signal: AbortSignal): Promise<void> {
+    const id = nextId++;
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: wireHeaders(base, 'subscriptions/listen'),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method: 'subscriptions/listen',
+        params: {
+          notifications: options.subscriptions as unknown as JsonObject,
+          _meta: requestMetadata(),
+        },
+      }),
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      return;
+    }
+    if (!(response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+      await response.body?.cancel();
+      return;
+    }
+    const budget = { remaining: maxBytes };
+    for await (const event of readSse(response, budget, maxBytes)) {
+      if (!event.data.trim()) continue;
+      let notification: JsonRpcResponse;
+      try {
+        notification = parseJsonRpc(event.data);
+      } catch {
+        continue;
+      }
+      if (typeof notification.method !== 'string') continue;
+      if (notification.method === 'notifications/subscriptions/acknowledged') continue;
+      try {
+        options.onNotification?.({
+          method: notification.method,
+          ...(isRecord(notification.params) ? { params: notification.params } : {}),
+        });
+      } catch {
+        // A host notification callback must not terminate the subscription.
+      }
+    }
+  }
 
   async function ensureDiscovered(
     context: ToolProviderContext | undefined,
@@ -207,6 +500,7 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
         capabilities: result.capabilities,
       };
       discovery = found;
+      startSubscription(headers);
       return found;
     })().catch((error) => {
       discovering = undefined;
@@ -235,8 +529,22 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
     return {
       [PROTOCOL_VERSION_META]: requestedVersion,
       [CLIENT_INFO_META]: clientInfo as unknown as JsonObject,
-      [CLIENT_CAPABILITIES_META]: {},
+      [CLIENT_CAPABILITIES_META]: clientCapabilities,
     };
+  }
+
+  function wireHeaders(
+    base: Headers,
+    method: string,
+    name?: string,
+  ): Headers {
+    const headers = new Headers(base);
+    headers.set('accept', 'application/json, text/event-stream');
+    headers.set('content-type', 'application/json');
+    headers.set('mcp-protocol-version', requestedVersion);
+    headers.set('mcp-method', method);
+    if (name !== undefined) headers.set('mcp-name', encodeHeaderValue(name));
+    return headers;
   }
 
   async function send(
@@ -247,13 +555,7 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   ): Promise<JsonRpcResponse> {
     const signal = timeoutSignal(context?.signal, requestTimeoutMs);
     try {
-      const headers = new Headers(baseHeaders);
-      headers.set('accept', 'application/json, text/event-stream');
-      headers.set('content-type', 'application/json');
-      headers.set('mcp-protocol-version', requestedVersion);
-      headers.set('mcp-method', message.method);
-      const name = requestName(message);
-      if (name !== undefined) headers.set('mcp-name', encodeHeaderValue(name));
+      const headers = wireHeaders(baseHeaders, message.method, requestName(message));
 
       const response = await fetchImpl(endpoint, {
         method: 'POST',
@@ -324,6 +626,50 @@ export function createMcpToolProvider(options: McpToolProviderOptions): ToolProv
   }
 
   return provider;
+}
+
+function isInputRequiredResult(value: unknown): value is JsonObject {
+  return isRecord(value) && value.resultType === 'input_required';
+}
+
+function isTaskResult(value: unknown): value is JsonObject {
+  return isRecord(value) && value.resultType === 'task';
+}
+
+function taskIdOf(task: JsonObject): string | undefined {
+  if (typeof task.taskId === 'string' && task.taskId) return task.taskId;
+  return isRecord(task.task) && typeof task.task.taskId === 'string' && task.task.taskId
+    ? task.task.taskId
+    : undefined;
+}
+
+function taskStatus(task: JsonObject): string | undefined {
+  if (typeof task.status === 'string') return task.status;
+  return isRecord(task.task) && typeof task.task.status === 'string' ? task.task.status : undefined;
+}
+
+function taskPollInterval(task: JsonObject): number | undefined {
+  if (typeof task.pollIntervalMs === 'number') return task.pollIntervalMs;
+  if (typeof task.pollInterval === 'number') return task.pollInterval;
+  if (isRecord(task.task)) {
+    if (typeof task.task.pollIntervalMs === 'number') return task.task.pollIntervalMs;
+    if (typeof task.task.pollInterval === 'number') return task.task.pollInterval;
+  }
+  return undefined;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
 }
 
 function requestName(message: JsonRpcRequest): string | undefined {
@@ -440,7 +786,11 @@ async function* readText(response: Response, budget: { remaining: number }): Asy
   }
 }
 
-async function* readSse(response: Response, budget: { remaining: number }): AsyncGenerator<{ data: string }> {
+async function* readSse(
+  response: Response,
+  budget: { remaining: number },
+  resetBytes?: number,
+): AsyncGenerator<{ data: string }> {
   let buffer = '';
   for await (const chunk of readText(response, budget)) {
     buffer += chunk;
@@ -455,6 +805,7 @@ async function* readSse(response: Response, budget: { remaining: number }): Asyn
         .map((line) => line.slice(5).trimStart())
         .join('\n');
       yield { data };
+      if (resetBytes !== undefined) budget.remaining = resetBytes;
       index = buffer.indexOf('\n\n');
     }
   }
