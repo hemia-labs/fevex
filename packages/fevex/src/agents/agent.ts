@@ -17,13 +17,15 @@ export interface AgentLimits {
  */
 export interface ContextBudget {
   /** Model context window in tokens. */
-  maxInputTokens: number;
+  contextWindow: number;
   /** Tokens reserved for the next model output. Defaults to 0. */
   reserveOutputTokens?: number;
   /** Fraction of the usable window that triggers compaction. Defaults to 0.8. */
   compactAt?: number;
   /** Target tokens after compaction. Defaults below the compaction threshold. */
   targetTokens?: number;
+  /** Multiplier applied to estimates to leave headroom. Defaults to 1.1. */
+  safetyFactor?: number;
 }
 
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {

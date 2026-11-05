@@ -684,17 +684,18 @@ Automatic compaction is opt-in through a context budget:
 const support = defineAgent({
   name: 'support',
   instructions: 'Answer clearly.',
-  contextBudget: { maxInputTokens: 128_000, reserveOutputTokens: 8_000 },
+  contextBudget: { contextWindow: 128_000, reserveOutputTokens: 8_000 },
 });
 ```
 
 Before each model call, Fevex estimates the prompt. Above 80% of the usable
 window it replaces older completed turns with a summary, keeps system
-instructions and the current turn intact, and emits `context.compacted`. The
-original session history is not rewritten. Use `compaction.compactor` to inject
-a summarizer; the default is a deterministic digest. `limits.maxInputTokens` is
-still the cumulative spend cap, while `contextBudget.maxInputTokens` is the
-model context window.
+instructions, the current request and the latest tool batch intact, and emits
+`context.compacted`. The summary is cached on the session and reused across
+runs; the original history is not rewritten. Use `compaction.compactor` to
+inject a summarizer; the default is a deterministic digest.
+`limits.maxInputTokens` is still the cumulative spend cap, while
+`contextBudget.contextWindow` is the model context window.
 
 Use `startAgent` when execution must continue without consuming a stream:
 

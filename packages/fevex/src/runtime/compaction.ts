@@ -10,7 +10,7 @@ export type ContextTokenEstimator = (
 export interface ContextCompactionInput {
   agentName: string;
   sessionId: SessionId;
-  /** Older conversation messages; system prefix and the current turn are preserved by the runtime. */
+  /** Older turns and earlier tool batches; system prefix, current request and latest batch are preserved. */
   messages: AgentMessage[];
   tools?: ToolSpec[];
   /** Estimated tokens of the whole prompt before compaction. */
@@ -18,7 +18,7 @@ export interface ContextCompactionInput {
   /** Soft budget for the messages returned by the compactor. */
   targetTokens: number;
   /** Hard model context window. */
-  maxInputTokens: number;
+  contextWindow: number;
   step: number;
   context?: ExecutionContext;
   signal?: AbortSignal;
@@ -39,10 +39,11 @@ export interface ContextCompactionOptions {
 }
 
 export interface ResolvedContextBudget {
-  maxInputTokens: number;
+  contextWindow: number;
   reserveOutputTokens: number;
   compactAt: number;
   targetTokens: number;
+  safetyFactor: number;
 }
 
 /** Validates a context budget and fills in defaults. */
@@ -52,19 +53,19 @@ export function resolveContextBudget(
 ): ResolvedContextBudget | undefined {
   if (budget === undefined) return undefined;
   if (!isRecord(budget)) throw new TypeError(`${label} must be an object`);
-  const maxInputTokens = budget.maxInputTokens;
-  if (!Number.isSafeInteger(maxInputTokens) || maxInputTokens <= 0) {
-    throw new TypeError(`${label}.maxInputTokens must be a positive safe integer`);
+  const contextWindow = budget.contextWindow;
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+    throw new TypeError(`${label}.contextWindow must be a positive safe integer`);
   }
   const reserveOutputTokens = budget.reserveOutputTokens ?? 0;
   if (
     !Number.isSafeInteger(reserveOutputTokens)
     || reserveOutputTokens < 0
-    || reserveOutputTokens >= maxInputTokens
+    || reserveOutputTokens >= contextWindow
   ) {
-    throw new TypeError(`${label}.reserveOutputTokens must be a non-negative safe integer below maxInputTokens`);
+    throw new TypeError(`${label}.reserveOutputTokens must be a non-negative safe integer below contextWindow`);
   }
-  const usable = maxInputTokens - reserveOutputTokens;
+  const usable = contextWindow - reserveOutputTokens;
   const compactAt = budget.compactAt ?? 0.8;
   if (typeof compactAt !== 'number' || !Number.isFinite(compactAt) || compactAt <= 0 || compactAt > 1) {
     throw new TypeError(`${label}.compactAt must be greater than 0 and at most 1`);
@@ -77,7 +78,16 @@ export function resolveContextBudget(
   if (targetTokens > Math.floor(usable * compactAt)) {
     throw new TypeError(`${label}.targetTokens must not exceed the compaction threshold`);
   }
-  return { maxInputTokens, reserveOutputTokens, compactAt, targetTokens };
+  const safetyFactor = budget.safetyFactor ?? 1.1;
+  if (
+    typeof safetyFactor !== 'number'
+    || !Number.isFinite(safetyFactor)
+    || safetyFactor < 1
+    || safetyFactor > 2
+  ) {
+    throw new TypeError(`${label}.safetyFactor must be between 1 and 2`);
+  }
+  return { contextWindow, reserveOutputTokens, compactAt, targetTokens, safetyFactor };
 }
 
 /**
@@ -119,9 +129,18 @@ export function createDigestContextCompactor(
   }
   return {
     compact(input) {
-      const lines = input.messages.flatMap((message) => digestMessage(message, maxChars));
-      if (lines.length === 0) {
+      if (input.messages.length === 0) {
         return [{ role: 'system', content: '[Compacted earlier conversation]' }];
+      }
+      let perMessage = maxChars;
+      let lines = input.messages.flatMap((message) => digestMessage(message, perMessage));
+      while (
+        input.estimateTokens([{ role: 'system', content: digestContent(lines, input.messages.length) }])
+          > input.targetTokens
+        && perMessage > 40
+      ) {
+        perMessage = Math.max(40, Math.floor(perMessage * 0.7));
+        lines = input.messages.flatMap((message) => digestMessage(message, perMessage));
       }
       let selected = lines;
       let content = digestContent(selected, input.messages.length);

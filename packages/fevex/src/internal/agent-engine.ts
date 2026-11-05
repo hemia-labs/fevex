@@ -26,6 +26,7 @@ import {
 } from '../runtime';
 import { compileFevexJsonSchema, toToolSpec } from '../tools';
 import type { FevexComposition } from './configuration';
+import { compactContext, MAX_COMPACTION_EVENT_SUMMARY_CHARS } from './context-compaction';
 import { definitionHash } from './definition-hash';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import {
@@ -193,7 +194,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         const messages: AgentMessage[] = [
           { role: 'system', content: agent.instructions },
           ...knowledge.skills,
-          ...session.history,
+          ...sessionHistoryMessages(session),
           ...knowledge.context,
           ...knowledge.memory,
           { role: 'user', content: inputContent },
@@ -511,7 +512,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         messages = [
           { role: 'system', content: agent.instructions },
           ...knowledge.skills,
-          ...state.session.history,
+          ...sessionHistoryMessages(state.session),
           ...knowledge.context,
           ...knowledge.memory,
           { role: 'user', content: inputContent },
@@ -632,104 +633,77 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
         if (pendingTools.length === 0) {
           if (contextBudget !== undefined) {
-            const estimateWith = (items: AgentMessage[], includeTools: boolean): number => {
-              const value = compaction.estimateTokens({
-                messages: items,
-                ...(includeTools ? { tools: allTools } : {}),
-              });
-              if (!Number.isFinite(value) || value < 0) {
-                throw new TypeError(
-                  'Context token estimator must return a non-negative finite number',
-                );
-              }
-              return Math.ceil(value);
-            };
-            const estimate = (items: AgentMessage[]): number => estimateWith(items, true);
-            const estimateMessages = (items: AgentMessage[]): number =>
-              estimateWith(items, false);
-            const estimated = estimate(messages);
-            const usable = contextBudget.maxInputTokens - contextBudget.reserveOutputTokens;
-            const threshold = Math.floor(usable * contextBudget.compactAt);
-            if (!compactionApplied && estimated > threshold) {
-              const split = splitContextForCompaction(messages);
-              if (split !== undefined && split.compactable.length > 0) {
-                const preservedTokens = estimate(split.preserved);
-                const available = Math.max(
-                  1,
-                  Math.min(contextBudget.targetTokens, usable - 1) - preservedTokens,
-                );
-                const compactedMessages = validateCompactedMessages(
-                  await abortable(
-                    () =>
-                      compaction.compactor.compact({
-                        agentName: name,
-                        sessionId: state.session.id,
-                        messages: split.compactable,
-                        tools: allTools,
-                        estimatedTokens: estimated,
-                        targetTokens: available,
-                        maxInputTokens: contextBudget.maxInputTokens,
-                        step,
-                        ...(request.context === undefined ? {} : { context: request.context }),
-                        signal: request.signal,
-                        estimateTokens: estimateMessages,
-                      }),
-                    request.signal,
-                  ),
-                );
-                const nextMessages = [...split.preserved, ...compactedMessages];
-                const compactedTokens = estimate(nextMessages);
-                if (compactedTokens > usable) {
-                  throw new FevexRunError(
-                    'CONTEXT_BUDGET_EXCEEDED',
-                    `Agent "${name}" context budget exceeded after compaction: ${compactedTokens} tokens > ${usable} usable. The preserved system prefix and current turn cannot be compacted further.`,
-                    state.run.id,
-                  );
-                }
-                messages = nextMessages;
-                compactionApplied = true;
-                yield await emit('context.compacted', {
+            const compacted = await compactContext({
+              runId: state.run.id,
+              agentName: name,
+              sessionId: state.session.id,
+              messages,
+              tools: allTools,
+              contextBudget,
+              compactor: compaction.compactor,
+              estimateTokens: compaction.estimateTokens,
+              step,
+              ...(request.context === undefined ? {} : { context: request.context }),
+              signal: request.signal,
+              allowCompaction: !compactionApplied,
+            });
+            if (compacted !== undefined) {
+              messages = compacted.messages;
+              compactionApplied = true;
+              const previous = state.session.compaction;
+              const combined = previous === undefined
+                ? compacted.summary
+                : `${previous.summary}\n\n${compacted.summary}`;
+              // ponytail: cap the derived cache; re-summarize old segments if this becomes lossy.
+              const maxSummaryChars = Math.max(200, contextBudget.targetTokens * 4);
+              state.session.compaction = {
+                summary: combined.length > maxSummaryChars
+                  ? `…${combined.slice(combined.length - maxSummaryChars + 1)}`
+                  : combined,
+                coveredMessages: state.session.history.length,
+                updatedAt: new Date().toISOString(),
+              };
+              const summaryTruncated =
+                compacted.summary.length > MAX_COMPACTION_EVENT_SUMMARY_CHARS;
+              const event = createEvent(state, 'context.compacted', {
+                step,
+                removedMessages: compacted.removedMessages,
+                estimatedTokens: compacted.estimatedTokens,
+                compactedTokens: compacted.compactedTokens,
+                targetTokens: contextBudget.targetTokens,
+                contextWindow: contextBudget.contextWindow,
+                summary: summaryTruncated
+                  ? `${compacted.summary.slice(0, MAX_COMPACTION_EVENT_SUMMARY_CHARS - 1)}…`
+                  : compacted.summary,
+                ...(summaryTruncated ? { summaryTruncated: true } : {}),
+              }) as AgentEvent;
+              if (isDurableRunStore(runStore)) {
+                const checkpoint = await durableCheckpoint(
+                  state,
+                  model,
+                  modelName,
+                  messages,
+                  inputContent,
+                  usage,
+                  providerState,
                   step,
-                  removedMessages: split.compactable.length,
-                  estimatedTokens: estimated,
-                  compactedTokens,
-                  targetTokens: contextBudget.targetTokens,
-                  maxInputTokens: contextBudget.maxInputTokens,
-                  summary: compactedMessages
-                    .map((message) => message.content)
-                    .join('\n\n'),
-                });
-                if (isDurableRunStore(runStore)) {
-                  const checkpoint = await durableCheckpoint(
-                    state,
-                    model,
-                    modelName,
-                    messages,
-                    inputContent,
-                    usage,
-                    providerState,
-                    step,
-                    toolCallCount,
-                    seenToolCallIds,
-                    pendingTools,
-                    pendingIndex,
-                  );
-                  await commit(state, { checkpoint });
-                  state.checkpoint = checkpoint;
-                }
-              } else if (estimated > usable) {
-                throw new FevexRunError(
-                  'CONTEXT_BUDGET_EXCEEDED',
-                  `Agent "${name}" context budget exceeded: ${estimated} tokens > ${usable} usable. The current turn has no compactable history left.`,
-                  state.run.id,
+                  toolCallCount,
+                  seenToolCallIds,
+                  pendingTools,
+                  pendingIndex,
                 );
+                await commit(state, {
+                  checkpoint,
+                  session: state.session,
+                  events: [event],
+                });
+                state.checkpoint = checkpoint;
+              } else {
+                await runStore.appendEvent(event);
+                notifyObserver(event);
               }
-            } else if (compactionApplied && estimated > usable) {
-              throw new FevexRunError(
-                'CONTEXT_BUDGET_EXCEEDED',
-                `Agent "${name}" context budget exceeded: ${estimated} tokens > ${usable} usable. The current turn grew after compaction.`,
-                state.run.id,
-              );
+              events.push(event);
+              yield event;
             }
           }
           const hasToolBudget = step < maxSteps && toolCallCount < maxToolCalls;
@@ -2047,53 +2021,19 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 /** The agent-run surface the workflow engine and the public runtime consume. */
 export type AgentEngine = ReturnType<typeof createAgentEngine>;
 
-function splitContextForCompaction(messages: AgentMessage[]): {
-  preserved: AgentMessage[];
-  compactable: AgentMessage[];
-} | undefined {
-  let lastUser = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]!.role === 'user') {
-      lastUser = index;
-      break;
-    }
+function sessionHistoryMessages(session: Session): AgentMessage[] {
+  const compaction = session.compaction;
+  if (
+    compaction === undefined
+    || compaction.coveredMessages <= 0
+    || compaction.coveredMessages > session.history.length
+  ) {
+    return session.history;
   }
-  if (lastUser < 0) return undefined;
-  const before = messages.slice(0, lastUser);
-  const compactable = before.filter((message) => message.role !== 'system');
-  if (compactable.length === 0) {
-    return { preserved: messages, compactable: [] };
-  }
-  return {
-    preserved: [
-      ...before.filter((message) => message.role === 'system'),
-      ...messages.slice(lastUser),
-    ],
-    compactable,
-  };
-}
-
-function validateCompactedMessages(value: unknown): AgentMessage[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new TypeError('Context compactor must return at least one message');
-  }
-  const roles = new Set(['system', 'user', 'assistant', 'tool']);
-  for (const [index, message] of value.entries()) {
-    if (typeof message !== 'object' || message === null || Array.isArray(message)) {
-      throw new TypeError(`Context compactor message at index ${index} must be an object`);
-    }
-    const record = message as Record<string, unknown>;
-    if (typeof record.role !== 'string' || !roles.has(record.role)) {
-      throw new TypeError(`Context compactor message at index ${index} has an invalid role`);
-    }
-    if (typeof record.content !== 'string') {
-      throw new TypeError(`Context compactor message at index ${index} must have string content`);
-    }
-    if (record.toolCalls !== undefined && !Array.isArray(record.toolCalls)) {
-      throw new TypeError(`Context compactor message at index ${index} has invalid toolCalls`);
-    }
-  }
-  return value as AgentMessage[];
+  return [
+    { role: 'system', content: `[Compacted conversation]\n${compaction.summary}` },
+    ...session.history.slice(compaction.coveredMessages),
+  ];
 }
 
 function readSkillInput(input: JsonValue): { name: string; resource?: string } {

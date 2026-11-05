@@ -174,7 +174,7 @@ function annotation(event: AgentEvent): TraceAnnotation | undefined {
           estimatedTokens: event.payload.estimatedTokens,
           compactedTokens: event.payload.compactedTokens,
           targetTokens: event.payload.targetTokens,
-          maxInputTokens: event.payload.maxInputTokens,
+          contextWindow: event.payload.contextWindow,
         },
       };
     case 'tool.execution_unknown':

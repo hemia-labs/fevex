@@ -120,7 +120,7 @@ defineAgent({
   name: 'support',
   instructions: 'Answer with the available business context.',
   contextBudget: {
-    maxInputTokens: 128_000,
+    contextWindow: 128_000,
     reserveOutputTokens: 8_000,
   },
 });
@@ -128,21 +128,29 @@ defineAgent({
 
 Before each model call, Fevex estimates the prompt. When it crosses 80% of the
 usable window, it replaces older completed turns with a summary, keeps system
-instructions and the current turn intact, emits `context.compacted`, and saves
-the summary in the run checkpoint when the run is durable. The original session
-history is not rewritten.
+instructions, the current request and the latest tool batch intact, emits
+`context.compacted`, and saves the summary in the run checkpoint when the run
+is durable. The original session history is not rewritten.
 
-Compaction summarizes completed turns. The current turn is preserved so pending
-tool calls and approvals are never cut. If a single turn alone exceeds the
-usable window, the run fails with `CONTEXT_BUDGET_EXCEEDED`; reduce the tool
-output, lower `maxSteps`, or raise the budget.
+Compaction summarizes older completed turns and earlier tool batches in the
+current turn. The latest tool batch is preserved, so pending tool calls and
+approvals are never cut. The summary is cached on the session and reused across
+runs; the original history remains the source of truth. If the latest batch
+alone exceeds the usable window, the run fails with
+`CONTEXT_BUDGET_EXCEEDED`; reduce the tool output, lower `maxSteps`, or raise
+the budget.
+
+The default estimator is deliberately conservative: it applies a `safetyFactor`
+of 1.1 over a character-based count. Inject `compaction.estimateTokens` for a
+real tokenizer. The `context.compacted` event carries at most 4,000 summary
+characters; the full summary stays in the checkpoint.
 
 The default compactor is deterministic and never calls a model. Inject a custom
 summarizer through `createFevex({ compaction: { compactor } })`; it receives the
 older messages and returns their replacement. `compaction.estimateTokens` can
 replace the character-based estimate with a real tokenizer.
 
-`contextBudget.maxInputTokens` is the model context window.
+`contextBudget.contextWindow` is the model context window.
 `limits.maxInputTokens` remains the cumulative spend cap for a run.
 
 ## Boundaries

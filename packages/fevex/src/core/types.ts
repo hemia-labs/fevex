@@ -135,8 +135,9 @@ export interface AgentEventPayloads {
     estimatedTokens: number;
     compactedTokens: number;
     targetTokens: number;
-    maxInputTokens: number;
+    contextWindow: number;
     summary: string;
+    summaryTruncated?: boolean;
     workflowStepId?: string;
     workflowAgentName?: string;
     teamDelegationId?: string;

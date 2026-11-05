@@ -13,19 +13,23 @@ const message = (role: AgentMessage['role'], content: string): AgentMessage => (
 
 describe('context budget', () => {
   test('fills defaults and rejects invalid windows', () => {
-    expect(resolveContextBudget({ maxInputTokens: 1_000 }, 'budget')).toEqual({
-      maxInputTokens: 1_000,
+    expect(resolveContextBudget({ contextWindow: 1_000 }, 'budget')).toEqual({
+      contextWindow: 1_000,
       reserveOutputTokens: 0,
       compactAt: 0.8,
       targetTokens: 500,
+      safetyFactor: 1.1,
     });
-    expect(() => resolveContextBudget({ maxInputTokens: 0 }, 'budget')).toThrow('maxInputTokens');
+    expect(() => resolveContextBudget({ contextWindow: 0 }, 'budget')).toThrow('contextWindow');
     expect(() =>
-      resolveContextBudget({ maxInputTokens: 1_000, targetTokens: 900 }, 'budget'),
+      resolveContextBudget({ contextWindow: 1_000, targetTokens: 900 }, 'budget'),
     ).toThrow('targetTokens');
     expect(() =>
-      resolveContextBudget({ maxInputTokens: 1_000, compactAt: 1.5 }, 'budget'),
+      resolveContextBudget({ contextWindow: 1_000, compactAt: 1.5 }, 'budget'),
     ).toThrow('compactAt');
+    expect(() =>
+      resolveContextBudget({ contextWindow: 1_000, safetyFactor: 0.5 }, 'budget'),
+    ).toThrow('safetyFactor');
   });
 
   test('estimates messages and tools', () => {
@@ -53,7 +57,7 @@ describe('digest context compactor', () => {
       messages,
       estimatedTokens: 1_000,
       targetTokens: 80,
-      maxInputTokens: 1_000,
+      contextWindow: 1_000,
       step: 1,
       estimateTokens: (items) => Math.ceil(items.reduce((sum, item) => sum + item.content.length, 0) / 4),
     });

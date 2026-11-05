@@ -191,11 +191,20 @@ export type RunRecord<TOutput = unknown> =
   | WorkflowRun<TOutput>
   | TeamRun<TOutput>;
 
+export interface SessionCompaction {
+  /** Derived summary for the first `coveredMessages` history entries. */
+  summary: string;
+  coveredMessages: number;
+  updatedAt: string;
+}
+
 export interface Session {
   /** Optimistic history revision. Missing on legacy sessions means zero. Store-managed. */
   revision?: number;
   id: SessionId;
   history: AgentMessage[];
+  /** Reusable summary; the original history remains the source of truth. */
+  compaction?: SessionCompaction;
   createdAt: string;
   updatedAt: string;
 }
