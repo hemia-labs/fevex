@@ -2,8 +2,8 @@
   "releases": [
     {
       "name": "@fevex/mcp",
-      "oldVersion": "0.1.0-alpha.6",
-      "version": "0.1.0-alpha.7"
+      "oldVersion": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8"
     }
   ]
 }
