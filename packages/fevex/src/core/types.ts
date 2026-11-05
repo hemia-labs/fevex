@@ -54,6 +54,7 @@ export type AgentEventType =
   | 'model.started'
   | 'model.output.delta'
   | 'model.completed'
+  | 'context.compacted'
   | 'tool.started'
   | 'tool.completed'
   | 'tool.failed'
@@ -123,6 +124,19 @@ export interface AgentEventPayloads {
   'model.completed': {
     step: number;
     usage?: JsonObject;
+    workflowStepId?: string;
+    workflowAgentName?: string;
+    teamDelegationId?: string;
+    teamAgentName?: string;
+  };
+  'context.compacted': {
+    step: number;
+    removedMessages: number;
+    estimatedTokens: number;
+    compactedTokens: number;
+    targetTokens: number;
+    maxInputTokens: number;
+    summary: string;
     workflowStepId?: string;
     workflowAgentName?: string;
     teamDelegationId?: string;

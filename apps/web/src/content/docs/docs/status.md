@@ -23,6 +23,8 @@ checkpoint, upgrade and support guarantees.
 - Conversation sessions, tool approval checkpoints, and resumable runs.
 - Code-first skills plus explicit `SKILL.md` files with progressive disclosure,
   on-demand resources and optional `AGENTS.md` context.
+- Automatic context compaction with per-agent or runtime context budgets and an
+  injectable compactor.
 - Artifact descriptors with local filesystem and S3-compatible stores,
   SQLite and PostgreSQL metadata catalogs, authenticated HTTP delivery, and
   `context.artifacts` for tools with `artifact.created` events.

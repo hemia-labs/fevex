@@ -430,6 +430,7 @@ run.started
 model.started
 model.output.delta
 model.completed
+context.compacted
 tool.started
 tool.completed
 tool.failed
@@ -499,6 +500,24 @@ summary when needed:
 ```ts
 await app.compactSession(first.sessionId, 'Account 42 is active.');
 ```
+
+Automatic compaction is opt-in through a context budget:
+
+```ts
+const support = defineAgent({
+  name: 'support',
+  instructions: 'Answer clearly.',
+  contextBudget: { maxInputTokens: 128_000, reserveOutputTokens: 8_000 },
+});
+```
+
+Before each model call, Fevex estimates the prompt. Above 80% of the usable
+window it replaces older completed turns with a summary, keeps system
+instructions and the current turn intact, and emits `context.compacted`. The
+original session history is not rewritten. Use `compaction.compactor` to inject
+a summarizer; the default is a deterministic digest. `limits.maxInputTokens` is
+still the cumulative spend cap, while `contextBudget.maxInputTokens` is the
+model context window.
 
 Use `startAgent` when execution must continue without consuming a stream:
 

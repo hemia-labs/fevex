@@ -165,6 +165,18 @@ function annotation(event: AgentEvent): TraceAnnotation | undefined {
           delayMs: event.payload.delayMs,
         },
       };
+    case 'context.compacted':
+      return {
+        name: event.type,
+        timestamp: event.timestamp,
+        attributes: {
+          removedMessages: event.payload.removedMessages,
+          estimatedTokens: event.payload.estimatedTokens,
+          compactedTokens: event.payload.compactedTokens,
+          targetTokens: event.payload.targetTokens,
+          maxInputTokens: event.payload.maxInputTokens,
+        },
+      };
     case 'tool.execution_unknown':
       return {
         name: event.type,

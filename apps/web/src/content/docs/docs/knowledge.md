@@ -110,6 +110,41 @@ const app = createFevex({
 
 For multiple files, register one provider per file with a distinct `name`.
 
+## Context budget and compaction
+
+Set a per-agent or runtime-wide context budget to keep long conversations
+inside the model window:
+
+```ts
+defineAgent({
+  name: 'support',
+  instructions: 'Answer with the available business context.',
+  contextBudget: {
+    maxInputTokens: 128_000,
+    reserveOutputTokens: 8_000,
+  },
+});
+```
+
+Before each model call, Fevex estimates the prompt. When it crosses 80% of the
+usable window, it replaces older completed turns with a summary, keeps system
+instructions and the current turn intact, emits `context.compacted`, and saves
+the summary in the run checkpoint when the run is durable. The original session
+history is not rewritten.
+
+Compaction summarizes completed turns. The current turn is preserved so pending
+tool calls and approvals are never cut. If a single turn alone exceeds the
+usable window, the run fails with `CONTEXT_BUDGET_EXCEEDED`; reduce the tool
+output, lower `maxSteps`, or raise the budget.
+
+The default compactor is deterministic and never calls a model. Inject a custom
+summarizer through `createFevex({ compaction: { compactor } })`; it receives the
+older messages and returns their replacement. `compaction.estimateTokens` can
+replace the character-based estimate with a real tokenizer.
+
+`contextBudget.maxInputTokens` is the model context window.
+`limits.maxInputTokens` remains the cumulative spend cap for a run.
+
 ## Boundaries
 
 - Explicit paths only; no automatic skill or `AGENTS.md` discovery.

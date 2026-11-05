@@ -1,3 +1,4 @@
+import type { ContextBudget } from '../agents';
 import type { JsonObject } from '../core';
 import type { ToolDefinition } from '../tools';
 import type { TeamDefinition } from '../teams';
@@ -72,6 +73,7 @@ export async function definitionHash(
   modelName: string,
   agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
   tools: Map<string, ToolDefinition>,
+  contextBudget?: ContextBudget,
 ): Promise<string> {
   const toolDefinitions = await Promise.all(
     (agent.tools ?? []).map((toolName) => transportableTool(tools.get(toolName)!)),
@@ -90,6 +92,7 @@ export async function definitionHash(
     elicitation: agent.elicitation,
     approvalMode: agent.approvalMode,
     limits: agent.limits,
+    contextBudget,
     inputSchema:
       agent.inputSchema === undefined
         ? undefined

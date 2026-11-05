@@ -14,6 +14,7 @@ import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import { FevexRunError, RunPausedError } from '../run-error';
 import {
   isDurableRunStore,
+  resolveContextBudget,
   type AgentRun,
   type DurableRunStore,
   type PendingToolExecution,
@@ -77,6 +78,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     agents,
     tools,
     contextProviders,
+    contextBudget: defaultContextBudget,
+    compaction,
     memoryStore,
     runStore,
     credentialStore,
@@ -116,6 +119,10 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
     }
+    const contextBudget = resolveContextBudget(
+      request.contextBudget ?? agent.contextBudget ?? defaultContextBudget,
+      `Agent "${name}" contextBudget`,
+    );
     const { modelName, model } = resolveModel(agent, request.model);
     const now = new Date().toISOString();
     let session: Session;
@@ -198,8 +205,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             ? { modelName }
             : {}),
           ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
-          definitionHash: await definitionHash(name, modelName, agent, tools),
+          definitionHash: await definitionHash(name, modelName, agent, tools, contextBudget),
           limits: combineLimits(agent.limits, request.limits),
+          ...(contextBudget === undefined ? {} : { contextBudget }),
           messages,
           inputContent,
           context: request.context,
@@ -287,6 +295,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         state.run.id,
       );
     }
+    const contextBudget = resolveContextBudget(
+      state.checkpoint?.contextBudget
+        ?? state.request.contextBudget
+        ?? agent.contextBudget
+        ?? defaultContextBudget,
+      `Agent "${state.run.agentName}" contextBudget`,
+    );
     let serializedState: JsonValue | undefined;
     if (providerState !== undefined) {
       if (!model.stateCodec) {
@@ -306,8 +321,15 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       runId: state.run.id,
       modelName,
       ...(state.request.reasoning === undefined ? {} : { reasoning: state.request.reasoning }),
-      definitionHash: await definitionHash(state.run.agentName, modelName, agent, tools),
+      definitionHash: await definitionHash(
+        state.run.agentName,
+        modelName,
+        agent,
+        tools,
+        contextBudget,
+      ),
       limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
+      ...(contextBudget === undefined ? {} : { contextBudget }),
       messages: structuredClone(messages),
       inputContent,
       context: state.request.context,
@@ -406,6 +428,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     const { request } = state;
     const agent = agents.get(name)!;
     const { modelName, model } = resolveModel(agent, state.checkpoint?.modelName ?? request.model);
+    const contextBudget = resolveContextBudget(
+      state.checkpoint?.contextBudget
+        ?? request.contextBudget
+        ?? agent.contextBudget
+        ?? defaultContextBudget,
+      `Agent "${name}" contextBudget`,
+    );
     const events: AgentEvent[] = [...(state.initialEvents ?? [])];
     const firstEvents = state.initialEvents ?? [];
     state.initialEvents = undefined;
@@ -426,6 +455,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     let seenToolCallIds: Set<string>;
     let pendingTools: PendingToolExecution[];
     let pendingIndex: number;
+    let compactionApplied = false;
 
     try {
       for (const event of firstEvents) yield event;
@@ -438,7 +468,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             state.run.id,
           );
         }
-        const hash = await definitionHash(name, modelName, agent, tools);
+        const hash = await definitionHash(name, modelName, agent, tools, contextBudget);
         if (checkpoint.definitionHash !== hash) {
           throw new FevexRunError(
             'RUN_DEFINITION_CHANGED',
@@ -601,6 +631,107 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         request.signal.throwIfAborted();
 
         if (pendingTools.length === 0) {
+          if (contextBudget !== undefined) {
+            const estimateWith = (items: AgentMessage[], includeTools: boolean): number => {
+              const value = compaction.estimateTokens({
+                messages: items,
+                ...(includeTools ? { tools: allTools } : {}),
+              });
+              if (!Number.isFinite(value) || value < 0) {
+                throw new TypeError(
+                  'Context token estimator must return a non-negative finite number',
+                );
+              }
+              return Math.ceil(value);
+            };
+            const estimate = (items: AgentMessage[]): number => estimateWith(items, true);
+            const estimateMessages = (items: AgentMessage[]): number =>
+              estimateWith(items, false);
+            const estimated = estimate(messages);
+            const usable = contextBudget.maxInputTokens - contextBudget.reserveOutputTokens;
+            const threshold = Math.floor(usable * contextBudget.compactAt);
+            if (!compactionApplied && estimated > threshold) {
+              const split = splitContextForCompaction(messages);
+              if (split !== undefined && split.compactable.length > 0) {
+                const preservedTokens = estimate(split.preserved);
+                const available = Math.max(
+                  1,
+                  Math.min(contextBudget.targetTokens, usable - 1) - preservedTokens,
+                );
+                const compactedMessages = validateCompactedMessages(
+                  await abortable(
+                    () =>
+                      compaction.compactor.compact({
+                        agentName: name,
+                        sessionId: state.session.id,
+                        messages: split.compactable,
+                        tools: allTools,
+                        estimatedTokens: estimated,
+                        targetTokens: available,
+                        maxInputTokens: contextBudget.maxInputTokens,
+                        step,
+                        ...(request.context === undefined ? {} : { context: request.context }),
+                        signal: request.signal,
+                        estimateTokens: estimateMessages,
+                      }),
+                    request.signal,
+                  ),
+                );
+                const nextMessages = [...split.preserved, ...compactedMessages];
+                const compactedTokens = estimate(nextMessages);
+                if (compactedTokens > usable) {
+                  throw new FevexRunError(
+                    'CONTEXT_BUDGET_EXCEEDED',
+                    `Agent "${name}" context budget exceeded after compaction: ${compactedTokens} tokens > ${usable} usable. The preserved system prefix and current turn cannot be compacted further.`,
+                    state.run.id,
+                  );
+                }
+                messages = nextMessages;
+                compactionApplied = true;
+                yield await emit('context.compacted', {
+                  step,
+                  removedMessages: split.compactable.length,
+                  estimatedTokens: estimated,
+                  compactedTokens,
+                  targetTokens: contextBudget.targetTokens,
+                  maxInputTokens: contextBudget.maxInputTokens,
+                  summary: compactedMessages
+                    .map((message) => message.content)
+                    .join('\n\n'),
+                });
+                if (isDurableRunStore(runStore)) {
+                  const checkpoint = await durableCheckpoint(
+                    state,
+                    model,
+                    modelName,
+                    messages,
+                    inputContent,
+                    usage,
+                    providerState,
+                    step,
+                    toolCallCount,
+                    seenToolCallIds,
+                    pendingTools,
+                    pendingIndex,
+                  );
+                  await commit(state, { checkpoint });
+                  state.checkpoint = checkpoint;
+                }
+              } else if (estimated > usable) {
+                throw new FevexRunError(
+                  'CONTEXT_BUDGET_EXCEEDED',
+                  `Agent "${name}" context budget exceeded: ${estimated} tokens > ${usable} usable. The current turn has no compactable history left.`,
+                  state.run.id,
+                );
+              }
+            } else if (compactionApplied && estimated > usable) {
+              throw new FevexRunError(
+                'CONTEXT_BUDGET_EXCEEDED',
+                `Agent "${name}" context budget exceeded: ${estimated} tokens > ${usable} usable. The current turn grew after compaction.`,
+                state.run.id,
+              );
+            }
+          }
           const hasToolBudget = step < maxSteps && toolCallCount < maxToolCalls;
           const modelToolChoice: ToolChoice | undefined =
             hasToolBudget && allTools.length
@@ -1915,6 +2046,55 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
 /** The agent-run surface the workflow engine and the public runtime consume. */
 export type AgentEngine = ReturnType<typeof createAgentEngine>;
+
+function splitContextForCompaction(messages: AgentMessage[]): {
+  preserved: AgentMessage[];
+  compactable: AgentMessage[];
+} | undefined {
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]!.role === 'user') {
+      lastUser = index;
+      break;
+    }
+  }
+  if (lastUser < 0) return undefined;
+  const before = messages.slice(0, lastUser);
+  const compactable = before.filter((message) => message.role !== 'system');
+  if (compactable.length === 0) {
+    return { preserved: messages, compactable: [] };
+  }
+  return {
+    preserved: [
+      ...before.filter((message) => message.role === 'system'),
+      ...messages.slice(lastUser),
+    ],
+    compactable,
+  };
+}
+
+function validateCompactedMessages(value: unknown): AgentMessage[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new TypeError('Context compactor must return at least one message');
+  }
+  const roles = new Set(['system', 'user', 'assistant', 'tool']);
+  for (const [index, message] of value.entries()) {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+      throw new TypeError(`Context compactor message at index ${index} must be an object`);
+    }
+    const record = message as Record<string, unknown>;
+    if (typeof record.role !== 'string' || !roles.has(record.role)) {
+      throw new TypeError(`Context compactor message at index ${index} has an invalid role`);
+    }
+    if (typeof record.content !== 'string') {
+      throw new TypeError(`Context compactor message at index ${index} must have string content`);
+    }
+    if (record.toolCalls !== undefined && !Array.isArray(record.toolCalls)) {
+      throw new TypeError(`Context compactor message at index ${index} has invalid toolCalls`);
+    }
+  }
+  return value as AgentMessage[];
+}
 
 function readSkillInput(input: JsonValue): { name: string; resource?: string } {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {

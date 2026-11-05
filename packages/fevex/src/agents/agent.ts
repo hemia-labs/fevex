@@ -11,6 +11,21 @@ export interface AgentLimits {
   maxOutputTokens?: number | false;
 }
 
+/**
+ * Per-request model context budget. It is separate from
+ * {@link AgentLimits.maxInputTokens}, which caps cumulative spend for a run.
+ */
+export interface ContextBudget {
+  /** Model context window in tokens. */
+  maxInputTokens: number;
+  /** Tokens reserved for the next model output. Defaults to 0. */
+  reserveOutputTokens?: number;
+  /** Fraction of the usable window that triggers compaction. Defaults to 0.8. */
+  compactAt?: number;
+  /** Target tokens after compaction. Defaults below the compaction threshold. */
+  targetTokens?: number;
+}
+
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   instructions: string;
@@ -27,6 +42,7 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   inputSchema?: StandardSchemaV1<unknown, TInput>;
   outputSchema?: StandardSchemaV1<unknown, TOutput>;
   limits?: AgentLimits;
+  contextBudget?: ContextBudget;
 }
 
 export function defineAgent<T extends AgentDefinition>(

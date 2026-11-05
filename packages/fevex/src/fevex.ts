@@ -1,4 +1,4 @@
-import type { AgentDefinition } from './agents';
+import type { AgentDefinition, ContextBudget } from './agents';
 import type { ArtifactStore } from './artifacts';
 import type { AgentEvent, ExecutionContext, RunId } from './core';
 import { createComposition } from './internal/configuration';
@@ -10,6 +10,7 @@ import type { PolicyDefinition } from './policies';
 import type { Sandbox } from './sandbox';
 import type {
   AgentRun,
+  ContextCompactionOptions,
   CredentialStore,
   ListEventsOptions,
   PurgeRunsOptions,
@@ -86,6 +87,10 @@ export interface FevexConfig {
   tools?: ToolDefinition[];
   connections?: ConnectionDefinition[];
   contextProviders?: ContextProvider[];
+  /** Default context budget for agents that do not declare one. */
+  contextBudget?: ContextBudget;
+  /** Optional context compactor and token estimator. */
+  compaction?: ContextCompactionOptions;
   memoryStore?: MemoryStore;
   runStore?: RunStore;
   credentialStore?: CredentialStore;
