@@ -29,8 +29,9 @@ checkpoint, upgrade and support guarantees.
 - Durable workflows and explicit team delegation, parallel work, and handoffs.
 - Graceful shutdown with a deadline, crash recovery after `SIGKILL`, and a
   repeatable load/soak harness with memory, history and overhead gates.
-- Stateless MCP `2026-07-28` connections with `server/discover`; legacy
-  `2025-11-25` servers fail with an actionable version error.
+- Stateless MCP `2026-07-28` connections with `server/discover`, MRTR
+  elicitation, Tasks polling and `subscriptions/listen`; legacy `2025-11-25`
+  servers fail with an actionable version error.
 - Three official packages in the npm release pipeline: `@fevex/core`,
   `@fevex/openai` and `@fevex/deepseek`. MCP, OpenAPI, SQLite, PostgreSQL,
   OpenTelemetry and browser integrations are built, tested and tarball-smoked

@@ -31,8 +31,9 @@ repository until they are published:
 | `@fevex/browser` | Browser automation tools |
 
 The MCP adapter targets stateless protocol `2026-07-28`: it calls
-`server/discover` and sends per-request `_meta`. Servers implementing only the
-legacy `2025-11-25` handshake fail with `MCP_VERSION_UNSUPPORTED`.
+`server/discover`, sends per-request `_meta`, supports MRTR elicitation, Tasks
+polling and `subscriptions/listen`. Servers implementing only the legacy
+`2025-11-25` handshake fail with `MCP_VERSION_UNSUPPORTED`.
 
 The [MCP documentation and OpenAPI account examples](https://github.com/hemia-labs/fevex/tree/main/examples/connections)
 run both adapters through Fevex agents against a temporary local HTTP service.
