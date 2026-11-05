@@ -1,5 +1,15 @@
 # @fevex/core
 
+## 0.1.0-alpha.7
+
+### Minor Changes
+
+- 1146dcf: Add explicit `SKILL.md` support with progressive disclosure. `loadSkillFile`
+  and `loadSkillFiles` parse YAML frontmatter, advertise only name and
+  description, and load instructions or resources on demand through the reserved
+  `fevex__load_skill` tool. Add `createAgentsMdContextProvider` for explicit
+  `AGENTS.md` context. Scripts under `scripts/` are listed but not executed.
+
 ## 0.1.0-alpha.6
 
 ### Minor Changes
