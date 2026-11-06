@@ -11,7 +11,7 @@ domains it uses, and each subpath is a small export barrel.
 | `@fevex/core` | Common runtime, definitions and contracts |
 | `@fevex/core/agents` | Agent definitions |
 | `@fevex/core/artifacts` | Artifact descriptors, local stores and S3-compatible adapter |
-| `@fevex/core/tools` | Tool, connection and provider contracts |
+| `@fevex/core/tools` | Tool, connection, embedding index and provider contracts |
 | `@fevex/core/models` | Provider-neutral model contracts |
 | `@fevex/core/workflows` | Durable workflow definitions |
 | `@fevex/core/teams` | Multiagent team definitions |

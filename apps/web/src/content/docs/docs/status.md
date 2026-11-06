@@ -26,7 +26,7 @@ checkpoint, upgrade and support guarantees.
 - Automatic context compaction with per-agent or runtime context budgets, an
   injectable or model-backed compactor, and runtime compaction counters.
 - On-demand tool search with `fevex__search_tools`, plus per-tool result byte
-  limits for large outputs.
+  limits for large outputs and semantic embedding index/cache primitives.
 - Artifact descriptors with local filesystem and S3-compatible stores,
   SQLite and PostgreSQL metadata catalogs, authenticated HTTP delivery, and
   `context.artifacts` for tools with `artifact.created` events.

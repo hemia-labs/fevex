@@ -82,3 +82,37 @@ defineAgent({
 Search only indexes the agent's own `tools`. Allowlists, policies and approvals
 still apply when a loaded tool executes; loading is context management, not
 authorization. Set `pinned` for tools the model should always see.
+
+## Semantic index and cache
+
+The package also exposes the building blocks for semantic tool retrieval:
+
+```ts
+import {
+  buildToolEmbeddingIndex,
+  InMemoryToolEmbeddingCache,
+  searchToolEmbeddingIndex,
+} from '@fevex/core/tools';
+import type { EmbeddingModel } from '@fevex/core/models';
+
+const cache = new InMemoryToolEmbeddingCache();
+const index = await buildToolEmbeddingIndex({
+  tools,
+  embeddings, // implements EmbeddingModel
+  cache,
+});
+
+const [queryVector] = await embeddings.embed({ texts: [query] });
+const matches = searchToolEmbeddingIndex(index, queryVector, 5, 0.2);
+```
+
+The indexed text is the tool name, description and schema keywords. Cache keys
+are `sha256(embeddingModel.id + text)`, so changing the model or the tool
+definition invalidates only that vector.
+
+`ToolEmbeddingCache` is intentionally small; a host can back it with SQLite,
+PostgreSQL plus `pgvector`, Redis or object storage for multi-process
+deployments. Vectors are derived data and are never stored in run checkpoints.
+
+The built-in `fevex__search_tools` still uses lexical scoring. Hybrid retrieval
+will reuse this index and the evaluation harness in `scripts/tool-search-eval.ts`.
