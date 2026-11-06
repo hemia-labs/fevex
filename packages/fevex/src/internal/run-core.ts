@@ -246,7 +246,6 @@ export function createRunCore({
         agent,
         tools,
         checkpoint.contextBudget,
-        checkpoint.toolSearch,
       )
     ) {
       return preferred;
@@ -263,7 +262,6 @@ export function createRunCore({
           agent,
           tools,
           checkpoint.contextBudget,
-          checkpoint.toolSearch,
         )
       ) {
         return candidate;

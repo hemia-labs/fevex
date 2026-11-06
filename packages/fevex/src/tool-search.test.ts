@@ -49,6 +49,14 @@ describe('tool search', () => {
     ).toEqual(['lookup']);
   });
 
+  test('searches a 500-tool catalog', () => {
+    const specs: ToolSpec[] = Array.from({ length: 500 }, (_, index) => ({
+      name: `tool_${index}`,
+      description: `Capability ${index} for the ${index % 2 === 0 ? 'billing' : 'support'} team.`,
+    }));
+    expect(searchToolSpecs(specs, 'billing 42', 5)[0]?.name).toBe('tool_42');
+  });
+
   test('exposes only the search tool initially and loads matches on demand', async () => {
     const model = fakeModel(
       { toolCalls: [searchCall] },

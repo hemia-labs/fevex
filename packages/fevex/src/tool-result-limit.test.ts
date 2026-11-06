@@ -64,6 +64,39 @@ describe('tool result limits', () => {
     expect(model.calls).toHaveLength(1);
   });
 
+  test('does not retry a result-size failure', async () => {
+    let executions = 0;
+    const model = fakeModel(
+      { toolCalls: [{ id: 'call-1', name: 'large', input: {} }] },
+      { output: 'done' },
+    );
+    const large = defineTool({
+      name: 'large',
+      maxResultBytes: 10,
+      retry: { maxAttempts: 3, backoffMs: 0 },
+      execute() {
+        executions += 1;
+        return { data: 'x'.repeat(100) };
+      },
+    });
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['large'],
+        }),
+      ],
+      tools: [large],
+    });
+
+    await expect(app.runAgent('support', { input: 'go' })).rejects.toMatchObject({
+      code: 'TOOL_RESULT_TOO_LARGE',
+    });
+    expect(executions).toBe(1);
+  });
+
   test('lets a tool override the agent limit', async () => {
     const model = fakeModel(
       { toolCalls: [{ id: 'call-1', name: 'large', input: {} }] },

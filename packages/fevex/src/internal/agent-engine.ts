@@ -250,7 +250,6 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             agent,
             tools,
             contextBudget,
-            toolSearch,
           ),
           limits: combineLimits(agent.limits, request.limits),
           ...(contextBudget === undefined ? {} : { contextBudget }),
@@ -382,7 +381,6 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         agent,
         tools,
         contextBudget,
-        toolSearch,
       ),
       limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
       ...(contextBudget === undefined ? {} : { contextBudget }),
@@ -493,13 +491,17 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         ?? defaultContextBudget,
       `Agent "${name}" contextBudget`,
     );
-    const toolSearch = resolveToolSearchOptions(
-      state.checkpoint?.toolSearch
-        ?? request.toolSearch
-        ?? agent.toolSearch
-        ?? defaultToolSearch,
-      `Agent "${name}" toolSearch`,
-    );
+    // Checkpoints created before tool search existed keep their original full tool list.
+    const toolSearch = state.checkpoint !== undefined
+      && state.checkpoint.toolSearch === undefined
+      ? resolveToolSearchOptions({ mode: 'off' }, `Agent "${name}" toolSearch`)
+      : resolveToolSearchOptions(
+          state.checkpoint?.toolSearch
+            ?? request.toolSearch
+            ?? agent.toolSearch
+            ?? defaultToolSearch,
+          `Agent "${name}" toolSearch`,
+        );
     const events: AgentEvent[] = [...(state.initialEvents ?? [])];
     const firstEvents = state.initialEvents ?? [];
     state.initialEvents = undefined;
@@ -539,7 +541,6 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           agent,
           tools,
           contextBudget,
-          toolSearch,
         );
         if (checkpoint.definitionHash !== hash) {
           throw new FevexRunError(
@@ -1682,7 +1683,11 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                 updatedAt: new Date().toISOString(),
               };
               if (durable) await commit(state, { toolExecution: record });
-              if (attempt >= maxAttempts || tool.idempotency !== 'keyed') {
+              if (
+                attempt >= maxAttempts
+                || tool.idempotency !== 'keyed'
+                || (error instanceof FevexRunError && error.code === 'TOOL_RESULT_TOO_LARGE')
+              ) {
                 yield await emit('tool.failed', {
                   step,
                   toolCallId: pending.call.id,
