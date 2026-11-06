@@ -2,48 +2,48 @@
   "releases": [
     {
       "name": "@fevex/browser",
-      "oldVersion": "0.1.0-alpha.6",
-      "version": "0.1.0-alpha.7"
+      "oldVersion": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8"
     },
     {
       "name": "@fevex/deepseek",
-      "oldVersion": "0.1.0-alpha.6",
-      "version": "0.1.0-alpha.7"
+      "oldVersion": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8"
     },
     {
       "name": "@fevex/core",
-      "oldVersion": "0.1.0-alpha.6",
-      "version": "0.1.0-alpha.7"
+      "oldVersion": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8"
     },
     {
       "name": "@fevex/mcp",
-      "oldVersion": "0.1.0-alpha.8",
-      "version": "0.1.0-alpha.9"
+      "oldVersion": "0.1.0-alpha.9",
+      "version": "0.1.0-alpha.10"
     },
     {
       "name": "@fevex/openai",
-      "oldVersion": "0.1.0-alpha.6",
-      "version": "0.1.0-alpha.7"
+      "oldVersion": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8"
     },
     {
       "name": "@fevex/openapi",
+      "oldVersion": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8"
+    },
+    {
+      "name": "@fevex/opentelemetry",
       "oldVersion": "0.1.0-alpha.6",
       "version": "0.1.0-alpha.7"
     },
     {
-      "name": "@fevex/opentelemetry",
-      "oldVersion": "0.1.0-alpha.5",
-      "version": "0.1.0-alpha.6"
-    },
-    {
       "name": "@fevex/postgres",
-      "oldVersion": "0.1.0-alpha.5",
-      "version": "0.1.0-alpha.6"
+      "oldVersion": "0.1.0-alpha.6",
+      "version": "0.1.0-alpha.7"
     },
     {
       "name": "@fevex/sqlite",
-      "oldVersion": "0.1.0-alpha.5",
-      "version": "0.1.0-alpha.6"
+      "oldVersion": "0.1.0-alpha.6",
+      "version": "0.1.0-alpha.7"
     }
   ]
 }
