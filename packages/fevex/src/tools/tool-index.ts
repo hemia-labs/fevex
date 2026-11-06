@@ -5,6 +5,14 @@ import type { EmbeddingModel } from '../models';
 export interface ToolEmbeddingCache {
   get(key: string): number[] | undefined | Promise<number[] | undefined>;
   set(key: string, vector: number[]): void | Promise<void>;
+  /** Optional batch read for durable caches with network/database latency. */
+  getMany?(
+    keys: readonly string[],
+  ): Array<number[] | undefined> | Promise<Array<number[] | undefined>>;
+  /** Optional batch write for durable caches with network/database latency. */
+  setMany?(
+    entries: ReadonlyArray<{ key: string; vector: number[] }>,
+  ): void | Promise<void>;
 }
 
 export interface InMemoryToolEmbeddingCacheOptions {
@@ -48,6 +56,14 @@ export class InMemoryToolEmbeddingCache implements ToolEmbeddingCache {
       if (oldest === undefined) break;
       this.#entries.delete(oldest);
     }
+  }
+
+  getMany(keys: readonly string[]): Array<number[] | undefined> {
+    return keys.map((key) => this.get(key));
+  }
+
+  setMany(entries: ReadonlyArray<{ key: string; vector: number[] }>): void {
+    for (const entry of entries) this.set(entry.key, entry.vector);
   }
 }
 
@@ -96,10 +112,17 @@ export async function buildToolEmbeddingIndex(
   );
   const vectors = new Map<string, number[]>();
   const missing = new Map<string, string>();
+  const batchCached = await readCacheMany(
+    options.cache,
+    keys,
+    options.embeddings.dimensions,
+  );
 
   for (let index = 0; index < tools.length; index += 1) {
     const key = keys[index]!;
-    const cached = await readCache(options.cache, key, options.embeddings.dimensions);
+    const cached = batchCached === undefined
+      ? await readCache(options.cache, key, options.embeddings.dimensions)
+      : batchCached[index];
     if (cached !== undefined) {
       vectors.set(key, cached);
       continue;
@@ -120,11 +143,23 @@ export async function buildToolEmbeddingIndex(
         `Embedding model "${options.embeddings.id}" returned ${embedded.length} vectors for ${batch.length} texts`,
       );
     }
+    const writes: Array<{ key: string; vector: number[] }> = [];
     for (let index = 0; index < batch.length; index += 1) {
       const vector = embedded[index];
       assertVector(vector, `Embedding for "${batch[index]![1]}"`);
       vectors.set(batch[index]![0], vector);
-      await writeCache(options.cache, batch[index]![0], vector);
+      writes.push({ key: batch[index]![0], vector });
+    }
+    if (options.cache?.setMany !== undefined) {
+      try {
+        await options.cache.setMany(writes);
+      } catch {
+        // A cache failure must not break indexing or search.
+      }
+    } else {
+      for (const write of writes) {
+        await writeCache(options.cache, write.key, write.vector);
+      }
     }
   }
 
@@ -230,6 +265,8 @@ export function cosineSimilarity(
   left: readonly number[],
   right: readonly number[],
 ): number {
+  assertVector(left, 'Left cosine vector');
+  assertVector(right, 'Right cosine vector');
   if (left.length !== right.length) {
     throw new TypeError(`Cosine vectors must have the same dimensions: ${left.length} and ${right.length}`);
   }
@@ -285,8 +322,33 @@ async function readCache(
 ): Promise<number[] | undefined> {
   if (cache === undefined) return undefined;
   try {
-    const value = await cache.get(key);
-    if (value === undefined) return undefined;
+    return normalizeCached(await cache.get(key), dimensions);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readCacheMany(
+  cache: ToolEmbeddingCache | undefined,
+  keys: readonly string[],
+  dimensions: number | undefined,
+): Promise<Array<number[] | undefined> | undefined> {
+  if (cache?.getMany === undefined) return undefined;
+  try {
+    const values = await cache.getMany(keys);
+    if (!Array.isArray(values) || values.length !== keys.length) return undefined;
+    return values.map((value) => normalizeCached(value, dimensions));
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeCached(
+  value: unknown,
+  dimensions: number | undefined,
+): number[] | undefined {
+  if (value === undefined) return undefined;
+  try {
     assertVector(value, 'Cached tool embedding');
     if (dimensions !== undefined && value.length !== dimensions) return undefined;
     return [...value];

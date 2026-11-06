@@ -1,5 +1,10 @@
 import type { JsonValue, ToolCall, ToolSpec } from '../core';
 import type { KnowledgeContext, ProgressiveSkillProvider } from '../knowledge';
+import {
+  buildToolEmbeddingIndex,
+  searchToolEmbeddingIndex,
+  type ToolEmbeddingIndex,
+} from '../tools';
 import { serializeValue } from './json';
 import { abortable, toErrorMessage } from './run-support';
 import {
@@ -8,12 +13,18 @@ import {
 } from './runtime-constants';
 import {
   readToolSearchInput,
+  reciprocalRankFusion,
   searchToolSpecs,
   type ResolvedToolSearchOptions,
 } from './tool-search';
 
 export interface InternalToolExecution {
   content: string;
+}
+
+export interface SemanticToolIndexState {
+  index?: ToolEmbeddingIndex;
+  attempted: boolean;
 }
 
 export async function executeInternalTool(input: {
@@ -25,22 +36,64 @@ export async function executeInternalTool(input: {
   loadedTools: Set<string>;
   progressiveSkills: ProgressiveSkillProvider[];
   knowledgeContext: KnowledgeContext;
+  semanticState: SemanticToolIndexState;
   signal?: AbortSignal;
 }): Promise<InternalToolExecution | undefined> {
   if (input.call.name === SEARCH_TOOLS_TOOL_NAME) {
     if (!input.searchEnabled) return undefined;
     const search = readToolSearchInput(input.input);
     const limit = Math.min(search.limit ?? input.toolSearch.limit, input.toolSearch.limit);
-    const matches = searchToolSpecs(input.tools, search.query, limit);
-    for (const match of matches) input.loadedTools.add(match.name);
+    const semantic = input.toolSearch.semantic;
+    const candidateLimit = Math.max(limit, semantic?.topK ?? limit);
+    const lexical = searchToolSpecs(input.tools, search.query, candidateLimit);
+    let matches = lexical;
+    if (semantic !== undefined) {
+      try {
+        if (input.semanticState.index === undefined && !input.semanticState.attempted) {
+          input.semanticState.attempted = true;
+          input.semanticState.index = await buildToolEmbeddingIndex({
+            tools: input.tools,
+            embeddings: semantic.embeddings,
+            cache: semantic.cache,
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
+          });
+        }
+        if (input.semanticState.index !== undefined) {
+          const queryVectors = await semantic.embeddings.embed({
+            texts: [search.query],
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
+          });
+          const queryVector = queryVectors[0];
+          if (!queryVector) throw new Error('Embedding model returned no query vector');
+          const semanticMatches = searchToolEmbeddingIndex(
+            input.semanticState.index,
+            queryVector,
+            semantic.topK,
+            semantic.minScore,
+          );
+          if (semanticMatches.length > 0) {
+            matches = reciprocalRankFusion(
+              lexical,
+              semanticMatches.map((match) => match.tool),
+              limit,
+            );
+          }
+        }
+      } catch (error) {
+        if (input.signal?.aborted) throw error;
+        matches = lexical;
+      }
+    }
+    const selected = matches.slice(0, limit);
+    for (const match of selected) input.loadedTools.add(match.name);
     return {
       content: serializeValue(
         {
-          tools: matches.map((tool) => ({
+          tools: selected.map((tool) => ({
             name: tool.name,
             ...(tool.description === undefined ? {} : { description: tool.description }),
           })),
-          ...(matches.length === 0
+          ...(selected.length === 0
             ? { message: 'No tools matched; try a different query.' }
             : {}),
         },

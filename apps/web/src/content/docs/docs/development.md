@@ -70,8 +70,10 @@ token reduction and a breakdown by tag (`exact`, `synonym`, `acronym`, `schema`)
 It also lists misses so the next improvement is driven by evidence rather than
 intuition.
 
-The harness accepts any `ToolSearchStrategy`. A semantic or hybrid strategy can
-reuse the same dataset and metrics before it becomes part of the runtime.
+The harness accepts any `ToolSearchStrategy`. `createHybridStrategy` in
+`scripts/tool-search-eval-lib.ts` wires an `EmbeddingModel` and cache into the
+same dataset and metrics, so the lexical baseline and hybrid retrieval can be
+compared directly.
 
 ## Inspect state and events
 

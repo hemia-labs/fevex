@@ -1,6 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { ExactDefinition } from '../internal/exact-definition';
-import type { ModelRef, ReasoningEffort, ToolChoice } from '../models';
+import type { EmbeddingModel, ModelRef, ReasoningEffort, ToolChoice } from '../models';
+import type { ToolEmbeddingCache } from '../tools';
 import type { ApprovalMode, ElicitationMode } from '../runtime';
 
 /** Resource limits enforced by the runtime for a single agent run. */
@@ -30,6 +31,17 @@ export interface ContextBudget {
   safetyFactor?: number;
 }
 
+export interface ToolSearchSemanticOptions {
+  /** Embedding model used to index tools and queries. */
+  embeddings: EmbeddingModel;
+  /** Cache for tool vectors. Defaults to the runtime cache. */
+  cache?: ToolEmbeddingCache;
+  /** Vector candidates considered before fusion. Defaults to 20. */
+  topK?: number;
+  /** Minimum cosine score for vector candidates. Defaults to 0. */
+  minScore?: number;
+}
+
 /** On-demand tool discovery for agents with large tool catalogs. */
 export interface ToolSearchOptions {
   /** `auto` enables search above the configured thresholds. Defaults to `auto`. */
@@ -42,7 +54,12 @@ export interface ToolSearchOptions {
   limit?: number;
   /** Tool names exposed without a search. */
   pinned?: string[];
+  /** Optional hybrid lexical + vector retrieval. */
+  semantic?: ToolSearchSemanticOptions;
 }
+
+/** Serializable tool-search options stored in a run checkpoint. */
+export type ToolSearchCheckpointOptions = Omit<ToolSearchOptions, 'semantic'>;
 
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   name: string;

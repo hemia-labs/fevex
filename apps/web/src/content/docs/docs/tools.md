@@ -112,7 +112,36 @@ definition invalidates only that vector.
 
 `ToolEmbeddingCache` is intentionally small; a host can back it with SQLite,
 PostgreSQL plus `pgvector`, Redis or object storage for multi-process
-deployments. Vectors are derived data and are never stored in run checkpoints.
+deployments. Implement the optional `getMany`/`setMany` methods to batch
+durable reads and writes. Vectors are derived data and are never stored in run
+checkpoints.
 
-The built-in `fevex__search_tools` still uses lexical scoring. Hybrid retrieval
-will reuse this index and the evaluation harness in `scripts/tool-search-eval.ts`.
+Set a runtime-wide cache with `createFevex({ toolSearchCache: myCache })`; an
+agent can override it inside `toolSearch.semantic.cache`.
+
+To enable hybrid retrieval, configure the embedding model on the agent or the
+runtime:
+
+```ts
+defineAgent({
+  name: 'support',
+  instructions: 'Answer with the available tools.',
+  tools: [...],
+  toolSearch: {
+    mode: 'auto',
+    semantic: {
+      embeddings,
+      topK: 20,
+      minScore: 0.2,
+    },
+  },
+});
+```
+
+Fevex retrieves lexical and vector candidates independently, fuses them with
+Reciprocal Rank Fusion and returns the final `limit`. If the embedding model or
+vector index fails, search falls back to lexical results. The runtime reuses
+`toolSearchCache` (or the agent cache) so unchanged tools are embedded once.
+
+The evaluation harness in `scripts/tool-search-eval.ts` can measure any
+`ToolSearchStrategy`, including a hybrid strategy with your embedding model.

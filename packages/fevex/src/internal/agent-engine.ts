@@ -33,14 +33,21 @@ import {
 } from '../runtime';
 import { compileFevexJsonSchema, toToolSpec } from '../tools';
 import type { FevexComposition } from './configuration';
-import { executeInternalTool } from './agent-internal-tools';
+import {
+  executeInternalTool,
+  type SemanticToolIndexState,
+} from './agent-internal-tools';
 import {
   capSummary,
   compactContext,
   MAX_COMPACTION_EVENT_SUMMARY_CHARS,
 } from './context-compaction';
 import { definitionHash } from './definition-hash';
-import { resolveToolSearchOptions, shouldUseToolSearch } from './tool-search';
+import {
+  resolveToolSearchOptions,
+  serializeToolSearchOptions,
+  shouldUseToolSearch,
+} from './tool-search';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import {
   abortable,
@@ -101,6 +108,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     contextBudget: defaultContextBudget,
     compaction,
     toolSearch: defaultToolSearch,
+    toolSearchCache: defaultToolSearchCache,
     memoryStore,
     runStore,
     credentialStore,
@@ -154,6 +162,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     const toolSearch = resolveToolSearchOptions(
       request.toolSearch ?? agent.toolSearch ?? defaultToolSearch,
       `Agent "${name}" toolSearch`,
+      defaultToolSearchCache,
     );
     const toolChoice = effectiveToolChoice(agent, request);
     const initialLoadedTools = new Set(
@@ -253,7 +262,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           ),
           limits: combineLimits(agent.limits, request.limits),
           ...(contextBudget === undefined ? {} : { contextBudget }),
-          toolSearch,
+          toolSearch: serializeToolSearchOptions(toolSearch),
           loadedTools: [...initialLoadedTools],
           messages,
           inputContent,
@@ -355,6 +364,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         ?? agent.toolSearch
         ?? defaultToolSearch,
       `Agent "${state.run.agentName}" toolSearch`,
+      defaultToolSearchCache,
     );
     let serializedState: JsonValue | undefined;
     if (providerState !== undefined) {
@@ -384,7 +394,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       ),
       limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
       ...(contextBudget === undefined ? {} : { contextBudget }),
-      toolSearch,
+      toolSearch: serializeToolSearchOptions(toolSearch),
       loadedTools: [...(state.loadedTools ?? [])],
       messages: structuredClone(messages),
       inputContent,
@@ -492,16 +502,22 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       `Agent "${name}" contextBudget`,
     );
     // Checkpoints created before tool search existed keep their original full tool list.
-    const toolSearch = state.checkpoint !== undefined
-      && state.checkpoint.toolSearch === undefined
-      ? resolveToolSearchOptions({ mode: 'off' }, `Agent "${name}" toolSearch`)
-      : resolveToolSearchOptions(
-          state.checkpoint?.toolSearch
-            ?? request.toolSearch
-            ?? agent.toolSearch
-            ?? defaultToolSearch,
-          `Agent "${name}" toolSearch`,
-        );
+    const semantic =
+      request.toolSearch?.semantic
+      ?? agent.toolSearch?.semantic
+      ?? defaultToolSearch?.semantic;
+    const toolSearch = resolveToolSearchOptions(
+      state.checkpoint === undefined
+        ? request.toolSearch ?? agent.toolSearch ?? defaultToolSearch
+        : state.checkpoint.toolSearch === undefined
+          ? { mode: 'off' as const, ...(semantic === undefined ? {} : { semantic }) }
+          : {
+              ...state.checkpoint.toolSearch,
+              ...(semantic === undefined ? {} : { semantic }),
+            },
+      `Agent "${name}" toolSearch`,
+      defaultToolSearchCache,
+    );
     const events: AgentEvent[] = [...(state.initialEvents ?? [])];
     const firstEvents = state.initialEvents ?? [];
     state.initialEvents = undefined;
@@ -523,6 +539,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     let pendingTools: PendingToolExecution[];
     let pendingIndex: number;
     let compactionApplied = false;
+    const semanticState: SemanticToolIndexState = { attempted: false };
 
     try {
       for (const event of firstEvents) yield event;
@@ -1042,6 +1059,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                 loadedTools,
                 progressiveSkills,
                 knowledgeContext: knowledgeContext(state, inputContent),
+                semanticState,
                 signal: request.signal,
               });
             } catch (error) {

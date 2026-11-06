@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolSpec } from '../packages/fevex/src/core';
+import type { EmbeddingModel } from '../packages/fevex/src/models';
+import { InMemoryToolEmbeddingCache } from '../packages/fevex/src/tools';
 import type { ToolSearchEvalDataset } from './tool-search-eval-lib';
 import {
+  createHybridStrategy,
   evaluateToolSearch,
   formatReport,
   lexicalStrategy,
@@ -47,6 +50,38 @@ describe('tool search evaluation', () => {
     expect(result.misses[0]?.query).toBe('unknown capability');
     expect(result.tokenReduction).toBeGreaterThan(0);
     expect(result.p95LatencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test('compares a hybrid strategy against the lexical baseline', async () => {
+    const embeddings: EmbeddingModel = {
+      id: 'fixture',
+      dimensions: 2,
+      async embed({ texts }) {
+        return texts.map((text) =>
+          text.includes('send_email') || text.includes('notify') ? [1, 0] : [0, 1],
+        );
+      },
+    };
+    const hybridDataset: ToolSearchEvalDataset = {
+      name: 'hybrid-fixture',
+      tools,
+      cases: [{ query: 'notify the customer', expected: ['send_email'] }],
+    };
+    const lexical = await evaluateToolSearch({
+      dataset: hybridDataset,
+      strategy: lexicalStrategy,
+      k: 1,
+    });
+    const hybrid = await evaluateToolSearch({
+      dataset: hybridDataset,
+      strategy: createHybridStrategy({
+        embeddings,
+        cache: new InMemoryToolEmbeddingCache(),
+      }),
+      k: 1,
+    });
+    expect(lexical.hitAt1).toBe(0);
+    expect(hybrid.hitAt1).toBe(1);
   });
 
   test('formats a readable report', async () => {

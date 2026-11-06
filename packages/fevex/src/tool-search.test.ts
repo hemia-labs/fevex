@@ -1,8 +1,26 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolSpec } from './core';
-import { searchToolSpecs } from './internal/tool-search';
+import { reciprocalRankFusion, searchToolSpecs } from './internal/tool-search';
+import type { EmbeddingModel } from './models';
 import { createFevex, defineAgent, defineTool, InMemoryRunStore, RunPausedError } from './index';
 import { fakeModel } from './testing';
+
+class FakeHybridEmbeddings implements EmbeddingModel {
+  readonly id = 'fake-hybrid';
+  readonly dimensions = 2;
+  readonly calls: string[][] = [];
+
+  async embed({ texts }: { texts: string[] }): Promise<number[][]> {
+    this.calls.push([...texts]);
+    return texts.map((text) => {
+      if (text.includes('send_email') || text.includes('email') || text.includes('notify')) {
+        return [1, 0];
+      }
+      if (text.includes('query_database') || text.includes('SQL')) return [0, 1];
+      return [0, 0];
+    });
+  }
+}
 
 const email = () =>
   defineTool({
@@ -29,6 +47,17 @@ const searchCall = {
 };
 
 describe('tool search', () => {
+  test('fuses lexical and semantic rankings with RRF', () => {
+    const a: ToolSpec = { name: 'a' };
+    const b: ToolSpec = { name: 'b' };
+    const c: ToolSpec = { name: 'c' };
+    expect(reciprocalRankFusion([a, b], [b, c], 3).map((tool) => tool.name)).toEqual([
+      'b',
+      'a',
+      'c',
+    ]);
+  });
+
   test('searches by name and description', () => {
     const specs: ToolSpec[] = [
       { name: 'send_email', description: 'Send a message.' },
@@ -88,6 +117,175 @@ describe('tool search', () => {
     const searchResult = model.calls[1]!.messages.find((message) => message.role === 'tool');
     expect(searchResult?.content).toContain('send_email');
     expect(searchResult?.content).toContain('Send an email');
+  });
+
+  test('uses semantic retrieval when lexical misses a synonym', async () => {
+    const embeddings = new FakeHybridEmbeddings();
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'notify the customer' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_email', input: {} }] },
+      { output: 'done' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email', 'query_database'],
+          toolSearch: { mode: 'on', semantic: { embeddings } },
+        }),
+      ],
+      tools: [email(), database()],
+    });
+
+    await expect(app.runAgent('support', { input: 'notify the customer' })).resolves.toMatchObject({
+      output: 'done',
+    });
+    const searchResult = model.calls[1]!.messages.find((message) => message.role === 'tool');
+    expect(searchResult?.content).toContain('send_email');
+    expect(model.calls[1]!.tools?.map((tool) => tool.name)).toContain('send_email');
+    expect(embeddings.calls.some((call) => call.length > 1)).toBe(true);
+  });
+
+  test('reuses the semantic index cache across runs', async () => {
+    const embeddings = new FakeHybridEmbeddings();
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'notify' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_email', input: {} }] },
+      { output: 'first' },
+      {
+        toolCalls: [
+          { id: 'search-2', name: 'fevex__search_tools', input: { query: 'notify' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-2', name: 'send_email', input: {} }] },
+      { output: 'second' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email', 'query_database'],
+          toolSearch: { mode: 'on', semantic: { embeddings } },
+        }),
+      ],
+      tools: [email(), database()],
+    });
+
+    await expect(app.runAgent('support', { input: 'notify' })).resolves.toMatchObject({
+      output: 'first',
+    });
+    await expect(app.runAgent('support', { input: 'notify' })).resolves.toMatchObject({
+      output: 'second',
+    });
+    expect(embeddings.calls.filter((call) => call.length > 1)).toHaveLength(1);
+  });
+
+  test('falls back to lexical when embeddings fail', async () => {
+    const embeddings: EmbeddingModel = {
+      id: 'broken',
+      async embed() {
+        throw new Error('embedding provider unavailable');
+      },
+    };
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'email the customer' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_email', input: {} }] },
+      { output: 'done' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email'],
+          toolSearch: { mode: 'on', semantic: { embeddings } },
+        }),
+      ],
+      tools: [email()],
+    });
+
+    await expect(app.runAgent('support', { input: 'email the customer' })).resolves.toMatchObject({
+      output: 'done',
+    });
+    const searchResult = model.calls[1]!.messages.find((message) => message.role === 'tool');
+    expect(searchResult?.content).toContain('send_email');
+  });
+
+  test('keeps semantic adapters out of the checkpoint', async () => {
+    const store = new InMemoryRunStore();
+    const embeddings = new FakeHybridEmbeddings();
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'email' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_email', input: {} }] },
+      { output: 'done' },
+    );
+    const approvalEmail = defineTool({
+      name: 'send_email',
+      description: 'Send an email message.',
+      approval: 'required',
+      execute() {
+        return 'sent';
+      },
+    });
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email'],
+          toolSearch: { mode: 'on', semantic: { embeddings } },
+        }),
+      ],
+      tools: [approvalEmail],
+      runStore: store,
+    });
+
+    let paused: RunPausedError | undefined;
+    try {
+      await app.runAgent('support', { input: 'email the customer' });
+    } catch (error) {
+      if (!(error instanceof RunPausedError)) throw error;
+      paused = error;
+    }
+    if (!paused) throw new Error('Expected the run to pause');
+    const checkpoint = await store.getCheckpoint(paused.runId);
+    expect(checkpoint?.toolSearch).toMatchObject({ mode: 'on' });
+    expect(checkpoint?.toolSearch).not.toHaveProperty('semantic');
+
+    await app.resumeRun(paused.runId, {
+      type: 'approval',
+      approvalId: paused.pause.type === 'approval' ? paused.pause.approval.id : '',
+      decision: 'approve',
+      actor: { id: 'reviewer' },
+    });
+    let resumed = await app.getRun(paused.runId);
+    for (let attempt = 0; attempt < 50 && resumed?.status === 'running'; attempt += 1) {
+      await Bun.sleep(10);
+      resumed = await app.getRun(paused.runId);
+    }
+    expect(resumed?.status).toBe('completed');
   });
 
   test('keeps pinned tools exposed without a search', async () => {
@@ -162,6 +360,33 @@ describe('tool search', () => {
         toolSearch: { limit: 50 },
       }),
     ).toThrow('limit');
+    expect(() =>
+      createFevex({
+        models: { default: model },
+        agents: [
+          defineAgent({
+            name: 'support',
+            instructions: 'Help.',
+            toolSearch: { mode: 'on', semantic: { embeddings: {} as never } },
+          }),
+        ],
+      }),
+    ).toThrow('embeddings');
+    expect(() =>
+      createFevex({
+        models: { default: model },
+        agents: [
+          defineAgent({
+            name: 'support',
+            instructions: 'Help.',
+            toolSearch: {
+              mode: 'on',
+              semantic: { embeddings: new FakeHybridEmbeddings(), topK: 0 },
+            },
+          }),
+        ],
+      }),
+    ).toThrow('topK');
   });
 
   test('auto mode enables search above the tool-count threshold', async () => {

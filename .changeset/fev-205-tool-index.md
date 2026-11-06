@@ -9,4 +9,5 @@ Add semantic tool indexing primitives. `EmbeddingModel` lives in
 `cosineSimilarity`. Indexed text covers the tool name, description and schema
 keywords. Cache keys are `sha256(embeddingModel.id + text)`, the in-memory cache
 is a bounded LRU, and durable adapters can implement the same `get`/`set`
-contract. Vectors are derived data and are never stored in run checkpoints.
+contract plus optional `getMany`/`setMany` batches. Vectors are derived data and
+are never stored in run checkpoints.

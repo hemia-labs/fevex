@@ -9,6 +9,7 @@ import {
   searchToolEmbeddingIndex,
   toolEmbeddingKey,
   toolEmbeddingText,
+  type ToolEmbeddingCache,
 } from './tool-index';
 
 const tool = (name: string, description: string, inputSchema?: JsonObject): ToolSpec => ({
@@ -104,6 +105,32 @@ describe('tool embedding index', () => {
       'send_email',
       'query_database',
     ]);
+  });
+
+  test('uses batch cache methods when available', async () => {
+    let getManyCalls = 0;
+    let setManyCalls = 0;
+    const cache: ToolEmbeddingCache = {
+      get() {
+        return undefined;
+      },
+      set() {},
+      getMany(keys) {
+        getManyCalls += 1;
+        return keys.map(() => undefined);
+      },
+      setMany() {
+        setManyCalls += 1;
+      },
+    };
+    const tools = [tool('send_email', 'Send email.'), tool('query_database', 'Run SQL.')];
+    await buildToolEmbeddingIndex({
+      tools,
+      embeddings: new FakeEmbeddings(vectorFor),
+      cache,
+    });
+    expect(getManyCalls).toBe(1);
+    expect(setManyCalls).toBe(1);
   });
 
   test('batches missing texts', async () => {

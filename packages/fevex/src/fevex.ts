@@ -27,7 +27,7 @@ import type {
   TeamRun,
 } from './runtime';
 import type { TeamDefinition } from './teams';
-import type { ConnectionDefinition, ToolDefinition } from './tools';
+import type { ConnectionDefinition, ToolDefinition, ToolEmbeddingCache } from './tools';
 import type { WorkflowDefinition } from './workflows';
 
 export interface FevexAdmissionRequest {
@@ -94,6 +94,8 @@ export interface FevexConfig {
   compaction?: ContextCompactionOptions;
   /** Default on-demand tool search for agents that do not declare one. */
   toolSearch?: ToolSearchOptions;
+  /** Optional durable cache for semantic tool embeddings. */
+  toolSearchCache?: ToolEmbeddingCache;
   memoryStore?: MemoryStore;
   runStore?: RunStore;
   credentialStore?: CredentialStore;

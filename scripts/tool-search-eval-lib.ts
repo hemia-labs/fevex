@@ -1,6 +1,16 @@
 import type { ToolSpec } from '../packages/fevex/src/core';
-import { searchToolSpecs } from '../packages/fevex/src/internal/tool-search';
+import {
+  reciprocalRankFusion,
+  searchToolSpecs,
+} from '../packages/fevex/src/internal/tool-search';
+import type { EmbeddingModel } from '../packages/fevex/src/models';
 import { estimateContextTokens } from '../packages/fevex/src/runtime/compaction';
+import {
+  buildToolEmbeddingIndex,
+  searchToolEmbeddingIndex,
+  type ToolEmbeddingCache,
+  type ToolEmbeddingIndex,
+} from '../packages/fevex/src/tools';
 
 export interface ToolSearchEvalCase {
   query: string;
@@ -61,6 +71,41 @@ export const lexicalStrategy: ToolSearchStrategy = {
     return searchToolSpecs(tools, query, limit);
   },
 };
+
+export function createHybridStrategy(options: {
+  embeddings: EmbeddingModel;
+  cache: ToolEmbeddingCache;
+  topK?: number;
+  minScore?: number;
+  name?: string;
+}): ToolSearchStrategy {
+  let index: ToolEmbeddingIndex | undefined;
+  let indexedTools: readonly ToolSpec[] | undefined;
+  return {
+    name: options.name ?? 'hybrid',
+    async search(query, tools, limit) {
+      const topK = options.topK ?? 20;
+      const lexical = searchToolSpecs(tools, query, Math.max(limit, topK));
+      if (index === undefined || indexedTools !== tools) {
+        index = await buildToolEmbeddingIndex({
+          tools,
+          embeddings: options.embeddings,
+          cache: options.cache,
+        });
+        indexedTools = tools;
+      }
+      const [queryVector] = await options.embeddings.embed({ texts: [query] });
+      if (!queryVector) throw new Error('Embedding model returned no query vector');
+      const semantic = searchToolEmbeddingIndex(
+        index,
+        queryVector,
+        topK,
+        options.minScore ?? 0,
+      ).map((match) => match.tool);
+      return reciprocalRankFusion(lexical, semantic, limit);
+    },
+  };
+}
 
 export async function evaluateToolSearch(options: {
   dataset: ToolSearchEvalDataset;

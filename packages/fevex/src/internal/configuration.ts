@@ -27,9 +27,11 @@ import {
   type RunStore,
 } from '../runtime';
 import {
+  InMemoryToolEmbeddingCache,
   IntegrationError,
   type ConnectionDefinition,
   type ConnectionToolPolicy,
+  type ToolEmbeddingCache,
   type ToolProviderContext,
   type ToolDefinition,
 } from '../tools';
@@ -60,6 +62,7 @@ export interface FevexComposition {
   contextProviders: Map<string, ContextProvider>;
   contextBudget: ContextBudget | undefined;
   toolSearch: ToolSearchOptions | undefined;
+  toolSearchCache: ToolEmbeddingCache;
   compaction: {
     compactor: ContextCompactor;
     estimateTokens: ContextTokenEstimator;
@@ -553,9 +556,22 @@ export function createComposition(config: FevexConfig): FevexComposition {
       throw configurationError('INVALID_CONFIG', (error as Error).message);
     }
   }
+  assertConfiguration(
+    config.toolSearchCache === undefined
+      || (isRecord(config.toolSearchCache)
+        && typeof config.toolSearchCache.get === 'function'
+        && typeof config.toolSearchCache.set === 'function'),
+    'INVALID_CONFIG',
+    'Fevex config "toolSearchCache" must implement get and set',
+  );
+  const defaultToolSearchCache = config.toolSearchCache ?? new InMemoryToolEmbeddingCache();
   if (config.toolSearch !== undefined) {
     try {
-      resolveToolSearchOptions(config.toolSearch, 'Fevex config "toolSearch"');
+      resolveToolSearchOptions(
+        config.toolSearch,
+        'Fevex config "toolSearch"',
+        defaultToolSearchCache,
+      );
     } catch (error) {
       throw configurationError('INVALID_CONFIG', (error as Error).message);
     }
@@ -1113,7 +1129,11 @@ export function createComposition(config: FevexConfig): FevexComposition {
     }
     if (definition.toolSearch !== undefined) {
       try {
-        resolveToolSearchOptions(definition.toolSearch, `Agent "${name}" toolSearch`);
+        resolveToolSearchOptions(
+          definition.toolSearch,
+          `Agent "${name}" toolSearch`,
+          defaultToolSearchCache,
+        );
       } catch (error) {
         throw configurationError('INVALID_AGENT', (error as Error).message);
       }
@@ -1603,6 +1623,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
               ? {}
               : { pinned: [...config.toolSearch.pinned] }),
           },
+    toolSearchCache: defaultToolSearchCache,
     compaction: {
       compactor: config.compaction?.compactor ?? createDigestContextCompactor(),
       estimateTokens: config.compaction?.estimateTokens ?? estimateContextTokens,
