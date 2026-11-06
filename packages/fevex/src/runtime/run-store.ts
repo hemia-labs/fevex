@@ -8,7 +8,7 @@ import type {
 } from '../core';
 import type { ModelMetadata, ModelUsage, ReasoningEffort } from '../models';
 import type { ToolChoice } from '../models';
-import type { AgentLimits } from '../agents';
+import type { AgentLimits, ContextBudget } from '../agents';
 
 /** Stable identifier for conversation history shared across runs. */
 export type SessionId = string;
@@ -191,11 +191,20 @@ export type RunRecord<TOutput = unknown> =
   | WorkflowRun<TOutput>
   | TeamRun<TOutput>;
 
+export interface SessionCompaction {
+  /** Derived summary for the first `coveredMessages` history entries. */
+  summary: string;
+  coveredMessages: number;
+  updatedAt: string;
+}
+
 export interface Session {
   /** Optimistic history revision. Missing on legacy sessions means zero. Store-managed. */
   revision?: number;
   id: SessionId;
   history: AgentMessage[];
+  /** Reusable summary; the original history remains the source of truth. */
+  compaction?: SessionCompaction;
   createdAt: string;
   updatedAt: string;
 }
@@ -302,6 +311,7 @@ export interface RunCheckpoint {
   reasoning?: ReasoningEffort;
   definitionHash: string;
   limits?: AgentLimits;
+  contextBudget?: ContextBudget;
   messages: AgentMessage[];
   inputContent: string;
   context?: ExecutionContext;
@@ -479,6 +489,7 @@ export interface RunRequest<TInput = unknown, TOutput = unknown> {
   reasoning?: ReasoningEffort;
   context?: ExecutionContext;
   limits?: AgentLimits;
+  contextBudget?: ContextBudget;
   elicitation?: ElicitationMode;
   approvalMode?: ApprovalMode;
   toolChoice?: ToolChoice;

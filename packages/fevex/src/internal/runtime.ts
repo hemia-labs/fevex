@@ -358,6 +358,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
       const session = await runStore.getSession(sessionId);
       if (!session) throw new Error(`Session "${sessionId}" does not exist`);
       session.history = [{ role: 'system', content: summary }];
+      session.compaction = undefined;
       session.updatedAt = new Date().toISOString();
       await runStore.saveSession(session);
       return structuredClone(session);

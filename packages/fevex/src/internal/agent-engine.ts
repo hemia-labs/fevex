@@ -14,6 +14,7 @@ import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import { FevexRunError, RunPausedError } from '../run-error';
 import {
   isDurableRunStore,
+  resolveContextBudget,
   type AgentRun,
   type DurableRunStore,
   type PendingToolExecution,
@@ -25,6 +26,7 @@ import {
 } from '../runtime';
 import { compileFevexJsonSchema, toToolSpec } from '../tools';
 import type { FevexComposition } from './configuration';
+import { compactContext, MAX_COMPACTION_EVENT_SUMMARY_CHARS } from './context-compaction';
 import { definitionHash } from './definition-hash';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import {
@@ -77,6 +79,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     agents,
     tools,
     contextProviders,
+    contextBudget: defaultContextBudget,
+    compaction,
     memoryStore,
     runStore,
     credentialStore,
@@ -116,6 +120,10 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     if (!agent) {
       throw new FevexRunError('AGENT_NOT_FOUND', `Agent "${name}" is not registered`);
     }
+    const contextBudget = resolveContextBudget(
+      request.contextBudget ?? agent.contextBudget ?? defaultContextBudget,
+      `Agent "${name}" contextBudget`,
+    );
     const { modelName, model } = resolveModel(agent, request.model);
     const now = new Date().toISOString();
     let session: Session;
@@ -186,7 +194,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         const messages: AgentMessage[] = [
           { role: 'system', content: agent.instructions },
           ...knowledge.skills,
-          ...session.history,
+          ...sessionHistoryMessages(session),
           ...knowledge.context,
           ...knowledge.memory,
           { role: 'user', content: inputContent },
@@ -198,8 +206,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             ? { modelName }
             : {}),
           ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
-          definitionHash: await definitionHash(name, modelName, agent, tools),
+          definitionHash: await definitionHash(name, modelName, agent, tools, contextBudget),
           limits: combineLimits(agent.limits, request.limits),
+          ...(contextBudget === undefined ? {} : { contextBudget }),
           messages,
           inputContent,
           context: request.context,
@@ -287,6 +296,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         state.run.id,
       );
     }
+    const contextBudget = resolveContextBudget(
+      state.checkpoint?.contextBudget
+        ?? state.request.contextBudget
+        ?? agent.contextBudget
+        ?? defaultContextBudget,
+      `Agent "${state.run.agentName}" contextBudget`,
+    );
     let serializedState: JsonValue | undefined;
     if (providerState !== undefined) {
       if (!model.stateCodec) {
@@ -306,8 +322,15 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       runId: state.run.id,
       modelName,
       ...(state.request.reasoning === undefined ? {} : { reasoning: state.request.reasoning }),
-      definitionHash: await definitionHash(state.run.agentName, modelName, agent, tools),
+      definitionHash: await definitionHash(
+        state.run.agentName,
+        modelName,
+        agent,
+        tools,
+        contextBudget,
+      ),
       limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
+      ...(contextBudget === undefined ? {} : { contextBudget }),
       messages: structuredClone(messages),
       inputContent,
       context: state.request.context,
@@ -406,6 +429,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     const { request } = state;
     const agent = agents.get(name)!;
     const { modelName, model } = resolveModel(agent, state.checkpoint?.modelName ?? request.model);
+    const contextBudget = resolveContextBudget(
+      state.checkpoint?.contextBudget
+        ?? request.contextBudget
+        ?? agent.contextBudget
+        ?? defaultContextBudget,
+      `Agent "${name}" contextBudget`,
+    );
     const events: AgentEvent[] = [...(state.initialEvents ?? [])];
     const firstEvents = state.initialEvents ?? [];
     state.initialEvents = undefined;
@@ -426,6 +456,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     let seenToolCallIds: Set<string>;
     let pendingTools: PendingToolExecution[];
     let pendingIndex: number;
+    let compactionApplied = false;
 
     try {
       for (const event of firstEvents) yield event;
@@ -438,7 +469,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             state.run.id,
           );
         }
-        const hash = await definitionHash(name, modelName, agent, tools);
+        const hash = await definitionHash(name, modelName, agent, tools, contextBudget);
         if (checkpoint.definitionHash !== hash) {
           throw new FevexRunError(
             'RUN_DEFINITION_CHANGED',
@@ -481,7 +512,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         messages = [
           { role: 'system', content: agent.instructions },
           ...knowledge.skills,
-          ...state.session.history,
+          ...sessionHistoryMessages(state.session),
           ...knowledge.context,
           ...knowledge.memory,
           { role: 'user', content: inputContent },
@@ -601,6 +632,80 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         request.signal.throwIfAborted();
 
         if (pendingTools.length === 0) {
+          if (contextBudget !== undefined) {
+            const compacted = await compactContext({
+              runId: state.run.id,
+              agentName: name,
+              sessionId: state.session.id,
+              messages,
+              tools: allTools,
+              contextBudget,
+              compactor: compaction.compactor,
+              estimateTokens: compaction.estimateTokens,
+              step,
+              ...(request.context === undefined ? {} : { context: request.context }),
+              signal: request.signal,
+              allowCompaction: !compactionApplied,
+            });
+            if (compacted !== undefined) {
+              messages = compacted.messages;
+              compactionApplied = true;
+              const previous = state.session.compaction;
+              const combined = previous === undefined
+                ? compacted.summary
+                : `${previous.summary}\n\n${compacted.summary}`;
+              // ponytail: cap the derived cache; re-summarize old segments if this becomes lossy.
+              const maxSummaryChars = Math.max(200, contextBudget.targetTokens * 4);
+              state.session.compaction = {
+                summary: combined.length > maxSummaryChars
+                  ? `…${combined.slice(combined.length - maxSummaryChars + 1)}`
+                  : combined,
+                coveredMessages: state.session.history.length,
+                updatedAt: new Date().toISOString(),
+              };
+              const summaryTruncated =
+                compacted.summary.length > MAX_COMPACTION_EVENT_SUMMARY_CHARS;
+              const event = createEvent(state, 'context.compacted', {
+                step,
+                removedMessages: compacted.removedMessages,
+                estimatedTokens: compacted.estimatedTokens,
+                compactedTokens: compacted.compactedTokens,
+                targetTokens: contextBudget.targetTokens,
+                contextWindow: contextBudget.contextWindow,
+                summary: summaryTruncated
+                  ? `${compacted.summary.slice(0, MAX_COMPACTION_EVENT_SUMMARY_CHARS - 1)}…`
+                  : compacted.summary,
+                ...(summaryTruncated ? { summaryTruncated: true } : {}),
+              }) as AgentEvent;
+              if (isDurableRunStore(runStore)) {
+                const checkpoint = await durableCheckpoint(
+                  state,
+                  model,
+                  modelName,
+                  messages,
+                  inputContent,
+                  usage,
+                  providerState,
+                  step,
+                  toolCallCount,
+                  seenToolCallIds,
+                  pendingTools,
+                  pendingIndex,
+                );
+                await commit(state, {
+                  checkpoint,
+                  session: state.session,
+                  events: [event],
+                });
+                state.checkpoint = checkpoint;
+              } else {
+                await runStore.appendEvent(event);
+                notifyObserver(event);
+              }
+              events.push(event);
+              yield event;
+            }
+          }
           const hasToolBudget = step < maxSteps && toolCallCount < maxToolCalls;
           const modelToolChoice: ToolChoice | undefined =
             hasToolBudget && allTools.length
@@ -1915,6 +2020,21 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
 
 /** The agent-run surface the workflow engine and the public runtime consume. */
 export type AgentEngine = ReturnType<typeof createAgentEngine>;
+
+function sessionHistoryMessages(session: Session): AgentMessage[] {
+  const compaction = session.compaction;
+  if (
+    compaction === undefined
+    || compaction.coveredMessages <= 0
+    || compaction.coveredMessages > session.history.length
+  ) {
+    return session.history;
+  }
+  return [
+    { role: 'system', content: `[Compacted conversation]\n${compaction.summary}` },
+    ...session.history.slice(compaction.coveredMessages),
+  ];
+}
 
 function readSkillInput(input: JsonValue): { name: string; resource?: string } {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {

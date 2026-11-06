@@ -239,7 +239,15 @@ export function createRunCore({
     checkpoint: RunCheckpoint,
   ) => {
     const preferred = resolveModel(agent, checkpoint.modelName);
-    if (checkpoint.definitionHash === await definitionHash(agentName, preferred.modelName, agent, tools)) {
+    if (
+      checkpoint.definitionHash === await definitionHash(
+        agentName,
+        preferred.modelName,
+        agent,
+        tools,
+        checkpoint.contextBudget,
+      )
+    ) {
       return preferred;
     }
     if (checkpoint.modelName !== undefined) return undefined;
@@ -247,7 +255,15 @@ export function createRunCore({
     for (const candidateName of models.keys()) {
       if (candidateName === preferred.modelName) continue;
       const candidate = resolveModel(agent, candidateName);
-      if (checkpoint.definitionHash === await definitionHash(agentName, candidate.modelName, agent, tools)) {
+      if (
+        checkpoint.definitionHash === await definitionHash(
+          agentName,
+          candidate.modelName,
+          agent,
+          tools,
+          checkpoint.contextBudget,
+        )
+      ) {
         return candidate;
       }
     }

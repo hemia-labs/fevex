@@ -1,4 +1,4 @@
-import type { AgentDefinition } from '../agents';
+import type { AgentDefinition, ContextBudget } from '../agents';
 import { FevexConfigurationError, type FevexConfigurationErrorCode } from '../configuration-error';
 import type { ArtifactStore } from '../artifacts';
 import type { JsonObject, JsonValue, ToolEventSource } from '../core';
@@ -17,7 +17,15 @@ import {
   type TeamMember,
 } from '../teams';
 import { teamAsWorkflow } from '../teams/team';
-import { InMemoryRunStore, type RunStore } from '../runtime';
+import {
+  createDigestContextCompactor,
+  estimateContextTokens,
+  InMemoryRunStore,
+  resolveContextBudget,
+  type ContextCompactor,
+  type ContextTokenEstimator,
+  type RunStore,
+} from '../runtime';
 import {
   IntegrationError,
   type ConnectionDefinition,
@@ -49,6 +57,11 @@ export interface FevexComposition {
   teams: Map<string, TeamDefinition>;
   tools: Map<string, ToolDefinition>;
   contextProviders: Map<string, ContextProvider>;
+  contextBudget: ContextBudget | undefined;
+  compaction: {
+    compactor: ContextCompactor;
+    estimateTokens: ContextTokenEstimator;
+  };
   memoryStore: MemoryStore | undefined;
   runStore: RunStore;
   credentialStore: FevexConfig['credentialStore'];
@@ -522,6 +535,35 @@ export function createComposition(config: FevexConfig): FevexComposition {
     'INVALID_CONFIG',
     'Fevex config "contextProviders" must be an array',
   );
+  if (config.contextBudget !== undefined) {
+    try {
+      resolveContextBudget(config.contextBudget, 'Fevex config "contextBudget"');
+    } catch (error) {
+      throw configurationError('INVALID_CONFIG', (error as Error).message);
+    }
+  }
+  if (config.compaction !== undefined) {
+    assertConfiguration(
+      typeof config.compaction === 'object'
+        && config.compaction !== null
+        && !Array.isArray(config.compaction),
+      'INVALID_CONFIG',
+      'Fevex config "compaction" must be an object',
+    );
+    assertConfiguration(
+      config.compaction.compactor === undefined
+        || (isRecord(config.compaction.compactor)
+          && typeof config.compaction.compactor.compact === 'function'),
+      'INVALID_CONFIG',
+      'Fevex config "compaction.compactor" must implement compact',
+    );
+    assertConfiguration(
+      config.compaction.estimateTokens === undefined
+        || typeof config.compaction.estimateTokens === 'function',
+      'INVALID_CONFIG',
+      'Fevex config "compaction.estimateTokens" must be a function',
+    );
+  }
   assertConfiguration(
     config.memoryStore === undefined || isMemoryStore(config.memoryStore),
     'INVALID_CONFIG',
@@ -1028,6 +1070,13 @@ export function createComposition(config: FevexConfig): FevexComposition {
       'INVALID_AGENT',
       `Agent "${name}" limits must be an object`,
     );
+    if (definition.contextBudget !== undefined) {
+      try {
+        resolveContextBudget(definition.contextBudget, `Agent "${name}" contextBudget`);
+      } catch (error) {
+        throw configurationError('INVALID_AGENT', (error as Error).message);
+      }
+    }
     if (definition.outputSchema !== undefined) {
       assertConfiguration(
         isStandardSchema(definition.outputSchema),
@@ -1080,6 +1129,9 @@ export function createComposition(config: FevexConfig): FevexComposition {
       ...(definition.approvalMode === undefined
         ? {}
         : { approvalMode: definition.approvalMode }),
+      ...(definition.contextBudget === undefined
+        ? {}
+        : { contextBudget: { ...definition.contextBudget } }),
       ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
       ...(rawLimits === undefined
@@ -1461,6 +1513,12 @@ export function createComposition(config: FevexConfig): FevexComposition {
     teams,
     tools,
     contextProviders,
+    contextBudget:
+      config.contextBudget === undefined ? undefined : { ...config.contextBudget },
+    compaction: {
+      compactor: config.compaction?.compactor ?? createDigestContextCompactor(),
+      estimateTokens: config.compaction?.estimateTokens ?? estimateContextTokens,
+    },
     memoryStore: config.memoryStore ?? (usesMemory ? new InMemoryMemoryStore() : undefined),
     runStore: config.runStore ?? new InMemoryRunStore(),
     credentialStore: config.credentialStore,
