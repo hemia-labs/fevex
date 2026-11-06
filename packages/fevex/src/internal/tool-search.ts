@@ -1,13 +1,18 @@
 import type { ToolSearchCheckpointOptions, ToolSearchOptions } from '../agents';
 import type { JsonValue, ToolSpec } from '../core';
 import type { EmbeddingModel } from '../models';
-import type { ToolEmbeddingCache } from '../tools';
+import type {
+  ToolEmbeddingCache,
+  ToolReranker,
+  ToolSearchCandidate,
+} from '../tools';
 
 export interface ResolvedToolSearchSemanticOptions {
   embeddings: EmbeddingModel;
   cache: ToolEmbeddingCache;
   topK: number;
   minScore: number;
+  reranker?: ToolReranker;
 }
 
 export interface ResolvedToolSearchOptions {
@@ -90,13 +95,23 @@ export function reciprocalRankFusion(
   limit: number,
   rankConstant = 60,
 ): ToolSpec[] {
+  return reciprocalRankFusionCandidates(lexical, semantic, limit, rankConstant)
+    .map((candidate) => candidate.tool);
+}
+
+export function reciprocalRankFusionCandidates(
+  lexical: readonly ToolSpec[],
+  semantic: readonly ToolSpec[],
+  limit: number,
+  rankConstant = 60,
+): ToolSearchCandidate[] {
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw new TypeError('Tool search fusion limit must be a positive safe integer');
   }
   if (!Number.isSafeInteger(rankConstant) || rankConstant < 1) {
     throw new TypeError('Tool search fusion rankConstant must be a positive safe integer');
   }
-  const scores = new Map<string, { tool: ToolSpec; score: number }>();
+  const scores = new Map<string, ToolSearchCandidate>();
   const add = (tools: readonly ToolSpec[]): void => {
     for (let index = 0; index < tools.length; index += 1) {
       const tool = tools[index]!;
@@ -109,8 +124,7 @@ export function reciprocalRankFusion(
   add(semantic);
   return [...scores.values()]
     .sort((left, right) => right.score - left.score || left.tool.name.localeCompare(right.tool.name))
-    .slice(0, limit)
-    .map(({ tool }) => tool);
+    .slice(0, limit);
 }
 
 function resolveSemanticOptions(
@@ -153,7 +167,20 @@ function resolveSemanticOptions(
   if (typeof minScore !== 'number' || !Number.isFinite(minScore) || minScore < -1 || minScore > 1) {
     throw new TypeError(`${label}.minScore must be a finite number between -1 and 1`);
   }
-  return { embeddings, cache, topK, minScore };
+  const reranker = semantic.reranker;
+  if (
+    reranker !== undefined
+    && (typeof reranker !== 'object' || reranker === null || typeof reranker.rerank !== 'function')
+  ) {
+    throw new TypeError(`${label}.reranker must implement rerank`);
+  }
+  return {
+    embeddings,
+    cache,
+    topK,
+    minScore,
+    ...(reranker === undefined ? {} : { reranker }),
+  };
 }
 
 export function shouldUseToolSearch(

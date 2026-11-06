@@ -84,6 +84,35 @@ describe('tool search evaluation', () => {
     expect(hybrid.hitAt1).toBe(1);
   });
 
+  test('applies an optional reranker after fusion', async () => {
+    const embeddings: EmbeddingModel = {
+      id: 'fixture',
+      dimensions: 2,
+      async embed({ texts }) {
+        return texts.map((text) => (text.includes('email') ? [1, 0] : [0, 1]));
+      },
+    };
+    const rerankDataset: ToolSearchEvalDataset = {
+      name: 'rerank-fixture',
+      tools,
+      cases: [{ query: 'send email', expected: ['query_database'] }],
+    };
+    const hybrid = await evaluateToolSearch({
+      dataset: rerankDataset,
+      strategy: createHybridStrategy({
+        embeddings,
+        cache: new InMemoryToolEmbeddingCache(),
+        reranker: {
+          async rerank({ tools: candidates, limit }) {
+            return [...candidates].reverse().slice(0, limit);
+          },
+        },
+      }),
+      k: 1,
+    });
+    expect(hybrid.hitAt1).toBe(1);
+  });
+
   test('formats a readable report', async () => {
     const result = await evaluateToolSearch({
       dataset,

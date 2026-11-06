@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { ExactDefinition } from '../internal/exact-definition';
 import type { EmbeddingModel, ModelRef, ReasoningEffort, ToolChoice } from '../models';
-import type { ToolEmbeddingCache } from '../tools';
+import type { ToolEmbeddingCache, ToolReranker } from '../tools';
 import type { ApprovalMode, ElicitationMode } from '../runtime';
 
 /** Resource limits enforced by the runtime for a single agent run. */
@@ -40,6 +40,8 @@ export interface ToolSearchSemanticOptions {
   topK?: number;
   /** Minimum cosine score for vector candidates. Defaults to 0. */
   minScore?: number;
+  /** Optional second-stage reranker over the fused candidates. */
+  reranker?: ToolReranker;
 }
 
 /** On-demand tool discovery for agents with large tool catalogs. */

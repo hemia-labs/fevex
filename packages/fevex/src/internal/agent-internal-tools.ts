@@ -4,6 +4,8 @@ import {
   buildToolEmbeddingIndex,
   searchToolEmbeddingIndex,
   type ToolEmbeddingIndex,
+  type ToolReranker,
+  type ToolSearchCandidate,
 } from '../tools';
 import { serializeValue } from './json';
 import { abortable, toErrorMessage } from './run-support';
@@ -13,7 +15,7 @@ import {
 } from './runtime-constants';
 import {
   readToolSearchInput,
-  reciprocalRankFusion,
+  reciprocalRankFusionCandidates,
   searchToolSpecs,
   type ResolvedToolSearchOptions,
 } from './tool-search';
@@ -72,11 +74,26 @@ export async function executeInternalTool(input: {
             semantic.minScore,
           );
           if (semanticMatches.length > 0) {
-            matches = reciprocalRankFusion(
+            const fusionLimit = semantic.reranker === undefined
+              ? limit
+              : Math.max(limit, semantic.topK);
+            const fused = reciprocalRankFusionCandidates(
               lexical,
               semanticMatches.map((match) => match.tool),
-              limit,
+              fusionLimit,
             );
+            if (semantic.reranker !== undefined && fused.length > 1) {
+              const reranked = await rerankToolCandidates(
+                semantic.reranker,
+                search.query,
+                fused,
+                limit,
+                input.signal,
+              );
+              matches = (reranked ?? fused).map((candidate) => candidate.tool);
+            } else {
+              matches = fused.map((candidate) => candidate.tool);
+            }
           }
         }
       } catch (error) {
@@ -128,6 +145,38 @@ export async function executeInternalTool(input: {
   }
 
   return undefined;
+}
+
+async function rerankToolCandidates(
+  reranker: ToolReranker,
+  query: string,
+  candidates: ToolSearchCandidate[],
+  limit: number,
+  signal?: AbortSignal,
+): Promise<ToolSearchCandidate[] | undefined> {
+  try {
+    const result = await reranker.rerank({
+      query,
+      tools: candidates,
+      limit,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!Array.isArray(result)) return undefined;
+    const byName = new Map(candidates.map((candidate) => [candidate.tool.name, candidate]));
+    const seen = new Set<string>();
+    const ordered: ToolSearchCandidate[] = [];
+    for (const candidate of result) {
+      const name = candidate?.tool?.name;
+      const original = typeof name === 'string' ? byName.get(name) : undefined;
+      if (!original || seen.has(name)) return undefined;
+      seen.add(name);
+      ordered.push(original);
+    }
+    return ordered.slice(0, limit);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return undefined;
+  }
 }
 
 function readSkillInput(input: JsonValue): { name: string; resource?: string } {

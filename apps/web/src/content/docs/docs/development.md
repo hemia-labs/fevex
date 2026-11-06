@@ -71,9 +71,9 @@ It also lists misses so the next improvement is driven by evidence rather than
 intuition.
 
 The harness accepts any `ToolSearchStrategy`. `createHybridStrategy` in
-`scripts/tool-search-eval-lib.ts` wires an `EmbeddingModel` and cache into the
-same dataset and metrics, so the lexical baseline and hybrid retrieval can be
-compared directly.
+`scripts/tool-search-eval-lib.ts` wires an `EmbeddingModel`, cache and optional
+reranker into the same dataset and metrics, so the lexical baseline and hybrid
+retrieval can be compared directly.
 
 ## Inspect state and events
 

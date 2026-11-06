@@ -25,7 +25,7 @@ checkpoint, upgrade and support guarantees.
   on-demand resources and optional `AGENTS.md` context.
 - Automatic context compaction with per-agent or runtime context budgets, an
   injectable or model-backed compactor, and runtime compaction counters.
-- On-demand lexical or hybrid semantic tool search with `fevex__search_tools`,
+- On-demand lexical or hybrid semantic tool search with an optional reranker,
   plus per-tool result byte limits for large outputs.
 - Artifact descriptors with local filesystem and S3-compatible stores,
   SQLite and PostgreSQL metadata catalogs, authenticated HTTP delivery, and

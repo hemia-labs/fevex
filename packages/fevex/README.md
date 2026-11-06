@@ -937,7 +937,8 @@ defineAgent({
 every tool. Search only indexes the agent's own tools; allowlists, policies and
 approvals still apply when a loaded tool executes. Add `semantic.embeddings` to
 fuse lexical and vector candidates with Reciprocal Rank Fusion; failures fall
-back to lexical.
+back to lexical. An optional `semantic.reranker` can reorder the fused top
+candidates.
 
 Tools can cap serialized results with `maxResultBytes`, or an agent/run can set
 `limits.maxToolResultBytes`. The default cap is 1 MiB; use `false` to disable it.

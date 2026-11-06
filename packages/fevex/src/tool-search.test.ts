@@ -4,6 +4,7 @@ import { reciprocalRankFusion, searchToolSpecs } from './internal/tool-search';
 import type { EmbeddingModel } from './models';
 import { createFevex, defineAgent, defineTool, InMemoryRunStore, RunPausedError } from './index';
 import { fakeModel } from './testing';
+import type { ToolReranker, ToolSearchCandidate } from './tools';
 
 class FakeHybridEmbeddings implements EmbeddingModel {
   readonly id = 'fake-hybrid';
@@ -37,6 +38,15 @@ const database = () =>
     description: 'Run a read-only SQL query against the warehouse.',
     execute() {
       return 'rows';
+    },
+  });
+
+const slack = () =>
+  defineTool({
+    name: 'send_slack_message',
+    description: 'Post a message to a Slack channel.',
+    execute() {
+      return 'posted';
     },
   });
 
@@ -228,6 +238,119 @@ describe('tool search', () => {
     expect(searchResult?.content).toContain('send_email');
   });
 
+  test('reranks fused candidates', async () => {
+    const embeddings = new FakeHybridEmbeddings();
+    let seen: ToolSearchCandidate[] = [];
+    const reranker: ToolReranker = {
+      async rerank({ tools, limit }) {
+        seen = tools;
+        return [...tools].reverse().slice(0, limit);
+      },
+    };
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'send' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_slack_message', input: {} }] },
+      { output: 'done' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email', 'send_slack_message'],
+          toolSearch: { mode: 'on', semantic: { embeddings, reranker } },
+        }),
+      ],
+      tools: [email(), slack()],
+    });
+
+    await expect(app.runAgent('support', { input: 'send a message' })).resolves.toMatchObject({
+      output: 'done',
+    });
+    expect(seen.length).toBeGreaterThan(1);
+    const searchResult = model.calls[1]!.messages.find((message) => message.role === 'tool');
+    const parsed = JSON.parse(searchResult!.content) as { tools: Array<{ name: string }> };
+    expect(parsed.tools[0]?.name).toBe('send_slack_message');
+  });
+
+  test('falls back to fused ranking when the reranker fails', async () => {
+    const embeddings = new FakeHybridEmbeddings();
+    const reranker: ToolReranker = {
+      async rerank() {
+        throw new Error('reranker unavailable');
+      },
+    };
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'send' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_email', input: {} }] },
+      { output: 'done' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email', 'send_slack_message'],
+          toolSearch: { mode: 'on', semantic: { embeddings, reranker } },
+        }),
+      ],
+      tools: [email(), slack()],
+    });
+
+    await expect(app.runAgent('support', { input: 'send a message' })).resolves.toMatchObject({
+      output: 'done',
+    });
+    const searchResult = model.calls[1]!.messages.find((message) => message.role === 'tool');
+    expect(searchResult?.content).toContain('send_email');
+  });
+
+  test('rejects reranker output with unknown tools', async () => {
+    const embeddings = new FakeHybridEmbeddings();
+    const reranker: ToolReranker = {
+      async rerank() {
+        return [{ tool: { name: 'invented_tool' }, score: 1 }];
+      },
+    };
+    const model = fakeModel(
+      {
+        toolCalls: [
+          { id: 'search-1', name: 'fevex__search_tools', input: { query: 'send' } },
+        ],
+      },
+      { toolCalls: [{ id: 'call-1', name: 'send_email', input: {} }] },
+      { output: 'done' },
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['send_email', 'send_slack_message'],
+          toolSearch: { mode: 'on', semantic: { embeddings, reranker } },
+        }),
+      ],
+      tools: [email(), slack()],
+    });
+
+    await expect(app.runAgent('support', { input: 'send a message' })).resolves.toMatchObject({
+      output: 'done',
+    });
+    const searchResult = model.calls[1]!.messages.find((message) => message.role === 'tool');
+    expect(searchResult?.content).toContain('send_email');
+    expect(searchResult?.content).not.toContain('invented_tool');
+  });
+
   test('keeps semantic adapters out of the checkpoint', async () => {
     const store = new InMemoryRunStore();
     const embeddings = new FakeHybridEmbeddings();
@@ -387,6 +510,24 @@ describe('tool search', () => {
         ],
       }),
     ).toThrow('topK');
+    expect(() =>
+      createFevex({
+        models: { default: model },
+        agents: [
+          defineAgent({
+            name: 'support',
+            instructions: 'Help.',
+            toolSearch: {
+              mode: 'on',
+              semantic: {
+                embeddings: new FakeHybridEmbeddings(),
+                reranker: {} as never,
+              },
+            },
+          }),
+        ],
+      }),
+    ).toThrow('reranker');
   });
 
   test('auto mode enables search above the tool-count threshold', async () => {

@@ -133,6 +133,7 @@ defineAgent({
       embeddings,
       topK: 20,
       minScore: 0.2,
+      reranker: myReranker, // optional
     },
   },
 });
@@ -142,6 +143,13 @@ Fevex retrieves lexical and vector candidates independently, fuses them with
 Reciprocal Rank Fusion and returns the final `limit`. If the embedding model or
 vector index fails, search falls back to lexical results. The runtime reuses
 `toolSearchCache` (or the agent cache) so unchanged tools are embedded once.
+
+`reranker` is an optional second stage over the fused top candidates. It can be
+a cross-encoder, a hosted rerank API or a small model. It receives the query,
+candidates with their fusion scores, and the final limit. If it throws or
+returns unknown or duplicate tools, Fevex falls back to the fused ranking. Use it
+only when the evaluation harness shows the hybrid still misses; it adds latency
+and cost per search.
 
 The evaluation harness in `scripts/tool-search-eval.ts` can measure any
 `ToolSearchStrategy`, including a hybrid strategy with your embedding model.

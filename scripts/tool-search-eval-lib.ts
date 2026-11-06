@@ -1,6 +1,6 @@
 import type { ToolSpec } from '../packages/fevex/src/core';
 import {
-  reciprocalRankFusion,
+  reciprocalRankFusionCandidates,
   searchToolSpecs,
 } from '../packages/fevex/src/internal/tool-search';
 import type { EmbeddingModel } from '../packages/fevex/src/models';
@@ -10,6 +10,8 @@ import {
   searchToolEmbeddingIndex,
   type ToolEmbeddingCache,
   type ToolEmbeddingIndex,
+  type ToolReranker,
+  type ToolSearchCandidate,
 } from '../packages/fevex/src/tools';
 
 export interface ToolSearchEvalCase {
@@ -77,6 +79,7 @@ export function createHybridStrategy(options: {
   cache: ToolEmbeddingCache;
   topK?: number;
   minScore?: number;
+  reranker?: ToolReranker;
   name?: string;
 }): ToolSearchStrategy {
   let index: ToolEmbeddingIndex | undefined;
@@ -102,7 +105,24 @@ export function createHybridStrategy(options: {
         topK,
         options.minScore ?? 0,
       ).map((match) => match.tool);
-      return reciprocalRankFusion(lexical, semantic, limit);
+      const fused = reciprocalRankFusionCandidates(
+        lexical,
+        semantic,
+        options.reranker === undefined ? limit : Math.max(limit, topK),
+      );
+      if (options.reranker !== undefined && fused.length > 1) {
+        try {
+          const reranked = await options.reranker.rerank({ query, tools: fused, limit });
+          const byName = new Map(fused.map((candidate) => [candidate.tool.name, candidate]));
+          const ordered = reranked
+            .map((candidate) => byName.get(candidate.tool.name))
+            .filter((candidate): candidate is ToolSearchCandidate => candidate !== undefined);
+          if (ordered.length === reranked.length) return ordered.slice(0, limit).map((c) => c.tool);
+        } catch {
+          // Fall back to the fused ranking.
+        }
+      }
+      return fused.slice(0, limit).map((candidate) => candidate.tool);
     },
   };
 }
