@@ -9,6 +9,8 @@ export interface AgentLimits {
   maxToolCalls?: number;
   maxInputTokens?: number | false;
   maxOutputTokens?: number | false;
+  /** Maximum serialized bytes for one tool result. Tools should use artifacts above this. */
+  maxToolResultBytes?: number;
 }
 
 /**
@@ -28,6 +30,20 @@ export interface ContextBudget {
   safetyFactor?: number;
 }
 
+/** On-demand tool discovery for agents with large tool catalogs. */
+export interface ToolSearchOptions {
+  /** `auto` enables search above the configured thresholds. Defaults to `auto`. */
+  mode?: 'auto' | 'on' | 'off';
+  /** Tool-count threshold for `auto`. Defaults to 30. */
+  threshold?: number;
+  /** Estimated tool-token threshold for `auto`. */
+  tokenThreshold?: number;
+  /** Maximum tools returned by one search. Defaults to 5. */
+  limit?: number;
+  /** Tool names exposed without a search. */
+  pinned?: string[];
+}
+
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   instructions: string;
@@ -45,6 +61,7 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   outputSchema?: StandardSchemaV1<unknown, TOutput>;
   limits?: AgentLimits;
   contextBudget?: ContextBudget;
+  toolSearch?: ToolSearchOptions;
 }
 
 export function defineAgent<T extends AgentDefinition>(

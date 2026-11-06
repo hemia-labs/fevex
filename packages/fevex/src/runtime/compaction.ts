@@ -1,5 +1,6 @@
 import type { AgentMessage, ExecutionContext, ToolSpec } from '../core';
 import type { ContextBudget } from '../agents';
+import type { ModelGateway } from '../models';
 import type { SessionId } from './run-store';
 
 /** Estimates the input tokens of messages and tool definitions. */
@@ -36,6 +37,17 @@ export interface ContextCompactionOptions {
   compactor?: ContextCompactor;
   /** Defaults to a character-based estimate. */
   estimateTokens?: ContextTokenEstimator;
+  /** Redacts the summary before it enters the context.compacted event. */
+  redactSummary?: (summary: string) => string;
+}
+
+/** Cumulative runtime counters for automatic context compaction. */
+export interface ContextCompactionStats {
+  compactions: number;
+  removedMessages: number;
+  estimatedTokens: number;
+  compactedTokens: number;
+  savedTokens: number;
 }
 
 export interface ResolvedContextBudget {
@@ -108,6 +120,69 @@ export function estimateContextTokens(
   }
   if (input.tools?.length) characters += JSON.stringify(input.tools).length;
   return Math.max(1, Math.ceil(characters / 4));
+}
+
+export interface ModelContextCompactorOptions {
+  /** Model used only to summarize older context. */
+  model: ModelGateway;
+  /** Overrides the built-in summarization instructions. */
+  systemPrompt?: string;
+  /** Maximum output tokens for the summary. Defaults to 1,024. */
+  maxOutputTokens?: number;
+}
+
+/**
+ * Creates a semantic compactor backed by a model. Use a cheap, fast model and
+ * keep it separate from the agent model when possible.
+ */
+export function createModelContextCompactor(
+  options: ModelContextCompactorOptions,
+): ContextCompactor {
+  const maxOutputTokens = options.maxOutputTokens ?? 1_024;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) {
+    throw new TypeError('Model compactor maxOutputTokens must be a positive safe integer');
+  }
+  return {
+    async compact(input) {
+      const transcript = input.messages
+        .map((message) => {
+          const toolCalls = message.toolCalls?.length
+            ? `\nTool calls: ${message.toolCalls
+                .map((call) => `${call.name}(${JSON.stringify(call.input)})`)
+                .join(', ')}`
+            : '';
+          const name = message.name === undefined ? '' : ` (${message.name})`;
+          return `${message.role}${name}: ${message.content}${toolCalls}`;
+        })
+        .join('\n\n');
+      const stream = options.model.stream({
+        messages: [
+          {
+            role: 'system',
+            content: options.systemPrompt
+              ?? 'You compact conversation history for another agent. Preserve decisions, approvals, constraints, identifiers, tool results and open tasks. Return only the summary.',
+          },
+          {
+            role: 'user',
+            content: `Summarize the following conversation in at most ${input.targetTokens} tokens.\n\n${transcript || '(empty)'}`,
+          },
+        ],
+        maxOutputTokens,
+        signal: input.signal,
+      });
+      let deltas = '';
+      let output: unknown;
+      for await (const event of stream) {
+        if (event.type === 'output.delta') deltas += event.delta;
+        else output = event.result.output;
+      }
+      const summary = typeof output === 'string' ? output : deltas;
+      if (!summary.trim()) {
+        throw new Error('Model context compactor returned an empty summary');
+      }
+      return [{ role: 'system', content: summary.trim() }];
+    },
+  };
 }
 
 export interface DigestContextCompactorOptions {

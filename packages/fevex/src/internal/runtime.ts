@@ -73,6 +73,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
     drainExecution,
     resumeAgent,
     cancelStoredAgent,
+    getCompactionStats,
   } = agentEngine;
 
   const {
@@ -368,6 +369,9 @@ export function createRuntime(composition: FevexComposition): Fevex {
     },
     getObservabilityStats() {
       return traceExports.stats();
+    },
+    getCompactionStats() {
+      return getCompactionStats();
     },
     shutdown,
   };

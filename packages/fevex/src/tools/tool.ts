@@ -51,6 +51,8 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   retry?: ToolRetryPolicy;
   credentials?: string[];
   sandbox?: SandboxCapabilities;
+  /** Maximum serialized bytes for one result. Use an artifact for large outputs. */
+  maxResultBytes?: number;
   source?: ToolEventSource;
   resolve?: (context?: ToolProviderContext) => Promise<ToolProviderTool | undefined>;
   execute(input: TInput, context: ToolExecutionContext): TOutput | Promise<TOutput>;

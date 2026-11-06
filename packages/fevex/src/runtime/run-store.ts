@@ -8,7 +8,7 @@ import type {
 } from '../core';
 import type { ModelMetadata, ModelUsage, ReasoningEffort } from '../models';
 import type { ToolChoice } from '../models';
-import type { AgentLimits, ContextBudget } from '../agents';
+import type { AgentLimits, ContextBudget, ToolSearchOptions } from '../agents';
 
 /** Stable identifier for conversation history shared across runs. */
 export type SessionId = string;
@@ -312,6 +312,8 @@ export interface RunCheckpoint {
   definitionHash: string;
   limits?: AgentLimits;
   contextBudget?: ContextBudget;
+  toolSearch?: ToolSearchOptions;
+  loadedTools?: string[];
   messages: AgentMessage[];
   inputContent: string;
   context?: ExecutionContext;
@@ -490,6 +492,7 @@ export interface RunRequest<TInput = unknown, TOutput = unknown> {
   context?: ExecutionContext;
   limits?: AgentLimits;
   contextBudget?: ContextBudget;
+  toolSearch?: ToolSearchOptions;
   elicitation?: ElicitationMode;
   approvalMode?: ApprovalMode;
   toolChoice?: ToolChoice;

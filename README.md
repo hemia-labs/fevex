@@ -163,6 +163,28 @@ with real local HTTP requests and a deterministic model, without API keys:
 bun run examples/connections/index.ts
 ```
 
+## Tool search and large results
+
+Agents with large tool catalogs can expose `fevex__search_tools` instead of
+sending every schema on every turn:
+
+```ts
+defineAgent({
+  name: 'support',
+  instructions: 'Answer with the available tools.',
+  tools: [...],
+  toolSearch: { mode: 'auto', threshold: 30, pinned: ['accounts_get'] },
+});
+```
+
+`auto` enables search above the threshold, `on` always does and `off` exposes
+every tool. Search only indexes the agent's own tools; allowlists, policies and
+approvals still apply when a loaded tool executes.
+
+Tools can cap serialized results with `maxResultBytes`, or an agent/run can set
+`limits.maxToolResultBytes`. Store larger outputs through `context.artifacts` and
+return the descriptor; otherwise the run fails with `TOOL_RESULT_TOO_LARGE`.
+
 ## Channels core
 
 Channels adapt external message surfaces to Fevex without making the runtime
@@ -693,7 +715,10 @@ window it replaces older completed turns with a summary, keeps system
 instructions, the current request and the latest tool batch intact, and emits
 `context.compacted`. The summary is cached on the session and reused across
 runs; the original history is not rewritten. Use `compaction.compactor` to
-inject a summarizer; the default is a deterministic digest.
+inject a summarizer; the default is a deterministic digest and
+`createModelContextCompactor` provides a model-backed option. Redact event
+summaries with `compaction.redactSummary` and read counters with
+`app.getCompactionStats()`.
 `limits.maxInputTokens` is still the cumulative spend cap, while
 `contextBudget.contextWindow` is the model context window.
 

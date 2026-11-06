@@ -1,4 +1,11 @@
-import type { AgentEvent, AgentEventPayloads, AgentEventType, AgentMessage, JsonValue } from '../core';
+import type {
+  AgentEvent,
+  AgentEventPayloads,
+  AgentEventType,
+  AgentMessage,
+  JsonValue,
+  ToolSpec,
+} from '../core';
 import type {
   ArtifactDescriptor,
   ArtifactStore,
@@ -21,6 +28,7 @@ import {
   type ResumeRunResolution,
   type RunCheckpoint,
   type RunRequest,
+  type ContextCompactionStats,
   type RunResult,
   type Session,
 } from '../runtime';
@@ -28,6 +36,12 @@ import { compileFevexJsonSchema, toToolSpec } from '../tools';
 import type { FevexComposition } from './configuration';
 import { compactContext, MAX_COMPACTION_EVENT_SUMMARY_CHARS } from './context-compaction';
 import { definitionHash } from './definition-hash';
+import {
+  readToolSearchInput,
+  resolveToolSearchOptions,
+  searchToolSpecs,
+  shouldUseToolSearch,
+} from './tool-search';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import {
   abortable,
@@ -62,7 +76,12 @@ import {
   toolSourcePayload,
 } from './run-helpers';
 import type { ExecutionState } from './run-state';
-import { ELICIT_TOOL_NAME, LEASE_MS, LOAD_SKILL_TOOL_NAME } from './runtime-constants';
+import {
+  ELICIT_TOOL_NAME,
+  LEASE_MS,
+  LOAD_SKILL_TOOL_NAME,
+  SEARCH_TOOLS_TOOL_NAME,
+} from './runtime-constants';
 
 import type { RunCore } from './run-core';
 
@@ -81,6 +100,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     contextProviders,
     contextBudget: defaultContextBudget,
     compaction,
+    toolSearch: defaultToolSearch,
     memoryStore,
     runStore,
     credentialStore,
@@ -88,6 +108,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     artifacts,
     policies,
   } = composition;
+  const compactionStats: ContextCompactionStats = {
+    compactions: 0,
+    removedMessages: 0,
+    estimatedTokens: 0,
+    compactedTokens: 0,
+    savedTokens: 0,
+  };
   const {
     activeRuns,
     activeSessions,
@@ -124,6 +151,17 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       request.contextBudget ?? agent.contextBudget ?? defaultContextBudget,
       `Agent "${name}" contextBudget`,
     );
+    const toolSearch = resolveToolSearchOptions(
+      request.toolSearch ?? agent.toolSearch ?? defaultToolSearch,
+      `Agent "${name}" toolSearch`,
+    );
+    const toolChoice = effectiveToolChoice(agent, request);
+    const initialLoadedTools = new Set(
+      toolSearch.pinned.filter((toolName) => agent.tools?.includes(toolName)),
+    );
+    if (typeof toolChoice === 'object' && agent.tools?.includes(toolChoice.name)) {
+      initialLoadedTools.add(toolChoice.name);
+    }
     const { modelName, model } = resolveModel(agent, request.model);
     const now = new Date().toISOString();
     let session: Session;
@@ -206,9 +244,18 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             ? { modelName }
             : {}),
           ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
-          definitionHash: await definitionHash(name, modelName, agent, tools, contextBudget),
+          definitionHash: await definitionHash(
+            name,
+            modelName,
+            agent,
+            tools,
+            contextBudget,
+            toolSearch,
+          ),
           limits: combineLimits(agent.limits, request.limits),
           ...(contextBudget === undefined ? {} : { contextBudget }),
+          toolSearch,
+          loadedTools: [...initialLoadedTools],
           messages,
           inputContent,
           context: request.context,
@@ -219,7 +266,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           pendingIndex: 0,
           effectiveElicitationMode: effectiveElicitationMode(agent, request),
           effectiveApprovalMode: effectiveApprovalMode(agent, request),
-          effectiveToolChoice: effectiveToolChoice(agent, request),
+          effectiveToolChoice: toolChoice,
         };
         const ownerId = `${runtimeOwner}:${crypto.randomUUID()}`;
         const lease = {
@@ -303,6 +350,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         ?? defaultContextBudget,
       `Agent "${state.run.agentName}" contextBudget`,
     );
+    const toolSearch = state.toolSearch ?? resolveToolSearchOptions(
+      state.checkpoint?.toolSearch
+        ?? state.request.toolSearch
+        ?? agent.toolSearch
+        ?? defaultToolSearch,
+      `Agent "${state.run.agentName}" toolSearch`,
+    );
     let serializedState: JsonValue | undefined;
     if (providerState !== undefined) {
       if (!model.stateCodec) {
@@ -328,9 +382,12 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         agent,
         tools,
         contextBudget,
+        toolSearch,
       ),
       limits: state.checkpoint?.limits ?? combineLimits(agent.limits, state.request.limits),
       ...(contextBudget === undefined ? {} : { contextBudget }),
+      toolSearch,
+      loadedTools: [...(state.loadedTools ?? [])],
       messages: structuredClone(messages),
       inputContent,
       context: state.request.context,
@@ -436,6 +493,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         ?? defaultContextBudget,
       `Agent "${name}" contextBudget`,
     );
+    const toolSearch = resolveToolSearchOptions(
+      state.checkpoint?.toolSearch
+        ?? request.toolSearch
+        ?? agent.toolSearch
+        ?? defaultToolSearch,
+      `Agent "${name}" toolSearch`,
+    );
     const events: AgentEvent[] = [...(state.initialEvents ?? [])];
     const firstEvents = state.initialEvents ?? [];
     state.initialEvents = undefined;
@@ -469,7 +533,14 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             state.run.id,
           );
         }
-        const hash = await definitionHash(name, modelName, agent, tools, contextBudget);
+        const hash = await definitionHash(
+          name,
+          modelName,
+          agent,
+          tools,
+          contextBudget,
+          toolSearch,
+        );
         if (checkpoint.definitionHash !== hash) {
           throw new FevexRunError(
             'RUN_DEFINITION_CHANGED',
@@ -588,36 +659,98 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               additionalProperties: false,
             },
           };
-      const allTools = [
-        ...agentTools,
-        ...(skillTool === undefined ? [] : [skillTool]),
-        ...(currentElicitationMode === 'pause'
-          ? [
-              {
-                name: ELICIT_TOOL_NAME,
-                description:
-                  'Request external information required to continue this run. Use prompt for explanatory text shown outside the form. Put short field labels in responseSchema property titles and optional field help in property descriptions.',
-                inputSchema: {
-                  type: 'object',
-                  properties: {
-                    prompt: {
-                      type: 'string',
-                      description: 'Explanatory text for the user; do not duplicate field labels here.',
-                    },
-                    responseSchema: {
-                      type: 'object',
-                      description:
-                        'JSON Schema for the expected response. Each property should include a short title for the form label and may include a description for field help.',
-                    },
-                    expiresAt: { type: 'string' },
-                  },
-                  required: ['prompt', 'responseSchema'],
-                  additionalProperties: false,
+      const searchEnabled = shouldUseToolSearch(toolSearch, agentTools);
+      const searchTool: ToolSpec | undefined = searchEnabled
+        ? {
+            name: SEARCH_TOOLS_TOOL_NAME,
+            description: `Search ${agentTools.length} tools available to this agent by capability. Use it when you need a tool that is not currently exposed. Returns matching tools and makes their schemas available on the next turn.`,
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Capability to search for, such as "send email" or "query database".',
+                },
+                limit: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: toolSearch.limit,
                 },
               },
-            ]
-          : []),
+              required: ['query'],
+              additionalProperties: false,
+            },
+          }
+        : undefined;
+      const elicitationTool: ToolSpec | undefined = currentElicitationMode === 'pause'
+        ? {
+            name: ELICIT_TOOL_NAME,
+            description:
+              'Request external information required to continue this run. Use prompt for explanatory text shown outside the form. Put short field labels in responseSchema property titles and optional field help in property descriptions.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                prompt: {
+                  type: 'string',
+                  description: 'Explanatory text for the user; do not duplicate field labels here.',
+                },
+                responseSchema: {
+                  type: 'object',
+                  description:
+                    'JSON Schema for the expected response. Each property should include a short title for the form label and may include a description for field help.',
+                },
+                expiresAt: { type: 'string' },
+              },
+              required: ['prompt', 'responseSchema'],
+              additionalProperties: false,
+            },
+          }
+        : undefined;
+      const allTools: ToolSpec[] = [
+        ...agentTools,
+        ...(skillTool === undefined ? [] : [skillTool]),
+        ...(searchTool === undefined ? [] : [searchTool]),
+        ...(elicitationTool === undefined ? [] : [elicitationTool]),
       ];
+      const loadedTools = new Set(state.loadedTools ?? state.checkpoint?.loadedTools ?? []);
+      for (const toolName of toolSearch.pinned) {
+        if (agent.tools?.includes(toolName)) loadedTools.add(toolName);
+      }
+      if (typeof currentToolChoice === 'object' && agent.tools?.includes(currentToolChoice.name)) {
+        loadedTools.add(currentToolChoice.name);
+      }
+      state.loadedTools = loadedTools;
+      state.toolSearch = toolSearch;
+      let loadedToolsVersion = 0;
+      let cachedModelTools: ToolSpec[] | undefined;
+      let cachedModelToolsVersion = -1;
+      const modelTools = (): ToolSpec[] => {
+        if (!searchEnabled) return allTools;
+        if (cachedModelTools !== undefined && cachedModelToolsVersion === loadedToolsVersion) {
+          return cachedModelTools;
+        }
+        cachedModelTools = [
+          ...agentTools.filter((tool) => loadedTools.has(tool.name)),
+          ...(skillTool === undefined ? [] : [skillTool]),
+          ...(searchTool === undefined ? [] : [searchTool]),
+          ...(elicitationTool === undefined ? [] : [elicitationTool]),
+        ];
+        cachedModelToolsVersion = loadedToolsVersion;
+        return cachedModelTools;
+      };
+      // ponytail: assumes message and tool estimates are additive; re-evaluate with a custom tokenizer if not.
+      const toolsTokenCache = new WeakMap<readonly ToolSpec[], number>();
+      const estimateContext = (
+        input: { messages: AgentMessage[]; tools?: ToolSpec[] },
+      ): number => {
+        if (!input.tools?.length) return compaction.estimateTokens(input);
+        let toolTokens = toolsTokenCache.get(input.tools);
+        if (toolTokens === undefined) {
+          toolTokens = compaction.estimateTokens({ messages: [], tools: input.tools });
+          toolsTokenCache.set(input.tools, toolTokens);
+        }
+        return compaction.estimateTokens({ messages: input.messages }) + toolTokens;
+      };
       const effectiveLimits = state.checkpoint?.limits ?? combineLimits(agent.limits, request.limits);
       const maxSteps = effectiveLimits?.maxSteps ?? DEFAULT_MAX_STEPS;
       const maxToolCalls = effectiveLimits?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
@@ -632,16 +765,17 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         request.signal.throwIfAborted();
 
         if (pendingTools.length === 0) {
+          const currentTools = modelTools();
           if (contextBudget !== undefined) {
             const compacted = await compactContext({
               runId: state.run.id,
               agentName: name,
               sessionId: state.session.id,
               messages,
-              tools: allTools,
+              tools: currentTools,
               contextBudget,
               compactor: compaction.compactor,
-              estimateTokens: compaction.estimateTokens,
+              estimateTokens: estimateContext,
               step,
               ...(request.context === undefined ? {} : { context: request.context }),
               signal: request.signal,
@@ -650,6 +784,14 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             if (compacted !== undefined) {
               messages = compacted.messages;
               compactionApplied = true;
+              compactionStats.compactions += 1;
+              compactionStats.removedMessages += compacted.removedMessages;
+              compactionStats.estimatedTokens += compacted.estimatedTokens;
+              compactionStats.compactedTokens += compacted.compactedTokens;
+              compactionStats.savedTokens += Math.max(
+                0,
+                compacted.estimatedTokens - compacted.compactedTokens,
+              );
               const previous = state.session.compaction;
               const combined = previous === undefined
                 ? compacted.summary
@@ -663,8 +805,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                 coveredMessages: state.session.history.length,
                 updatedAt: new Date().toISOString(),
               };
+              const redactedSummary = compaction.redactSummary?.(compacted.summary)
+                ?? compacted.summary;
+              if (typeof redactedSummary !== 'string') {
+                throw new TypeError('compaction.redactSummary must return a string');
+              }
               const summaryTruncated =
-                compacted.summary.length > MAX_COMPACTION_EVENT_SUMMARY_CHARS;
+                redactedSummary.length > MAX_COMPACTION_EVENT_SUMMARY_CHARS;
               const event = createEvent(state, 'context.compacted', {
                 step,
                 removedMessages: compacted.removedMessages,
@@ -673,8 +820,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                 targetTokens: contextBudget.targetTokens,
                 contextWindow: contextBudget.contextWindow,
                 summary: summaryTruncated
-                  ? `${compacted.summary.slice(0, MAX_COMPACTION_EVENT_SUMMARY_CHARS - 1)}…`
-                  : compacted.summary,
+                  ? `${redactedSummary.slice(0, MAX_COMPACTION_EVENT_SUMMARY_CHARS - 1)}…`
+                  : redactedSummary,
                 ...(summaryTruncated ? { summaryTruncated: true } : {}),
               }) as AgentEvent;
               if (isDurableRunStore(runStore)) {
@@ -708,13 +855,13 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           }
           const hasToolBudget = step < maxSteps && toolCallCount < maxToolCalls;
           const modelToolChoice: ToolChoice | undefined =
-            hasToolBudget && allTools.length
+            hasToolBudget && currentTools.length
               ? (currentToolChoice === 'auto' ? undefined : currentToolChoice)
               : undefined;
           yield await emit('model.started', { step });
           const modelStream = readModelStream(model, {
             messages: [...messages],
-            tools: hasToolBudget && allTools.length ? allTools : undefined,
+            tools: hasToolBudget && currentTools.length ? currentTools : undefined,
             ...(modelToolChoice === undefined ? {} : { toolChoice: modelToolChoice }),
             reasoning: state.request.reasoning ?? agent.reasoning,
             modelOptions: agent.modelOptions,
@@ -842,6 +989,84 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           );
           if (result.toolCalls.length > maxToolCalls - toolCallCount) {
             throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
+          }
+          const searchCall = searchEnabled
+            ? result.toolCalls.find((call) => call.name === SEARCH_TOOLS_TOOL_NAME)
+            : undefined;
+          if (searchCall) {
+            if (result.toolCalls.length !== 1) {
+              throw new Error(
+                `${SEARCH_TOOLS_TOOL_NAME} must be the only tool call in a model turn`,
+              );
+            }
+            if (!searchCall.id?.trim()) throw new Error('Tool call id cannot be empty');
+            if (seenToolCallIds.has(searchCall.id)) {
+              throw new Error(
+                `Tool call id "${searchCall.id}" is duplicated in run "${state.run.id}"`,
+              );
+            }
+            if (toolCallCount + 1 > maxToolCalls) {
+              throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
+            }
+            const rawInput = toJsonValue(
+              searchCall.input,
+              `Input for tool "${SEARCH_TOOLS_TOOL_NAME}" must be JSON-serializable`,
+            );
+            const searchInput = readToolSearchInput(rawInput);
+            const limit = Math.min(searchInput.limit ?? toolSearch.limit, toolSearch.limit);
+            const matches = searchToolSpecs(agentTools, searchInput.query, limit);
+            let loadedChanged = false;
+            for (const match of matches) {
+              if (!loadedTools.has(match.name)) {
+                loadedTools.add(match.name);
+                loadedChanged = true;
+              }
+            }
+            if (loadedChanged) loadedToolsVersion += 1;
+            seenToolCallIds.add(searchCall.id);
+            messages.push({
+              role: 'assistant',
+              content:
+                result.output === undefined
+                  ? ''
+                  : serializeValue(
+                      result.output,
+                      `Model output for agent "${name}" must be serializable`,
+                    ),
+              toolCalls: [{ ...searchCall, input: rawInput }],
+            });
+            yield await emit('tool.started', {
+              step,
+              toolCallId: searchCall.id,
+              toolName: SEARCH_TOOLS_TOOL_NAME,
+            });
+            messages.push({
+              role: 'tool',
+              name: SEARCH_TOOLS_TOOL_NAME,
+              toolCallId: searchCall.id,
+              content: serializeValue(
+                {
+                  tools: matches.map((tool) => ({
+                    name: tool.name,
+                    ...(tool.description === undefined
+                      ? {}
+                      : { description: tool.description }),
+                  })),
+                  ...(matches.length === 0
+                    ? { message: 'No tools matched; try a different query.' }
+                    : {}),
+                },
+                'Tool search result must be serializable',
+              ),
+            });
+            yield await emit('tool.completed', {
+              step,
+              toolCallId: searchCall.id,
+              toolName: SEARCH_TOOLS_TOOL_NAME,
+            });
+            toolCallCount += 1;
+            step += 1;
+            continue;
           }
           const loadSkillCall = progressiveSkills.length === 0
             ? undefined
@@ -1008,6 +1233,11 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             batch.add(call.id);
             const tool = agent.tools?.includes(call.name) ? tools.get(call.name) : undefined;
             if (!tool) throw new Error(`Tool "${call.name}" is not available to agent "${name}"`);
+            if (searchEnabled && !loadedTools.has(call.name)) {
+              throw new Error(
+                `Tool "${call.name}" is not loaded; use ${SEARCH_TOOLS_TOOL_NAME} first`,
+              );
+            }
             const rawInput = toJsonValue(
               call.input,
               `Input for tool "${call.name}" must be JSON-serializable`,
@@ -1400,6 +1630,19 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                       raw,
                       `Output from tool "${tool.name}" does not match outputSchema`,
                     );
+              const serialized = serializeValue(
+                validated,
+                `Output from tool "${tool.name}" must be JSON-serializable`,
+              );
+              const maxResultBytes = tool.maxResultBytes ?? effectiveLimits?.maxToolResultBytes;
+              const resultBytes = new TextEncoder().encode(serialized).byteLength;
+              if (maxResultBytes !== undefined && resultBytes > maxResultBytes) {
+                throw new FevexRunError(
+                  'TOOL_RESULT_TOO_LARGE',
+                  `Tool "${tool.name}" returned ${resultBytes} bytes; limit is ${maxResultBytes}. Store large outputs as artifacts and return an artifact descriptor.`,
+                  state.run.id,
+                );
+              }
               output = toJsonValue(
                 validated,
                 `Output from tool "${tool.name}" must be JSON-serializable`,
@@ -2015,6 +2258,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     drainExecution,
     resumeAgent,
     cancelStoredAgent,
+    getCompactionStats() {
+      return { ...compactionStats };
+    },
   };
 }
 

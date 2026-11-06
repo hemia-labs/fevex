@@ -1,4 +1,4 @@
-import type { ContextBudget } from '../agents';
+import type { ContextBudget, ToolSearchOptions } from '../agents';
 import type { JsonObject } from '../core';
 import type { ToolDefinition } from '../tools';
 import type { TeamDefinition } from '../teams';
@@ -29,6 +29,7 @@ async function transportableTool(
   retry: ToolDefinition['retry'];
   credentials: string[];
   sandbox: ToolDefinition['sandbox'];
+  maxResultBytes?: number;
   source: ToolDefinition['source'];
 }> {
   return {
@@ -58,6 +59,7 @@ async function transportableTool(
     retry: tool.retry,
     credentials: tool.credentials ?? [],
     sandbox: tool.sandbox,
+    maxResultBytes: tool.maxResultBytes,
     source: tool.source,
   };
 }
@@ -74,6 +76,7 @@ export async function definitionHash(
   agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
   tools: Map<string, ToolDefinition>,
   contextBudget?: ContextBudget,
+  toolSearch?: ToolSearchOptions,
 ): Promise<string> {
   const toolDefinitions = await Promise.all(
     (agent.tools ?? []).map((toolName) => transportableTool(tools.get(toolName)!)),
@@ -93,6 +96,7 @@ export async function definitionHash(
     approvalMode: agent.approvalMode,
     limits: agent.limits,
     contextBudget,
+    toolSearch,
     inputSchema:
       agent.inputSchema === undefined
         ? undefined

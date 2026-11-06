@@ -8,6 +8,7 @@ import type {
   RunLease,
   Session,
 } from '../runtime';
+import type { ResolvedToolSearchOptions } from './tool-search';
 
 /** Mutable in-process state of a single agent run. */
 export interface ExecutionState<TInput = unknown, TOutput = unknown> {
@@ -18,6 +19,8 @@ export interface ExecutionState<TInput = unknown, TOutput = unknown> {
   eventSequence: number;
   advancing: boolean;
   checkpoint?: RunCheckpoint;
+  toolSearch?: ResolvedToolSearchOptions;
+  loadedTools?: Set<string>;
   approvedToolCallId?: string;
   forcedRetryToolCallId?: string;
   lease?: RunLease;
