@@ -79,6 +79,7 @@ bun run demo:channels
 bun run demo:connections
 bun run demo:research
 bun run eval:research
+bun run eval:tool-search
 ```
 
 Inspect an existing run through its HTTP host with

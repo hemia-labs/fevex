@@ -20,6 +20,7 @@ From the repository root, after `bun install --frozen-lockfile`:
 | `bun run demo:connections` | Documentation through MCP and account data through OpenAPI. |
 | `bun run demo:research` | Combined research, cited evidence and structured account facts. |
 | `bun run eval:research` | Six cases checking tools, evidence, missing information and API failure. |
+| `bun run eval:tool-search` | Lexical tool-retrieval baseline: hit@k, MRR, nDCG, token reduction and latency. |
 
 These examples default to deterministic models. The connections and research
 demos make real HTTP requests to a temporary service on localhost; the other
@@ -57,6 +58,20 @@ A passing suite has twenty-one passed checks, six completed runs and one expecte
 failed run. These checks assess provenance and structured facts, not every
 natural-language claim. Real model evaluations incur provider usage; scripted
 results only verify runtime contracts and scorers.
+
+## Tool search evaluation
+
+`bun run eval:tool-search` measures the deterministic lexical baseline against a
+representative tool catalog. The dataset lives in
+`scripts/tool-search-eval-data.ts`; add queries and expected tool names there.
+
+The report includes hit@1/3/k, recall@k, MRR, nDCG@k, p95 search latency, schema
+token reduction and a breakdown by tag (`exact`, `synonym`, `acronym`, `schema`).
+It also lists misses so the next improvement is driven by evidence rather than
+intuition.
+
+The harness accepts any `ToolSearchStrategy`. A semantic or hybrid strategy can
+reuse the same dataset and metrics before it becomes part of the runtime.
 
 ## Inspect state and events
 
