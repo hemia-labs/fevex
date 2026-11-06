@@ -66,6 +66,30 @@ describe('model context compactor', () => {
     expect(model.calls[0]!.tools).toBeUndefined();
     expect(model.calls[0]!.messages.at(-1)?.content).toContain('old request');
   });
+
+  test('chunks large transcripts before summarizing', async () => {
+    const model = fakeModel(
+      { output: 'PART ONE' },
+      { output: 'PART TWO' },
+      { output: 'FINAL SUMMARY' },
+    );
+    const compactor = createModelContextCompactor({ model, maxInputChars: 1_000 });
+    const result = await compactor.compact({
+      agentName: 'support',
+      sessionId: 'session-1',
+      messages: [
+        message('user', 'a'.repeat(900)),
+        message('assistant', 'b'.repeat(900)),
+      ],
+      estimatedTokens: 500,
+      targetTokens: 100,
+      contextWindow: 1_000,
+      step: 1,
+      estimateTokens: () => 50,
+    });
+    expect(result).toEqual([{ role: 'system', content: 'FINAL SUMMARY' }]);
+    expect(model.calls).toHaveLength(3);
+  });
 });
 
 describe('digest context compactor', () => {

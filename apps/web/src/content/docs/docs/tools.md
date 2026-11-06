@@ -36,8 +36,9 @@ const getAccount = defineTool({
 
 Return compact JSON from tools. Set `maxResultBytes` on a tool or
 `limits.maxToolResultBytes` on an agent or run; Fevex rejects larger serialized
-results with `TOOL_RESULT_TOO_LARGE`. Store large payloads in `context.artifacts`
-and return the descriptor instead:
+results with `TOOL_RESULT_TOO_LARGE`. The default cap is 1 MiB; set either
+option to `false` to disable it. Store large payloads in `context.artifacts` and
+return the descriptor instead:
 
 ```ts
 defineTool({

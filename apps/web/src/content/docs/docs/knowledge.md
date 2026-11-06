@@ -159,7 +159,9 @@ const app = createFevex({
 });
 ```
 
-Inject any other summarizer through `compaction.compactor`. Use
+The model compactor chunks large transcripts (`maxInputChars`, default 120,000)
+and merges the partial summaries. Inject any other summarizer through
+`compaction.compactor`. Use
 `compaction.redactSummary` to redact the summary before it enters the
 `context.compacted` event; the checkpoint keeps the full summary. Read cumulative
 runtime counters with `app.getCompactionStats()`.

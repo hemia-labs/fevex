@@ -298,9 +298,10 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
     );
     assertConfiguration(
       policy?.maxResultBytes === undefined
+        || policy.maxResultBytes === false
         || (Number.isSafeInteger(policy.maxResultBytes) && policy.maxResultBytes > 0),
       'INVALID_TOOL',
-      `maxResultBytes for connection tool "${remoteName}" must be a positive safe integer`,
+      `maxResultBytes for connection tool "${remoteName}" must be a positive safe integer or false`,
     );
 
     return {
@@ -825,9 +826,10 @@ export function createComposition(config: FevexConfig): FevexComposition {
     );
     assertConfiguration(
       definition.maxResultBytes === undefined
+        || definition.maxResultBytes === false
         || (Number.isSafeInteger(definition.maxResultBytes) && definition.maxResultBytes > 0),
       'INVALID_TOOL',
-      `Tool "${name}" maxResultBytes must be a positive safe integer`,
+      `Tool "${name}" maxResultBytes must be a positive safe integer or false`,
     );
     if (definition.retry !== undefined) {
       assertConfiguration(
@@ -1129,7 +1131,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
     assertLimit(rawLimits?.maxToolCalls, 'maxToolCalls', 0, name);
     assertLimit(rawLimits?.maxInputTokens, 'maxInputTokens', 1, name, true);
     assertLimit(rawLimits?.maxOutputTokens, 'maxOutputTokens', 1, name, true);
-    assertLimit(rawLimits?.maxToolResultBytes, 'maxToolResultBytes', 1, name);
+    assertLimit(rawLimits?.maxToolResultBytes, 'maxToolResultBytes', 1, name, true);
 
     agents.set(name, {
       name,
@@ -1202,7 +1204,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
                 : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
               ...(rawLimits.maxToolResultBytes === undefined
                 ? {}
-                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number }),
+                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number | false }),
             },
           }),
     });
@@ -1392,7 +1394,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
                 : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
               ...(rawLimits.maxToolResultBytes === undefined
                 ? {}
-                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number }),
+                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number | false }),
             },
           }),
       run: definition.run as WorkflowDefinition['run'],
@@ -1570,7 +1572,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
                 : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
               ...(rawLimits.maxToolResultBytes === undefined
                 ? {}
-                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number }),
+                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number | false }),
             },
           }),
       run: definition.run as TeamDefinition['run'],

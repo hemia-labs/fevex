@@ -38,7 +38,7 @@ export function combineLimits(
           maxToolResultBytes: minLimit(
             first.maxToolResultBytes,
             second.maxToolResultBytes,
-          ) as number,
+          ) as number | false,
         }),
   };
 }

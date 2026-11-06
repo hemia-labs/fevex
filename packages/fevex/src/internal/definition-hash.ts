@@ -29,7 +29,7 @@ async function transportableTool(
   retry: ToolDefinition['retry'];
   credentials: string[];
   sandbox: ToolDefinition['sandbox'];
-  maxResultBytes?: number;
+  maxResultBytes?: number | false;
   source: ToolDefinition['source'];
 }> {
   return {

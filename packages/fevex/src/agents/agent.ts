@@ -9,8 +9,8 @@ export interface AgentLimits {
   maxToolCalls?: number;
   maxInputTokens?: number | false;
   maxOutputTokens?: number | false;
-  /** Maximum serialized bytes for one tool result. Tools should use artifacts above this. */
-  maxToolResultBytes?: number;
+  /** Maximum serialized bytes for one tool result. Use `false` to disable the default cap. */
+  maxToolResultBytes?: number | false;
 }
 
 /**

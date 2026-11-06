@@ -6,6 +6,14 @@ import type { ContextCompactor, ResolvedContextBudget, SessionId } from '../runt
 /** Maximum summary characters copied into the context.compacted event. */
 export const MAX_COMPACTION_EVENT_SUMMARY_CHARS = 4_000;
 
+/** Keeps the newest summary segments instead of cutting mid-sentence. */
+export function capSummary(summary: string, maxChars: number): string {
+  if (summary.length <= maxChars) return summary;
+  const tail = summary.slice(summary.length - maxChars + 1);
+  const boundary = tail.indexOf('\n\n');
+  return `…${boundary === -1 ? tail : tail.slice(boundary + 2)}`;
+}
+
 export interface CompactContextInput {
   runId: string;
   agentName: string;

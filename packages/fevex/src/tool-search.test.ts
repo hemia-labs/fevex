@@ -112,6 +112,35 @@ describe('tool search', () => {
     expect(names).not.toContain('query_database');
   });
 
+  test('keeps the initial context small with 500 tools', async () => {
+    const model = fakeModel({ output: 'done' });
+    const tools = Array.from({ length: 500 }, (_, index) =>
+      defineTool({
+        name: `tool_${index}`,
+        description: `Capability ${index}.`,
+        execute() {
+          return 'ok';
+        },
+      }),
+    );
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: tools.map((tool) => tool.name),
+        }),
+      ],
+      tools,
+    });
+
+    await app.runAgent('support', { input: 'hello' });
+    const exposed = model.calls[0]!.tools?.length ?? 0;
+    expect(exposed).toBe(1);
+    expect(exposed).toBeLessThan(tools.length * 0.5);
+  });
+
   test('validates tool search configuration', () => {
     const model = fakeModel({ output: 'ok' });
     expect(() =>

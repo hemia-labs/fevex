@@ -12,3 +12,6 @@ export const LOAD_SKILL_TOOL_NAME = 'fevex__load_skill';
 
 /** Reserved name of the internal on-demand tool search exposed to the model. */
 export const SEARCH_TOOLS_TOOL_NAME = 'fevex__search_tools';
+
+/** Default safety cap for one serialized tool result. */
+export const DEFAULT_MAX_TOOL_RESULT_BYTES = 1_048_576;

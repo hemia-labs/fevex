@@ -129,11 +129,17 @@ export interface ModelContextCompactorOptions {
   systemPrompt?: string;
   /** Maximum output tokens for the summary. Defaults to 1,024. */
   maxOutputTokens?: number;
+  /** Maximum characters sent to one summarization call. Defaults to 120,000. */
+  maxInputChars?: number;
 }
+
+const DEFAULT_COMPACTOR_PROMPT =
+  'You compact conversation history for another agent. Preserve decisions, approvals, constraints, identifiers, tool results and open tasks. Return only the summary.';
 
 /**
  * Creates a semantic compactor backed by a model. Use a cheap, fast model and
- * keep it separate from the agent model when possible.
+ * keep it separate from the agent model when possible. Large transcripts are
+ * summarized in chunks and then merged.
  */
 export function createModelContextCompactor(
   options: ModelContextCompactorOptions,
@@ -142,47 +148,96 @@ export function createModelContextCompactor(
   if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) {
     throw new TypeError('Model compactor maxOutputTokens must be a positive safe integer');
   }
+  const maxInputChars = options.maxInputChars ?? 120_000;
+  if (!Number.isSafeInteger(maxInputChars) || maxInputChars < 1_000) {
+    throw new TypeError('Model compactor maxInputChars must be a safe integer of at least 1,000');
+  }
+  const systemPrompt = options.systemPrompt ?? DEFAULT_COMPACTOR_PROMPT;
+  const summarize = async (
+    text: string,
+    instruction: string,
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    const stream = options.model.stream({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${instruction}\n\n${text || '(empty)'}` },
+      ],
+      maxOutputTokens,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    let deltas = '';
+    let output: unknown;
+    for await (const event of stream) {
+      if (event.type === 'output.delta') deltas += event.delta;
+      else output = event.result.output;
+    }
+    const summary = typeof output === 'string' ? output : deltas;
+    if (!summary.trim()) {
+      throw new Error('Model context compactor returned an empty summary');
+    }
+    return summary.trim();
+  };
   return {
     async compact(input) {
-      const transcript = input.messages
-        .map((message) => {
-          const toolCalls = message.toolCalls?.length
-            ? `\nTool calls: ${message.toolCalls
-                .map((call) => `${call.name}(${JSON.stringify(call.input)})`)
-                .join(', ')}`
-            : '';
-          const name = message.name === undefined ? '' : ` (${message.name})`;
-          return `${message.role}${name}: ${message.content}${toolCalls}`;
-        })
-        .join('\n\n');
-      const stream = options.model.stream({
-        messages: [
-          {
-            role: 'system',
-            content: options.systemPrompt
-              ?? 'You compact conversation history for another agent. Preserve decisions, approvals, constraints, identifiers, tool results and open tasks. Return only the summary.',
-          },
-          {
-            role: 'user',
-            content: `Summarize the following conversation in at most ${input.targetTokens} tokens.\n\n${transcript || '(empty)'}`,
-          },
-        ],
-        maxOutputTokens,
-        signal: input.signal,
-      });
-      let deltas = '';
-      let output: unknown;
-      for await (const event of stream) {
-        if (event.type === 'output.delta') deltas += event.delta;
-        else output = event.result.output;
+      let current = formatTranscript(input.messages);
+      let depth = 0;
+      while (current.length > maxInputChars && depth < 4) {
+        const summaries: string[] = [];
+        for (const chunk of splitText(current, maxInputChars)) {
+          summaries.push(
+            await summarize(
+              chunk,
+              'Summarize this part of a longer conversation. Preserve decisions, constraints, identifiers, tool results and open tasks.',
+              input.signal,
+            ),
+          );
+        }
+        current = summaries.join('\n\n');
+        depth += 1;
       }
-      const summary = typeof output === 'string' ? output : deltas;
-      if (!summary.trim()) {
-        throw new Error('Model context compactor returned an empty summary');
+      if (current.length > maxInputChars) {
+        current = `${current.slice(0, maxInputChars - 1)}…`;
       }
-      return [{ role: 'system', content: summary.trim() }];
+      return [
+        {
+          role: 'system',
+          content: await summarize(
+            current,
+            `Merge the following into one summary in at most ${input.targetTokens} tokens.`,
+            input.signal,
+          ),
+        },
+      ];
     },
   };
+}
+
+function formatTranscript(messages: readonly AgentMessage[]): string {
+  return messages
+    .map((message) => {
+      const toolCalls = message.toolCalls?.length
+        ? `\nTool calls: ${message.toolCalls
+            .map((call) => `${call.name}(${JSON.stringify(call.input)})`)
+            .join(', ')}`
+        : '';
+      const name = message.name === undefined ? '' : ` (${message.name})`;
+      return `${message.role}${name}: ${message.content}${toolCalls}`;
+    })
+    .join('\n\n');
+}
+
+function splitText(text: string, maxChars: number): string[] {
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > maxChars) {
+    let cut = rest.lastIndexOf('\n', maxChars);
+    if (cut < Math.floor(maxChars / 2)) cut = maxChars;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
 }
 
 export interface DigestContextCompactorOptions {

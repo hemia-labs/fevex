@@ -97,6 +97,63 @@ describe('tool result limits', () => {
     expect(executions).toBe(1);
   });
 
+  test('applies a default 1 MiB cap', async () => {
+    const model = fakeModel(
+      { toolCalls: [{ id: 'call-1', name: 'huge', input: {} }] },
+      { output: 'done' },
+    );
+    const huge = defineTool({
+      name: 'huge',
+      execute() {
+        return { data: 'x'.repeat(1_100_000) };
+      },
+    });
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['huge'],
+        }),
+      ],
+      tools: [huge],
+    });
+
+    await expect(app.runAgent('support', { input: 'go' })).rejects.toMatchObject({
+      code: 'TOOL_RESULT_TOO_LARGE',
+    });
+  });
+
+  test('allows disabling the default cap', async () => {
+    const model = fakeModel(
+      { toolCalls: [{ id: 'call-1', name: 'huge', input: {} }] },
+      { output: 'done' },
+    );
+    const huge = defineTool({
+      name: 'huge',
+      maxResultBytes: false,
+      execute() {
+        return { data: 'x'.repeat(1_100_000) };
+      },
+    });
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['huge'],
+        }),
+      ],
+      tools: [huge],
+    });
+
+    await expect(app.runAgent('support', { input: 'go' })).resolves.toMatchObject({
+      output: 'done',
+    });
+  });
+
   test('lets a tool override the agent limit', async () => {
     const model = fakeModel(
       { toolCalls: [{ id: 'call-1', name: 'large', input: {} }] },

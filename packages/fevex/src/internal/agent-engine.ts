@@ -13,7 +13,6 @@ import type {
 } from '../artifacts';
 import {
   isProgressiveSkillProvider,
-  type ContextBlock,
   type KnowledgeContext,
   type ProgressiveSkillProvider,
 } from '../knowledge';
@@ -34,14 +33,14 @@ import {
 } from '../runtime';
 import { compileFevexJsonSchema, toToolSpec } from '../tools';
 import type { FevexComposition } from './configuration';
-import { compactContext, MAX_COMPACTION_EVENT_SUMMARY_CHARS } from './context-compaction';
-import { definitionHash } from './definition-hash';
+import { executeInternalTool } from './agent-internal-tools';
 import {
-  readToolSearchInput,
-  resolveToolSearchOptions,
-  searchToolSpecs,
-  shouldUseToolSearch,
-} from './tool-search';
+  capSummary,
+  compactContext,
+  MAX_COMPACTION_EVENT_SUMMARY_CHARS,
+} from './context-compaction';
+import { definitionHash } from './definition-hash';
+import { resolveToolSearchOptions, shouldUseToolSearch } from './tool-search';
 import { serializeJsonValue, serializeValue, toJsonValue } from './json';
 import {
   abortable,
@@ -77,6 +76,7 @@ import {
 } from './run-helpers';
 import type { ExecutionState } from './run-state';
 import {
+  DEFAULT_MAX_TOOL_RESULT_BYTES,
   ELICIT_TOOL_NAME,
   LEASE_MS,
   LOAD_SKILL_TOOL_NAME,
@@ -800,9 +800,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               // ponytail: cap the derived cache; re-summarize old segments if this becomes lossy.
               const maxSummaryChars = Math.max(200, contextBudget.targetTokens * 4);
               state.session.compaction = {
-                summary: combined.length > maxSummaryChars
-                  ? `…${combined.slice(combined.length - maxSummaryChars + 1)}`
-                  : combined,
+                summary: capSummary(combined, maxSummaryChars),
                 coveredMessages: state.session.history.length,
                 updatedAt: new Date().toISOString(),
               };
@@ -821,7 +819,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                 targetTokens: contextBudget.targetTokens,
                 contextWindow: contextBudget.contextWindow,
                 summary: summaryTruncated
-                  ? `${redactedSummary.slice(0, MAX_COMPACTION_EVENT_SUMMARY_CHARS - 1)}…`
+                  ? capSummary(redactedSummary, MAX_COMPACTION_EVENT_SUMMARY_CHARS)
                   : redactedSummary,
                 ...(summaryTruncated ? { summaryTruncated: true } : {}),
               }) as AgentEvent;
@@ -991,40 +989,32 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           if (result.toolCalls.length > maxToolCalls - toolCallCount) {
             throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
           }
-          const searchCall = searchEnabled
-            ? result.toolCalls.find((call) => call.name === SEARCH_TOOLS_TOOL_NAME)
-            : undefined;
-          if (searchCall) {
+          const internalCall = result.toolCalls.find(
+            (call) =>
+              (searchEnabled && call.name === SEARCH_TOOLS_TOOL_NAME)
+              || (progressiveSkills.length > 0 && call.name === LOAD_SKILL_TOOL_NAME),
+          );
+          if (internalCall) {
             if (result.toolCalls.length !== 1) {
               throw new Error(
-                `${SEARCH_TOOLS_TOOL_NAME} must be the only tool call in a model turn`,
+                `${internalCall.name} must be the only tool call in a model turn`,
               );
             }
-            if (!searchCall.id?.trim()) throw new Error('Tool call id cannot be empty');
-            if (seenToolCallIds.has(searchCall.id)) {
+            if (!internalCall.id?.trim()) throw new Error('Tool call id cannot be empty');
+            if (seenToolCallIds.has(internalCall.id)) {
               throw new Error(
-                `Tool call id "${searchCall.id}" is duplicated in run "${state.run.id}"`,
+                `Tool call id "${internalCall.id}" is duplicated in run "${state.run.id}"`,
               );
             }
             if (toolCallCount + 1 > maxToolCalls) {
               throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
             }
             const rawInput = toJsonValue(
-              searchCall.input,
-              `Input for tool "${SEARCH_TOOLS_TOOL_NAME}" must be JSON-serializable`,
+              internalCall.input,
+              `Input for tool "${internalCall.name}" must be JSON-serializable`,
             );
-            const searchInput = readToolSearchInput(rawInput);
-            const limit = Math.min(searchInput.limit ?? toolSearch.limit, toolSearch.limit);
-            const matches = searchToolSpecs(agentTools, searchInput.query, limit);
-            let loadedChanged = false;
-            for (const match of matches) {
-              if (!loadedTools.has(match.name)) {
-                loadedTools.add(match.name);
-                loadedChanged = true;
-              }
-            }
-            if (loadedChanged) loadedToolsVersion += 1;
-            seenToolCallIds.add(searchCall.id);
+            const loadedBefore = loadedTools.size;
+            seenToolCallIds.add(internalCall.id);
             messages.push({
               role: 'assistant',
               content:
@@ -1034,116 +1024,49 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                       result.output,
                       `Model output for agent "${name}" must be serializable`,
                     ),
-              toolCalls: [{ ...searchCall, input: rawInput }],
+              toolCalls: [{ ...internalCall, input: rawInput }],
             });
             yield await emit('tool.started', {
               step,
-              toolCallId: searchCall.id,
-              toolName: SEARCH_TOOLS_TOOL_NAME,
+              toolCallId: internalCall.id,
+              toolName: internalCall.name,
             });
-            messages.push({
-              role: 'tool',
-              name: SEARCH_TOOLS_TOOL_NAME,
-              toolCallId: searchCall.id,
-              content: serializeValue(
-                {
-                  tools: matches.map((tool) => ({
-                    name: tool.name,
-                    ...(tool.description === undefined
-                      ? {}
-                      : { description: tool.description }),
-                  })),
-                  ...(matches.length === 0
-                    ? { message: 'No tools matched; try a different query.' }
-                    : {}),
-                },
-                'Tool search result must be serializable',
-              ),
-            });
-            yield await emit('tool.completed', {
-              step,
-              toolCallId: searchCall.id,
-              toolName: SEARCH_TOOLS_TOOL_NAME,
-            });
-            toolCallCount += 1;
-            step += 1;
-            continue;
-          }
-          const loadSkillCall = progressiveSkills.length === 0
-            ? undefined
-            : result.toolCalls.find((call) => call.name === LOAD_SKILL_TOOL_NAME);
-          if (loadSkillCall) {
-            if (result.toolCalls.length !== 1) {
-              throw new Error(
-                `${LOAD_SKILL_TOOL_NAME} must be the only tool call in a model turn`,
-              );
-            }
-            if (!loadSkillCall.id?.trim()) throw new Error('Tool call id cannot be empty');
-            if (seenToolCallIds.has(loadSkillCall.id)) {
-              throw new Error(
-                `Tool call id "${loadSkillCall.id}" is duplicated in run "${state.run.id}"`,
-              );
-            }
-            if (toolCallCount + 1 > maxToolCalls) {
-              throw new Error(`Agent "${name}" exceeded maxToolCalls limit of ${maxToolCalls}`);
-            }
-            const rawInput = toJsonValue(
-              loadSkillCall.input,
-              `Input for tool "${LOAD_SKILL_TOOL_NAME}" must be JSON-serializable`,
-            );
-            const skillInput = readSkillInput(rawInput);
-            const skill = progressiveSkills.find((item) => item.name === skillInput.name);
-            if (!skill) {
-              throw new Error(`Skill "${skillInput.name}" is not available to agent "${name}"`);
-            }
-            seenToolCallIds.add(loadSkillCall.id);
-            messages.push({
-              role: 'assistant',
-              content:
-                result.output === undefined
-                  ? ''
-                  : serializeValue(
-                      result.output,
-                      `Model output for agent "${name}" must be serializable`,
-                    ),
-              toolCalls: [{ ...loadSkillCall, input: rawInput }],
-            });
-            yield await emit('tool.started', {
-              step,
-              toolCallId: loadSkillCall.id,
-              toolName: LOAD_SKILL_TOOL_NAME,
-            });
-            let blocks: ContextBlock[];
+            let execution;
             try {
-              blocks = await abortable(
-                () => skill.load(knowledgeContext(state, inputContent), skillInput.resource),
-                request.signal,
-              );
+              execution = await executeInternalTool({
+                call: internalCall,
+                input: rawInput,
+                tools: agentTools,
+                searchEnabled,
+                toolSearch,
+                loadedTools,
+                progressiveSkills,
+                knowledgeContext: knowledgeContext(state, inputContent),
+                signal: request.signal,
+              });
             } catch (error) {
               yield await emit('tool.failed', {
                 step,
-                toolCallId: loadSkillCall.id,
-                toolName: LOAD_SKILL_TOOL_NAME,
+                toolCallId: internalCall.id,
+                toolName: internalCall.name,
                 error: toErrorMessage(error),
               });
-              throw new Error(
-                `Skill provider "${skill.name}" failed: ${toErrorMessage(error)}`,
-                { cause: error },
-              );
+              throw error;
             }
+            if (!execution) {
+              throw new Error(`Tool "${internalCall.name}" is not available to agent "${name}"`);
+            }
+            if (loadedTools.size > loadedBefore) loadedToolsVersion += 1;
             messages.push({
               role: 'tool',
-              name: LOAD_SKILL_TOOL_NAME,
-              toolCallId: loadSkillCall.id,
-              content: blocks
-                .filter((block) => block.content.trim())
-                .map((block) => `[Skill: ${skill.name}/${block.id}]\n${block.content}`)
-                .join('\n\n'),
+              name: internalCall.name,
+              toolCallId: internalCall.id,
+              content: execution.content,
             });
             yield await emit('tool.completed', {
               step,
-              toolCallId: loadSkillCall.id,
-              toolName: LOAD_SKILL_TOOL_NAME,
+              toolCallId: internalCall.id,
+              toolName: internalCall.name,
             });
             toolCallCount += 1;
             step += 1;
@@ -1635,9 +1558,14 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
                 validated,
                 `Output from tool "${tool.name}" must be JSON-serializable`,
               );
-              const maxResultBytes = tool.maxResultBytes ?? effectiveLimits?.maxToolResultBytes;
+              const configuredMaxResultBytes = tool.maxResultBytes !== undefined
+                ? tool.maxResultBytes
+                : effectiveLimits?.maxToolResultBytes;
+              const maxResultBytes = configuredMaxResultBytes === undefined
+                ? DEFAULT_MAX_TOOL_RESULT_BYTES
+                : configuredMaxResultBytes;
               const resultBytes = new TextEncoder().encode(serialized).byteLength;
-              if (maxResultBytes !== undefined && resultBytes > maxResultBytes) {
+              if (maxResultBytes !== false && resultBytes > maxResultBytes) {
                 throw new FevexRunError(
                   'TOOL_RESULT_TOO_LARGE',
                   `Tool "${tool.name}" returned ${resultBytes} bytes; limit is ${maxResultBytes}. Store large outputs as artifacts and return an artifact descriptor.`,
@@ -2285,25 +2213,6 @@ function sessionHistoryMessages(session: Session): AgentMessage[] {
     { role: 'system', content: `[Compacted conversation]\n${compaction.summary}` },
     ...session.history.slice(compaction.coveredMessages),
   ];
-}
-
-function readSkillInput(input: JsonValue): { name: string; resource?: string } {
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-    throw new TypeError(`${LOAD_SKILL_TOOL_NAME} input must be an object`);
-  }
-  const record = input as Record<string, JsonValue>;
-  const name = record.name;
-  const resource = record.resource;
-  if (typeof name !== 'string' || !name.trim()) {
-    throw new TypeError(`${LOAD_SKILL_TOOL_NAME} name must be a non-empty string`);
-  }
-  if (resource !== undefined && (typeof resource !== 'string' || !resource.trim())) {
-    throw new TypeError(`${LOAD_SKILL_TOOL_NAME} resource must be a non-empty string`);
-  }
-  return {
-    name: name.trim(),
-    ...(resource === undefined ? {} : { resource: resource.trim() }),
-  };
 }
 
 function scopedArtifacts(

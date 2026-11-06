@@ -182,8 +182,9 @@ every tool. Search only indexes the agent's own tools; allowlists, policies and
 approvals still apply when a loaded tool executes.
 
 Tools can cap serialized results with `maxResultBytes`, or an agent/run can set
-`limits.maxToolResultBytes`. Store larger outputs through `context.artifacts` and
-return the descriptor; otherwise the run fails with `TOOL_RESULT_TOO_LARGE`.
+`limits.maxToolResultBytes`. The default cap is 1 MiB; use `false` to disable it.
+Store larger outputs through `context.artifacts` and return the descriptor;
+otherwise the run fails with `TOOL_RESULT_TOO_LARGE`.
 
 ## Channels core
 
