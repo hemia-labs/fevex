@@ -1,10 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SandboxRunRequest } from '@fevex/core';
 import { createDockerSandbox, type DockerSandboxOptions } from './index';
+
+setDefaultTimeout(30_000);
 
 const dockerPath = Bun.which('docker');
 const image = process.env.FEVEX_DOCKER_TEST_IMAGE ?? 'busybox:1.36';
@@ -69,7 +71,10 @@ describe('docker sandbox integration', () => {
   dockerTest('keeps files across calls in the same run', async () => {
     const { sandbox, cleanup } = setup();
     try {
-      await sandbox.run(request('run_persist', 'printf hello > /workspace/file'));
+      const written = await sandbox.run(
+        request('run_persist', 'printf hello > /workspace/file'),
+      );
+      expect(written.exitCode).toBe(0);
       const result = await sandbox.run(request('run_persist', 'cat /workspace/file'));
       expect(result.stdout).toBe('hello');
     } finally {

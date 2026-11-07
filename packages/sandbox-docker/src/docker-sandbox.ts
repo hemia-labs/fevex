@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   SandboxError,
   type RunId,
@@ -221,6 +222,33 @@ export function createDockerSandbox(options: DockerSandboxOptions): DockerSandbo
       );
     }
     state.containerId = containerId;
+    await waitForContainer(state, signal);
+  };
+
+  const waitForContainer = async (
+    state: RunState,
+    signal: AbortSignal | undefined,
+  ): Promise<void> => {
+    const deadline = Date.now() + startupTimeoutMs;
+    while (true) {
+      const inspect = await executor({
+        dockerPath,
+        containerName: state.containerName,
+        args: ['inspect', '-f', '{{.State.Running}}', state.containerName],
+        timeoutMs: Math.max(1, Math.min(5_000, deadline - Date.now())),
+        maxOutputBytes: 1_024,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      if (inspect.exitCode === 0 && inspect.stdout.trim() === 'true') return;
+      if (Date.now() >= deadline) {
+        throw new SandboxError(
+          'SANDBOX_START_FAILED',
+          `Docker sandbox container did not become ready for image "${image}"`,
+          { cause: new Error(limitMessage(inspect.stderr)) },
+        );
+      }
+      await delay(50);
+    }
   };
 
   const ensureContainer = async (

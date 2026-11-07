@@ -24,6 +24,7 @@ function recorder(): Recorder {
   const executor: DockerExecutor = async (input) => {
     calls.push(input);
     if (input.args[0] === 'run') return ok('container-id\n');
+    if (input.args[0] === 'inspect') return ok('true\n');
     if (input.args[0] === 'exec') return queued.shift() ?? ok('ok');
     return ok('');
   };
