@@ -1,5 +1,46 @@
 # @fevex/core
 
+## 0.1.0-alpha.9
+
+### Minor Changes
+
+- 44e5474: Add hybrid tool retrieval. Configure `toolSearch.semantic` with an
+  `EmbeddingModel`, optional `ToolEmbeddingCache`, `topK` and `minScore`. Fevex
+  runs lexical and vector retrieval independently, fuses them with Reciprocal Rank
+  Fusion and returns the configured limit. If the embedding model or index fails,
+  search falls back to lexical results. Semantic adapters and vectors stay out of
+  run checkpoints; only the serializable search options and loaded tool names are
+  persisted.
+- 44e5474: Add an optional tool reranker. `ToolSearchSemanticOptions.reranker` receives the
+  query, the fused lexical/vector candidates with their scores, and the final
+  limit. Fevex validates that the reranker only returns tools from the candidate
+  set and falls back to the fused ranking when it throws, returns unknown tools or
+  duplicates. The reranker remains optional and is never stored in run
+  checkpoints.
+- 44e5474: Add semantic tool indexing primitives. `EmbeddingModel` lives in
+  `@fevex/core/models`; `@fevex/core/tools` exposes `ToolEmbeddingCache`,
+  `InMemoryToolEmbeddingCache`, `buildToolEmbeddingIndex`,
+  `searchToolEmbeddingIndex`, `toolEmbeddingText`, `toolEmbeddingKey` and
+  `cosineSimilarity`. Indexed text covers the tool name, description and schema
+  keywords. Cache keys are `sha256(embeddingModel.id + text)`, the in-memory cache
+  is a bounded LRU, and durable adapters can implement the same `get`/`set`
+  contract plus optional `getMany`/`setMany` batches. Vectors are derived data and
+  are never stored in run checkpoints.
+- 44e5474: Add on-demand tool search. `auto` mode is the default and enables search above
+  30 tools or a configured token threshold; `on` always enables it and `off`
+  disables it. Configure `threshold`, `tokenThreshold`, `limit` and `pinned`.
+  Above the threshold the model sees `fevex__search_tools` instead of every
+  schema; matching tools load for the next turn. Search only indexes the agent's
+  own tools, and allowlists, policies and approvals still apply when a loaded tool
+  executes. Loaded tools are persisted in the run checkpoint.
+- 44e5474: Harden context compaction and tool results. Add `createModelContextCompactor`
+  for semantic summaries with transcript chunking, `compaction.redactSummary` for
+  event redaction, `getCompactionStats()` counters, cached tool-token estimates
+  and compressed session summaries. Add per-tool `maxResultBytes` and
+  per-agent/run `limits.maxToolResultBytes` with a 1 MiB default, `false` opt-out
+  and a `TOOL_RESULT_TOO_LARGE` error so large outputs move to artifacts instead
+  of the context window.
+
 ## 0.1.0-alpha.8
 
 ### Minor Changes
