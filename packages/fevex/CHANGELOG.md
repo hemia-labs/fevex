@@ -1,5 +1,17 @@
 # @fevex/core
 
+## 0.1.0-alpha.10
+
+### Minor Changes
+
+- 952e070: Add Docker-backed production sandbox provider. Each run gets a long-lived
+  container and isolated workspace with `--network none` by default, dropped
+  capabilities, read-only root, PID/memory/CPU limits, explicit environment only,
+  forced termination and multibyte-safe output caps. Add optional
+  `Sandbox.cleanupRun` and `Sandbox.dispose` lifecycle hooks so the runtime
+  releases per-run resources after terminal runs and provider resources during
+  shutdown. Paused runs keep their container and workspace for resume.
+
 ## 0.1.0-alpha.9
 
 ### Minor Changes
