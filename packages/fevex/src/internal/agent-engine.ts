@@ -123,6 +123,14 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     compactedTokens: 0,
     savedTokens: 0,
   };
+  const cleanupSandboxRun = async (runId: string): Promise<void> => {
+    if (sandbox?.cleanupRun === undefined) return;
+    try {
+      await sandbox.cleanupRun(runId);
+    } catch {
+      // Sandbox cleanup is best effort and must never fail a terminal run.
+    }
+  };
   const {
     activeRuns,
     activeSessions,
@@ -1743,14 +1751,20 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     throwOnPause: boolean,
   ): Promise<RunResult<TOutput> | undefined> => {
     const execution = executeAgent(name, state);
-    while (true) {
-      const next = await nextEvent(state, execution);
-      if (next.done) {
-        if (next.value === undefined && throwOnPause) {
-          const run = await runStore.getRun(state.run.id);
-          if (run?.pause) throw new RunPausedError(run.id, run.pause);
+    try {
+      while (true) {
+        const next = await nextEvent(state, execution);
+        if (next.done) {
+          if (next.value === undefined && throwOnPause) {
+            const run = await runStore.getRun(state.run.id);
+            if (run?.pause) throw new RunPausedError(run.id, run.pause);
+          }
+          return next.value;
         }
-        return next.value;
+      }
+    } finally {
+      if (state.run.status !== 'running' && state.run.status !== 'paused') {
+        await cleanupSandboxRun(state.run.id);
       }
     }
   };
@@ -2193,6 +2207,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       run.error = reason;
       const cancelled = createEvent(state, 'run.cancelled', { reason }) as AgentEvent;
       await commit(state, { checkpoint: null, events: [cancelled] });
+      await cleanupSandboxRun(runId);
       return true;
     } catch (error) {
       if (error instanceof FevexRunError && error.code === 'RUN_CONFLICT') return false;

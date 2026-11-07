@@ -35,7 +35,7 @@ npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
 ```
 
-CI builds, typechecks, tests and tarball-smokes all nine packages. The
+CI builds, typechecks, tests and tarball-smokes all ten packages. The
 repository-only integrations below are **not published to npm** by the release
 pipeline; use them from this repository until they are published:
 
@@ -47,6 +47,7 @@ pipeline; use them from this repository until they are published:
 | `@fevex/postgres` | PostgreSQL run and session store |
 | `@fevex/opentelemetry` | OpenTelemetry trace and metric export |
 | `@fevex/browser` | Browser automation tools |
+| `@fevex/sandbox-docker` | Docker-backed production sandbox provider |
 
 Schemas are optional. The examples use Zod 4, but any Standard
 Schema-compatible validator can be used:

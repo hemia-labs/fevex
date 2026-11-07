@@ -169,6 +169,14 @@ export function createRuntime(composition: FevexComposition): Fevex {
       await waitForIdleUntil(cleanupDeadline);
     }
 
+    if (sandbox?.dispose !== undefined) {
+      try {
+        await sandbox.dispose();
+      } catch {
+        // Provider cleanup is best effort; shutdown must still flush traces.
+      }
+    }
+
     let exportError: unknown;
     try {
       await traceExports.flush({

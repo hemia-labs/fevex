@@ -40,8 +40,12 @@ checkpoint, upgrade and support guarantees.
   servers fail with an actionable version error.
 - Three official packages in the npm release pipeline: `@fevex/core`,
   `@fevex/openai` and `@fevex/deepseek`. MCP, OpenAPI, SQLite, PostgreSQL,
-  OpenTelemetry and browser integrations are built, tested and tarball-smoked
-  in CI but are not published by the release pipeline.
+  OpenTelemetry, browser and Docker sandbox integrations are built, tested and
+  tarball-smoked in CI but are not published by the release pipeline.
+- Docker-backed production sandbox with one long-lived container and isolated
+  workspace per run, no network by default, dropped capabilities, resource
+  limits, forced termination and automatic cleanup. `LocalSandbox` remains
+  development-only.
 
 The default run store is in memory. Use a [persistent store](/docs/adapters/)
 to retain runs and sessions across process restarts. [Workflow recovery](/docs/workflows/#recovery)
@@ -51,6 +55,7 @@ is explicit: applications provide their own recovery worker and timer scheduler.
 
 | Area | Status | Direction |
 | --- | --- | --- |
+| Sandbox isolation | Available | Docker provider with per-run containers and workspaces; E2B and snapshots remain future work. |
 | Messaging channels | Next | Connect messaging surfaces such as Slack, Discord, WhatsApp, and Telegram through channel adapters. |
 | Developer experience | In progress | Adaptable templates, repository inspection and shared research/evals in the playground are available; Studio and builder contracts remain open. |
 | Agent builder ecosystem | Planned | Templates, catalogs, and products built on top of the FEVEX runtime. |

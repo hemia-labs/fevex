@@ -1,0 +1,55 @@
+{
+  "name": "@fevex/sandbox-docker",
+  "version": "0.1.0-alpha.9",
+  "description": "Docker-backed production sandbox provider for Fevex.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": ["dist"],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hemia-labs/fevex.git",
+    "directory": "packages/sandbox-docker"
+  },
+  "bugs": {
+    "url": "https://github.com/hemia-labs/fevex/issues"
+  },
+  "homepage": "https://github.com/hemia-labs/fevex#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "sandbox",
+    "docker",
+    "typescript",
+    "fevex",
+    "fevex-integration",
+    "fevex-extension"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts",
+    "prepack": "bun run build",
+    "test": "bun test --cwd src",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@fevex/core": "0.1.0-alpha.9"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
