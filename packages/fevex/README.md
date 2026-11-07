@@ -35,7 +35,7 @@ npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
 ```
 
-CI builds, typechecks, tests and tarball-smokes all nine packages. The
+CI builds, typechecks, tests and tarball-smokes all ten packages. The
 repository-only integrations below are **not published to npm** by the release
 pipeline; use them from this repository until they are published:
 
@@ -47,6 +47,7 @@ pipeline; use them from this repository until they are published:
 | `@fevex/postgres` | PostgreSQL run and session store |
 | `@fevex/opentelemetry` | OpenTelemetry trace and metric export |
 | `@fevex/browser` | Browser automation tools |
+| `@fevex/sandbox-docker` | Docker-backed production sandbox provider |
 
 Schemas are optional. The examples use Zod 4, but any Standard
 Schema-compatible validator can be used:
@@ -1282,3 +1283,21 @@ The local development sandbox sends `SIGTERM` on timeout or cancellation, then
 the caller's reason after process cleanup. Output limits apply separately to
 stdout and stderr in UTF-8 bytes, omitting an incomplete trailing character.
 This subprocess control does not provide operating-system isolation.
+
+### Production sandbox
+
+Use `@fevex/sandbox-docker` for isolated runs. It creates one long-lived
+container and workspace per run, uses `--network none` by default, drops Linux
+capabilities, applies PID, memory and CPU limits, and only forwards explicit
+environment variables. Fevex calls `cleanupRun` after terminal runs and
+`dispose` during shutdown; paused runs keep their resources for resume.
+
+```ts
+import { createDockerSandbox } from '@fevex/sandbox-docker';
+
+const sandbox = createDockerSandbox({
+  image: 'oven/bun:1-alpine',
+  commands: ['bun', 'sh'],
+  workspaceRoot: '/var/lib/fevex/sandboxes',
+});
+```

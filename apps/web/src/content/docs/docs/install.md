@@ -26,7 +26,7 @@ npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
 ```
 
-CI builds, typechecks, tests and tarball-smokes all nine packages.
+CI builds, typechecks, tests and tarball-smokes all ten packages.
 
 ## Repository-only integrations
 
@@ -41,6 +41,7 @@ from this repository until they are published:
 | `@fevex/postgres` | PostgreSQL run and session store |
 | `@fevex/opentelemetry` | OpenTelemetry trace and metric export |
 | `@fevex/browser` | Browser automation tools |
+| `@fevex/sandbox-docker` | Docker-backed production sandbox provider |
 
 See [Adapters](/docs/adapters/) for the full integration list. Before upgrading a
 durable deployment, read [Compatibility & releases](/docs/compatibility/).

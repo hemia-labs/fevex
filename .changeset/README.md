@@ -19,7 +19,7 @@ does not set this GitHub variable.
 
 For now, npm publication is limited to `@fevex/core`, `@fevex/deepseek` and
 `@fevex/openai`. Changesets may still version other workspace packages when core
-changes, and CI tests all nine, but those other packages are excluded from npm
+changes, and CI tests all ten, but those other packages are excluded from npm
 publication and GitHub release tags. The two published adapters declare an exact
 core version. When core changes, Changesets updates that version and the workflow
 publishes core before the adapters. Their versions retain `-alpha.N`, while npm
@@ -72,7 +72,7 @@ bun run release:rehearse
 - `test:release` exercises real version generation in temporary repositories,
   including adapter-only and core-wide releases, without changing this checkout's
   versions or publishing anything.
-- `release:rehearse` builds and packs all nine packages into `/tmp/fevex-release`,
+- `release:rehearse` builds and packs all ten packages into `/tmp/fevex-release`,
   installs the tarballs into temporary consumers, and runs them with your current
   Node executable. It then reads npm metadata to report publication readiness
   for the three currently enabled npm packages.

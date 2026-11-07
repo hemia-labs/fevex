@@ -42,7 +42,7 @@ for (const target of ['@fevex/openai', '@fevex/browser', '@fevex/core']) {
       run('node', [join(root, 'scripts/changesets.mjs'), 'check', initial]);
       run('node', [join(root, 'scripts/changesets.mjs'), 'version']);
       const plan = read('.changeset/release-plan.json').releases;
-      expect(plan.length).toBe(target === '@fevex/core' ? 9 : 1);
+      expect(plan.length).toBe(target === '@fevex/core' ? 10 : 1);
       expect(plan.every((p: {version: string}) => /-alpha\.\d+$/.test(p.version))).toBe(true);
       expect(read('.changeset/pre.json').mode).toBe('pre');
       expect(read('.changeset/pre.json').tag).toBe('alpha');

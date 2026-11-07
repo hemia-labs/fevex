@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { type AgentEvent, type JsonObject } from './core';
 import type { ModelGateway, ModelInput } from './models';
 import type { ToolExecutionContext } from './tools';
-import { createFevex, defineTool, SandboxError } from './index';
+import {
+  createFevex,
+  defineTool,
+  InMemoryRunStore,
+  RunPausedError,
+  SandboxError,
+} from './index';
 import {
   agent,
   lookupCall,
@@ -232,10 +238,14 @@ describe('agent runs', () => {
 
   test('passes a scoped sandbox only to tools that declare sandbox capabilities', async () => {
     const sandboxRequests: unknown[] = [];
+    const cleaned: string[] = [];
     const sandbox = {
       async run(request: unknown) {
         sandboxRequests.push(request);
         return { exitCode: 0, stdout: 'sandboxed', stderr: '', durationMs: 1, timedOut: false };
+      },
+      cleanupRun(runId: string) {
+        cleaned.push(runId);
       },
     };
     const model: ModelGateway = {
@@ -276,9 +286,8 @@ describe('agent runs', () => {
       ],
     });
 
-    await expect(app.runAgent('assistant', { input: 'run' })).resolves.toMatchObject({
-      output: 'sandboxed/plain',
-    });
+    const result = await app.runAgent('assistant', { input: 'run' });
+    expect(result).toMatchObject({ output: 'sandboxed/plain' });
     expect(sandboxRequests).toEqual([
       expect.objectContaining({
         command: 'node',
@@ -286,6 +295,68 @@ describe('agent runs', () => {
         capabilities: { process: { commands: ['node'] }, resources: { timeoutMs: 1000 } },
       }),
     ]);
+    expect(cleaned).toEqual([result.runId]);
+  });
+
+  test('keeps sandbox resources while paused and cleans them after resume', async () => {
+    const cleaned: string[] = [];
+    const sandbox = {
+      async run() {
+        return { exitCode: 0, stdout: '', stderr: '', durationMs: 0, timedOut: false };
+      },
+      cleanupRun(runId: string) {
+        cleaned.push(runId);
+      },
+    };
+    const model: ModelGateway = {
+      stream: streamFrom(async (input) => {
+        const toolMessages = input.messages.filter(({ role }) => role === 'tool');
+        if (!toolMessages.length) {
+          return { toolCalls: [{ id: 'call-1', name: 'code', input: {} }] };
+        }
+        return { output: 'done' };
+      }),
+    };
+    const app = createFevex({
+      models: { default: model },
+      agents: [agent('assistant', { tools: ['code'] })],
+      sandbox,
+      runStore: new InMemoryRunStore(),
+      tools: [
+        defineTool({
+          name: 'code',
+          approval: 'required',
+          sandbox: { process: { commands: ['node'] } },
+          execute() {
+            return 'ok';
+          },
+        }),
+      ],
+    });
+
+    let paused: RunPausedError | undefined;
+    try {
+      await app.runAgent('assistant', { input: 'go' });
+    } catch (error) {
+      if (!(error instanceof RunPausedError)) throw error;
+      paused = error;
+    }
+    if (!paused) throw new Error('Expected the run to pause');
+    expect(cleaned).toEqual([]);
+
+    await app.resumeRun(paused.runId, {
+      type: 'approval',
+      approvalId: paused.pause.type === 'approval' ? paused.pause.approval.id : '',
+      decision: 'approve',
+      actor: { id: 'reviewer' },
+    });
+    let run = await app.getRun(paused.runId);
+    for (let attempt = 0; attempt < 100 && run?.status === 'running'; attempt += 1) {
+      await Bun.sleep(10);
+      run = await app.getRun(paused.runId);
+    }
+    expect(run?.status).toBe('completed');
+    expect(cleaned).toEqual([paused.runId]);
   });
 
   test('reports sandbox failures through normal tool failure events', async () => {

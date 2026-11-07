@@ -80,6 +80,33 @@ describe('shutdown', () => {
     });
   });
 
+  test('disposes the sandbox provider during shutdown', async () => {
+    let disposed = 0;
+    const model: ModelGateway = {
+      async *stream() {
+        yield { type: 'output.delta', delta: 'ok' };
+        yield { type: 'completed', result: { output: 'ok' } };
+      },
+    };
+    const app = createFevex({
+      models: { default: model },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Help.' })],
+      sandbox: {
+        async run() {
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 0, timedOut: false };
+        },
+        dispose() {
+          disposed += 1;
+        },
+      },
+    });
+
+    await app.runAgent('assistant', { input: 'go' });
+    await app.shutdown();
+
+    expect(disposed).toBe(1);
+  });
+
   test('cancels an active agent when the deadline expires', async () => {
     const modelStarted = deferred();
     const app = createFevex({

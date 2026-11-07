@@ -46,6 +46,13 @@ export interface SandboxRunResult {
 
 export interface Sandbox {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
+  /**
+   * Release per-run resources (containers, workspaces) after a terminal run.
+   * Paired runs may keep their resources so a resume can continue.
+   */
+  cleanupRun?(runId: RunId): void | Promise<void>;
+  /** Release provider-wide resources during runtime shutdown. */
+  dispose?(): void | Promise<void>;
 }
 
 export class SandboxError extends Error {
