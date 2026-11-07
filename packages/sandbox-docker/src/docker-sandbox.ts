@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -460,9 +460,13 @@ function createProviderRoot(workspaceRoot: string | undefined): string {
 }
 
 function createWorkspace(root: string, key: string, ephemeral: boolean): string {
-  if (ephemeral) return mkdtempSync(join(root, 'call-'));
-  const workspace = join(root, 'runs', hashKey(key).slice(0, 16));
-  mkdirSync(workspace, { recursive: true, mode: 0o700 });
+  const workspace = ephemeral
+    ? mkdtempSync(join(root, 'call-'))
+    : join(root, 'runs', hashKey(key).slice(0, 16));
+  if (!ephemeral) mkdirSync(workspace, { recursive: true, mode: 0o700 });
+  // The provider root stays private, but the mounted workspace must be
+  // writable by the container user even after every capability is dropped.
+  chmodSync(workspace, 0o777);
   return workspace;
 }
 
