@@ -1,4 +1,4 @@
-import type { AgentDefinition, ContextBudget } from '../agents';
+import type { AgentDefinition, ContextBudget, ToolSearchOptions } from '../agents';
 import { FevexConfigurationError, type FevexConfigurationErrorCode } from '../configuration-error';
 import type { ArtifactStore } from '../artifacts';
 import type { JsonObject, JsonValue, ToolEventSource } from '../core';
@@ -27,14 +27,17 @@ import {
   type RunStore,
 } from '../runtime';
 import {
+  InMemoryToolEmbeddingCache,
   IntegrationError,
   type ConnectionDefinition,
   type ConnectionToolPolicy,
+  type ToolEmbeddingCache,
   type ToolProviderContext,
   type ToolDefinition,
 } from '../tools';
 import type { WorkflowDefinition } from '../workflows';
 import { isStandardSchema } from './schemas';
+import { resolveToolSearchOptions } from './tool-search';
 
 const REASONING_EFFORTS = new Set<ReasoningEffort>([
   'provider-default',
@@ -58,9 +61,12 @@ export interface FevexComposition {
   tools: Map<string, ToolDefinition>;
   contextProviders: Map<string, ContextProvider>;
   contextBudget: ContextBudget | undefined;
+  toolSearch: ToolSearchOptions | undefined;
+  toolSearchCache: ToolEmbeddingCache;
   compaction: {
     compactor: ContextCompactor;
     estimateTokens: ContextTokenEstimator;
+    redactSummary?: (summary: string) => string;
   };
   memoryStore: MemoryStore | undefined;
   runStore: RunStore;
@@ -293,6 +299,13 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
       'INVALID_TOOL',
       `Output schema for connection tool "${remoteName}" must be a JSON object`,
     );
+    assertConfiguration(
+      policy?.maxResultBytes === undefined
+        || policy.maxResultBytes === false
+        || (Number.isSafeInteger(policy.maxResultBytes) && policy.maxResultBytes > 0),
+      'INVALID_TOOL',
+      `maxResultBytes for connection tool "${remoteName}" must be a positive safe integer or false`,
+    );
 
     return {
       name: namespacedToolName(connection.name, remoteName),
@@ -305,6 +318,7 @@ function expandConnection(connection: ConnectionDefinition): ToolDefinition[] {
       ...(policy?.idempotency === undefined ? {} : { idempotency: policy.idempotency }),
       ...(policy?.retry === undefined ? {} : { retry: policy.retry }),
       ...(policy?.credentials === undefined ? {} : { credentials: policy.credentials }),
+      ...(policy?.maxResultBytes === undefined ? {} : { maxResultBytes: policy.maxResultBytes }),
       source,
       async resolve(context) {
         try {
@@ -542,6 +556,26 @@ export function createComposition(config: FevexConfig): FevexComposition {
       throw configurationError('INVALID_CONFIG', (error as Error).message);
     }
   }
+  assertConfiguration(
+    config.toolSearchCache === undefined
+      || (isRecord(config.toolSearchCache)
+        && typeof config.toolSearchCache.get === 'function'
+        && typeof config.toolSearchCache.set === 'function'),
+    'INVALID_CONFIG',
+    'Fevex config "toolSearchCache" must implement get and set',
+  );
+  const defaultToolSearchCache = config.toolSearchCache ?? new InMemoryToolEmbeddingCache();
+  if (config.toolSearch !== undefined) {
+    try {
+      resolveToolSearchOptions(
+        config.toolSearch,
+        'Fevex config "toolSearch"',
+        defaultToolSearchCache,
+      );
+    } catch (error) {
+      throw configurationError('INVALID_CONFIG', (error as Error).message);
+    }
+  }
   if (config.compaction !== undefined) {
     assertConfiguration(
       typeof config.compaction === 'object'
@@ -562,6 +596,12 @@ export function createComposition(config: FevexConfig): FevexComposition {
         || typeof config.compaction.estimateTokens === 'function',
       'INVALID_CONFIG',
       'Fevex config "compaction.estimateTokens" must be a function',
+    );
+    assertConfiguration(
+      config.compaction.redactSummary === undefined
+        || typeof config.compaction.redactSummary === 'function',
+      'INVALID_CONFIG',
+      'Fevex config "compaction.redactSummary" must be a function',
     );
   }
   assertConfiguration(
@@ -800,6 +840,13 @@ export function createComposition(config: FevexConfig): FevexComposition {
       'INVALID_TOOL',
       `Tool "${name}" requires Fevex config "sandbox"`,
     );
+    assertConfiguration(
+      definition.maxResultBytes === undefined
+        || definition.maxResultBytes === false
+        || (Number.isSafeInteger(definition.maxResultBytes) && definition.maxResultBytes > 0),
+      'INVALID_TOOL',
+      `Tool "${name}" maxResultBytes must be a positive safe integer or false`,
+    );
     if (definition.retry !== undefined) {
       assertConfiguration(
         isRecord(definition.retry) &&
@@ -867,6 +914,9 @@ export function createComposition(config: FevexConfig): FevexComposition {
       ...(definition.idempotency === undefined ? {} : { idempotency: definition.idempotency }),
       ...(definition.retry === undefined ? {} : { retry: { ...definition.retry } }),
       ...(definition.credentials === undefined ? {} : { credentials: [...definition.credentials] }),
+      ...(definition.maxResultBytes === undefined
+        ? {}
+        : { maxResultBytes: definition.maxResultBytes }),
       ...(definition.sandbox === undefined
         ? {}
         : { sandbox: copySandboxCapabilities(definition.sandbox) }),
@@ -1077,6 +1127,17 @@ export function createComposition(config: FevexConfig): FevexComposition {
         throw configurationError('INVALID_AGENT', (error as Error).message);
       }
     }
+    if (definition.toolSearch !== undefined) {
+      try {
+        resolveToolSearchOptions(
+          definition.toolSearch,
+          `Agent "${name}" toolSearch`,
+          defaultToolSearchCache,
+        );
+      } catch (error) {
+        throw configurationError('INVALID_AGENT', (error as Error).message);
+      }
+    }
     if (definition.outputSchema !== undefined) {
       assertConfiguration(
         isStandardSchema(definition.outputSchema),
@@ -1090,6 +1151,7 @@ export function createComposition(config: FevexConfig): FevexComposition {
     assertLimit(rawLimits?.maxToolCalls, 'maxToolCalls', 0, name);
     assertLimit(rawLimits?.maxInputTokens, 'maxInputTokens', 1, name, true);
     assertLimit(rawLimits?.maxOutputTokens, 'maxOutputTokens', 1, name, true);
+    assertLimit(rawLimits?.maxToolResultBytes, 'maxToolResultBytes', 1, name, true);
 
     agents.set(name, {
       name,
@@ -1132,6 +1194,16 @@ export function createComposition(config: FevexConfig): FevexComposition {
       ...(definition.contextBudget === undefined
         ? {}
         : { contextBudget: { ...definition.contextBudget } }),
+      ...(definition.toolSearch === undefined
+        ? {}
+        : {
+            toolSearch: {
+              ...definition.toolSearch,
+              ...(definition.toolSearch.pinned === undefined
+                ? {}
+                : { pinned: [...definition.toolSearch.pinned] }),
+            },
+          }),
       ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
       ...(rawLimits === undefined
@@ -1150,6 +1222,9 @@ export function createComposition(config: FevexConfig): FevexComposition {
               ...(rawLimits.maxOutputTokens === undefined
                 ? {}
                 : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
+              ...(rawLimits.maxToolResultBytes === undefined
+                ? {}
+                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number | false }),
             },
           }),
     });
@@ -1301,6 +1376,15 @@ export function createComposition(config: FevexConfig): FevexComposition {
       'Workflow',
       'INVALID_WORKFLOW',
     );
+    assertLimit(
+      rawLimits?.maxToolResultBytes,
+      'maxToolResultBytes',
+      1,
+      name,
+      false,
+      'Workflow',
+      'INVALID_WORKFLOW',
+    );
     assertConfiguration(
       !workflows.has(name),
       'DUPLICATE_WORKFLOW',
@@ -1328,6 +1412,9 @@ export function createComposition(config: FevexConfig): FevexComposition {
               ...(rawLimits.maxOutputTokens === undefined
                 ? {}
                 : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
+              ...(rawLimits.maxToolResultBytes === undefined
+                ? {}
+                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number | false }),
             },
           }),
       run: definition.run as WorkflowDefinition['run'],
@@ -1451,6 +1538,15 @@ export function createComposition(config: FevexConfig): FevexComposition {
       'Team',
       'INVALID_TEAM',
     );
+    assertLimit(
+      rawLimits?.maxToolResultBytes,
+      'maxToolResultBytes',
+      1,
+      name,
+      false,
+      'Team',
+      'INVALID_TEAM',
+    );
     assertConfiguration(
       !teams.has(name),
       'DUPLICATE_TEAM',
@@ -1494,6 +1590,9 @@ export function createComposition(config: FevexConfig): FevexComposition {
               ...(rawLimits.maxOutputTokens === undefined
                 ? {}
                 : { maxOutputTokens: rawLimits.maxOutputTokens as number | false }),
+              ...(rawLimits.maxToolResultBytes === undefined
+                ? {}
+                : { maxToolResultBytes: rawLimits.maxToolResultBytes as number | false }),
             },
           }),
       run: definition.run as TeamDefinition['run'],
@@ -1515,9 +1614,22 @@ export function createComposition(config: FevexConfig): FevexComposition {
     contextProviders,
     contextBudget:
       config.contextBudget === undefined ? undefined : { ...config.contextBudget },
+    toolSearch:
+      config.toolSearch === undefined
+        ? undefined
+        : {
+            ...config.toolSearch,
+            ...(config.toolSearch.pinned === undefined
+              ? {}
+              : { pinned: [...config.toolSearch.pinned] }),
+          },
+    toolSearchCache: defaultToolSearchCache,
     compaction: {
       compactor: config.compaction?.compactor ?? createDigestContextCompactor(),
       estimateTokens: config.compaction?.estimateTokens ?? estimateContextTokens,
+      ...(config.compaction?.redactSummary === undefined
+        ? {}
+        : { redactSummary: config.compaction.redactSummary }),
     },
     memoryStore: config.memoryStore ?? (usesMemory ? new InMemoryMemoryStore() : undefined),
     runStore: config.runStore ?? new InMemoryRunStore(),

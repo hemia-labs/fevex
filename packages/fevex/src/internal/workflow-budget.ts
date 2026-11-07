@@ -32,6 +32,14 @@ export function combineLimits(
     ...(minLimit(first.maxOutputTokens, second.maxOutputTokens) === undefined
       ? {}
       : { maxOutputTokens: minLimit(first.maxOutputTokens, second.maxOutputTokens) as number | false }),
+    ...(minLimit(first.maxToolResultBytes, second.maxToolResultBytes) === undefined
+      ? {}
+      : {
+          maxToolResultBytes: minLimit(
+            first.maxToolResultBytes,
+            second.maxToolResultBytes,
+          ) as number | false,
+        }),
   };
 }
 
@@ -71,6 +79,9 @@ export function remainingWorkflowLimits(
             budget?.usage?.outputTokens,
           ) as number | false,
         }),
+    ...(limits.maxToolResultBytes === undefined
+      ? {}
+      : { maxToolResultBytes: limits.maxToolResultBytes }),
   };
 }
 

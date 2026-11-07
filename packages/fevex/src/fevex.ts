@@ -1,4 +1,4 @@
-import type { AgentDefinition, ContextBudget } from './agents';
+import type { AgentDefinition, ContextBudget, ToolSearchOptions } from './agents';
 import type { ArtifactStore } from './artifacts';
 import type { AgentEvent, ExecutionContext, RunId } from './core';
 import { createComposition } from './internal/configuration';
@@ -11,6 +11,7 @@ import type { Sandbox } from './sandbox';
 import type {
   AgentRun,
   ContextCompactionOptions,
+  ContextCompactionStats,
   CredentialStore,
   ListEventsOptions,
   PurgeRunsOptions,
@@ -26,7 +27,7 @@ import type {
   TeamRun,
 } from './runtime';
 import type { TeamDefinition } from './teams';
-import type { ConnectionDefinition, ToolDefinition } from './tools';
+import type { ConnectionDefinition, ToolDefinition, ToolEmbeddingCache } from './tools';
 import type { WorkflowDefinition } from './workflows';
 
 export interface FevexAdmissionRequest {
@@ -91,6 +92,10 @@ export interface FevexConfig {
   contextBudget?: ContextBudget;
   /** Optional context compactor and token estimator. */
   compaction?: ContextCompactionOptions;
+  /** Default on-demand tool search for agents that do not declare one. */
+  toolSearch?: ToolSearchOptions;
+  /** Optional durable cache for semantic tool embeddings. */
+  toolSearchCache?: ToolEmbeddingCache;
   memoryStore?: MemoryStore;
   runStore?: RunStore;
   credentialStore?: CredentialStore;
@@ -155,6 +160,8 @@ export interface Fevex {
   flushObservability(options?: { timeoutMs?: number }): Promise<void>;
   /** Cumulative trace export counters for this runtime. */
   getObservabilityStats(): ObservabilityStats;
+  /** Cumulative context compaction counters for this runtime. */
+  getCompactionStats(): ContextCompactionStats;
   /**
    * Stops admitting new work, drains or cancels active runs, and flushes trace
    * exports. The host still owns closing its stores and external adapters.

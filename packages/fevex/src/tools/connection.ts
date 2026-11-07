@@ -59,6 +59,7 @@ export interface ConnectionToolPolicy {
   idempotency?: ToolIdempotency;
   retry?: ToolRetryPolicy;
   credentials?: string[];
+  maxResultBytes?: number | false;
 }
 
 export interface ConnectionDefinition {

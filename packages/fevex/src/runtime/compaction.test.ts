@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentMessage } from '../core';
+import { fakeModel } from '../testing';
 import {
   createDigestContextCompactor,
+  createModelContextCompactor,
   estimateContextTokens,
   resolveContextBudget,
 } from './compaction';
@@ -42,6 +44,51 @@ describe('context budget', () => {
         tools: [{ name: 'lookup', description: 'Look up.', inputSchema: { type: 'object' } }],
       }),
     ).toBeGreaterThan(withoutTools);
+  });
+});
+
+describe('model context compactor', () => {
+  test('summarizes older messages with the configured model', async () => {
+    const model = fakeModel({ output: 'MODEL SUMMARY' });
+    const compactor = createModelContextCompactor({ model });
+    const result = await compactor.compact({
+      agentName: 'support',
+      sessionId: 'session-1',
+      messages: [message('user', 'old request'), message('assistant', 'old answer')],
+      estimatedTokens: 500,
+      targetTokens: 100,
+      contextWindow: 1_000,
+      step: 1,
+      estimateTokens: () => 50,
+    });
+    expect(result).toEqual([{ role: 'system', content: 'MODEL SUMMARY' }]);
+    expect(model.calls).toHaveLength(1);
+    expect(model.calls[0]!.tools).toBeUndefined();
+    expect(model.calls[0]!.messages.at(-1)?.content).toContain('old request');
+  });
+
+  test('chunks large transcripts before summarizing', async () => {
+    const model = fakeModel(
+      { output: 'PART ONE' },
+      { output: 'PART TWO' },
+      { output: 'FINAL SUMMARY' },
+    );
+    const compactor = createModelContextCompactor({ model, maxInputChars: 1_000 });
+    const result = await compactor.compact({
+      agentName: 'support',
+      sessionId: 'session-1',
+      messages: [
+        message('user', 'a'.repeat(900)),
+        message('assistant', 'b'.repeat(900)),
+      ],
+      estimatedTokens: 500,
+      targetTokens: 100,
+      contextWindow: 1_000,
+      step: 1,
+      estimateTokens: () => 50,
+    });
+    expect(result).toEqual([{ role: 'system', content: 'FINAL SUMMARY' }]);
+    expect(model.calls).toHaveLength(3);
   });
 });
 

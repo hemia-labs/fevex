@@ -5,6 +5,7 @@ import {
   createFevex,
   defineAgent,
   defineTool,
+  estimateContextTokens,
   InMemoryRunStore,
   RunPausedError,
 } from './index';
@@ -74,6 +75,8 @@ describe('automatic context compaction', () => {
     expect(stored?.history[0]?.content).toContain('OLD_0');
     expect(stored?.compaction).toMatchObject({ coveredMessages: original.length });
     expect(stored?.compaction?.summary).toContain('Compacted conversation');
+    expect(app.getCompactionStats()).toMatchObject({ compactions: 1 });
+    expect(app.getCompactionStats().savedTokens).toBeGreaterThan(0);
   });
 
   test('reuses a session compaction summary across runs', async () => {
@@ -210,6 +213,52 @@ describe('automatic context compaction', () => {
     expect(third.some((message) => message.content.includes('TOOL_RESULT_ONE'))).toBe(false);
   });
 
+  test('caches tool token estimates within a run', async () => {
+    const store = new InMemoryRunStore();
+    const sessionId = 'session-token-cache';
+    await seedSession(store, sessionId, history(20));
+    const model = fakeModel(
+      { toolCalls: [{ id: 'call-1', name: 'lookup', input: {} }] },
+      { output: 'done' },
+    );
+    const lookup = defineTool({
+      name: 'lookup',
+      execute() {
+        return 'ok';
+      },
+    });
+    let toolEstimates = 0;
+    const app = createFevex({
+      models: { default: model },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          tools: ['lookup'],
+          contextBudget: budget(),
+        }),
+      ],
+      tools: [lookup],
+      compaction: {
+        compactor: {
+          compact() {
+            return [{ role: 'system', content: 'SUMMARY' }];
+          },
+        },
+        estimateTokens(input) {
+          if (input.tools?.length) toolEstimates += 1;
+          return estimateContextTokens(input);
+        },
+      },
+      runStore: store,
+    });
+
+    await expect(
+      app.runAgent('support', { input: 'latest question', sessionId }),
+    ).resolves.toMatchObject({ output: 'done' });
+    expect(toolEstimates).toBe(1);
+  });
+
   test('rejects invalid compactor output before calling the model', async () => {
     const store = new InMemoryRunStore();
     await seedSession(store, 'session-invalid', history(20));
@@ -237,6 +286,40 @@ describe('automatic context compaction', () => {
       app.runAgent('support', { input: 'latest question', sessionId: 'session-invalid' }),
     ).rejects.toThrow('at least one message');
     expect(model.calls).toHaveLength(0);
+  });
+
+  test('redacts the summary copied into the event', async () => {
+    const store = new InMemoryRunStore();
+    await seedSession(store, 'session-redacted', history(20));
+    const events: AgentEvent[] = [];
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'done' }) },
+      agents: [
+        defineAgent({
+          name: 'support',
+          instructions: 'Help.',
+          contextBudget: budget(),
+        }),
+      ],
+      compaction: {
+        compactor: {
+          compact() {
+            return [{ role: 'system', content: 'SECRET SUMMARY' }];
+          },
+        },
+        redactSummary: (summary) => summary.replace('SECRET', '[REDACTED]'),
+      },
+      runStore: store,
+      onEvent: (event) => events.push(event),
+    });
+
+    await app.runAgent('support', { input: 'latest question', sessionId: 'session-redacted' });
+    const compacted = events.find((event) => event.type === 'context.compacted');
+    if (compacted?.type !== 'context.compacted') throw new Error('Expected a compaction event');
+    expect(compacted.payload.summary).toBe('[REDACTED] SUMMARY');
+    expect((await store.getSession('session-redacted'))?.compaction?.summary).toContain(
+      'SECRET SUMMARY',
+    );
   });
 
   test('caps the summary copied into the event', async () => {

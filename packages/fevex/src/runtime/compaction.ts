@@ -1,5 +1,6 @@
 import type { AgentMessage, ExecutionContext, ToolSpec } from '../core';
 import type { ContextBudget } from '../agents';
+import type { ModelGateway } from '../models';
 import type { SessionId } from './run-store';
 
 /** Estimates the input tokens of messages and tool definitions. */
@@ -36,6 +37,17 @@ export interface ContextCompactionOptions {
   compactor?: ContextCompactor;
   /** Defaults to a character-based estimate. */
   estimateTokens?: ContextTokenEstimator;
+  /** Redacts the summary before it enters the context.compacted event. */
+  redactSummary?: (summary: string) => string;
+}
+
+/** Cumulative runtime counters for automatic context compaction. */
+export interface ContextCompactionStats {
+  compactions: number;
+  removedMessages: number;
+  estimatedTokens: number;
+  compactedTokens: number;
+  savedTokens: number;
 }
 
 export interface ResolvedContextBudget {
@@ -108,6 +120,124 @@ export function estimateContextTokens(
   }
   if (input.tools?.length) characters += JSON.stringify(input.tools).length;
   return Math.max(1, Math.ceil(characters / 4));
+}
+
+export interface ModelContextCompactorOptions {
+  /** Model used only to summarize older context. */
+  model: ModelGateway;
+  /** Overrides the built-in summarization instructions. */
+  systemPrompt?: string;
+  /** Maximum output tokens for the summary. Defaults to 1,024. */
+  maxOutputTokens?: number;
+  /** Maximum characters sent to one summarization call. Defaults to 120,000. */
+  maxInputChars?: number;
+}
+
+const DEFAULT_COMPACTOR_PROMPT =
+  'You compact conversation history for another agent. Preserve decisions, approvals, constraints, identifiers, tool results and open tasks. Return only the summary.';
+
+/**
+ * Creates a semantic compactor backed by a model. Use a cheap, fast model and
+ * keep it separate from the agent model when possible. Large transcripts are
+ * summarized in chunks and then merged.
+ */
+export function createModelContextCompactor(
+  options: ModelContextCompactorOptions,
+): ContextCompactor {
+  const maxOutputTokens = options.maxOutputTokens ?? 1_024;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) {
+    throw new TypeError('Model compactor maxOutputTokens must be a positive safe integer');
+  }
+  const maxInputChars = options.maxInputChars ?? 120_000;
+  if (!Number.isSafeInteger(maxInputChars) || maxInputChars < 1_000) {
+    throw new TypeError('Model compactor maxInputChars must be a safe integer of at least 1,000');
+  }
+  const systemPrompt = options.systemPrompt ?? DEFAULT_COMPACTOR_PROMPT;
+  const summarize = async (
+    text: string,
+    instruction: string,
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    const stream = options.model.stream({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${instruction}\n\n${text || '(empty)'}` },
+      ],
+      maxOutputTokens,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    let deltas = '';
+    let output: unknown;
+    for await (const event of stream) {
+      if (event.type === 'output.delta') deltas += event.delta;
+      else output = event.result.output;
+    }
+    const summary = typeof output === 'string' ? output : deltas;
+    if (!summary.trim()) {
+      throw new Error('Model context compactor returned an empty summary');
+    }
+    return summary.trim();
+  };
+  return {
+    async compact(input) {
+      let current = formatTranscript(input.messages);
+      let depth = 0;
+      while (current.length > maxInputChars && depth < 4) {
+        const summaries: string[] = [];
+        for (const chunk of splitText(current, maxInputChars)) {
+          summaries.push(
+            await summarize(
+              chunk,
+              'Summarize this part of a longer conversation. Preserve decisions, constraints, identifiers, tool results and open tasks.',
+              input.signal,
+            ),
+          );
+        }
+        current = summaries.join('\n\n');
+        depth += 1;
+      }
+      if (current.length > maxInputChars) {
+        current = `${current.slice(0, maxInputChars - 1)}…`;
+      }
+      return [
+        {
+          role: 'system',
+          content: await summarize(
+            current,
+            `Merge the following into one summary in at most ${input.targetTokens} tokens.`,
+            input.signal,
+          ),
+        },
+      ];
+    },
+  };
+}
+
+function formatTranscript(messages: readonly AgentMessage[]): string {
+  return messages
+    .map((message) => {
+      const toolCalls = message.toolCalls?.length
+        ? `\nTool calls: ${message.toolCalls
+            .map((call) => `${call.name}(${JSON.stringify(call.input)})`)
+            .join(', ')}`
+        : '';
+      const name = message.name === undefined ? '' : ` (${message.name})`;
+      return `${message.role}${name}: ${message.content}${toolCalls}`;
+    })
+    .join('\n\n');
+}
+
+function splitText(text: string, maxChars: number): string[] {
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > maxChars) {
+    let cut = rest.lastIndexOf('\n', maxChars);
+    if (cut < Math.floor(maxChars / 2)) cut = maxChars;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
 }
 
 export interface DigestContextCompactorOptions {

@@ -145,10 +145,26 @@ of 1.1 over a character-based count. Inject `compaction.estimateTokens` for a
 real tokenizer. The `context.compacted` event carries at most 4,000 summary
 characters; the full summary stays in the checkpoint.
 
-The default compactor is deterministic and never calls a model. Inject a custom
-summarizer through `createFevex({ compaction: { compactor } })`; it receives the
-older messages and returns their replacement. `compaction.estimateTokens` can
-replace the character-based estimate with a real tokenizer.
+The default compactor is deterministic and never calls a model. For semantic
+summaries, use a separate model:
+
+```ts
+import { createModelContextCompactor } from '@fevex/core';
+
+const app = createFevex({
+  models,
+  compaction: {
+    compactor: createModelContextCompactor({ model: summaryModel }),
+  },
+});
+```
+
+The model compactor chunks large transcripts (`maxInputChars`, default 120,000)
+and merges the partial summaries. Inject any other summarizer through
+`compaction.compactor`. Use
+`compaction.redactSummary` to redact the summary before it enters the
+`context.compacted` event; the checkpoint keeps the full summary. Read cumulative
+runtime counters with `app.getCompactionStats()`.
 
 `contextBudget.contextWindow` is the model context window.
 `limits.maxInputTokens` remains the cumulative spend cap for a run.

@@ -29,6 +29,7 @@ async function transportableTool(
   retry: ToolDefinition['retry'];
   credentials: string[];
   sandbox: ToolDefinition['sandbox'];
+  maxResultBytes?: number | false;
   source: ToolDefinition['source'];
 }> {
   return {
@@ -58,6 +59,7 @@ async function transportableTool(
     retry: tool.retry,
     credentials: tool.credentials ?? [],
     sandbox: tool.sandbox,
+    maxResultBytes: tool.maxResultBytes,
     source: tool.source,
   };
 }
@@ -93,6 +95,7 @@ export async function definitionHash(
     approvalMode: agent.approvalMode,
     limits: agent.limits,
     contextBudget,
+    // toolSearch is stored in the checkpoint; keep it out of the agent definition hash.
     inputSchema:
       agent.inputSchema === undefined
         ? undefined
