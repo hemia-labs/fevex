@@ -236,8 +236,8 @@ workflow. This avoids running a second copy of CI for every push to `main`.
 It also supports manual dispatch. Source validation is split into jobs:
 
 - Tooling/changeset checks, including real versioning rehearsals.
-- One build of all ten packages, ordered by their internal dependencies.
-- Nine package jobs, with at most four running concurrently; each typechecks and
+- One build of all eleven packages, ordered by their internal dependencies.
+- Ten package jobs, with at most four running concurrently; each typechecks and
   tests its package and reuses the build artifact.
 - PostgreSQL tests/typecheck in a separate job with PostgreSQL 16 and
   `FEVEX_REQUIRE_POSTGRES=1`.

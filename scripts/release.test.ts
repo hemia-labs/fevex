@@ -167,6 +167,7 @@ test('orders internal dependencies and selects only reviewed, increasing version
 test('keeps a deliberate published inventory', () => {
   const published = ['@fevex/core', '@fevex/deepseek', '@fevex/openai'];
   const repositoryOnly = [
+    '@fevex/anthropic',
     '@fevex/browser',
     '@fevex/mcp',
     '@fevex/openapi',
