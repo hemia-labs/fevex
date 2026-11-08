@@ -1,5 +1,11 @@
 # @fevex/core
 
+## 0.1.0-alpha.11
+
+### Patch Changes
+
+- cea838e: Document the new `@fevex/anthropic` adapter in the core package README.
+
 ## 0.1.0-alpha.10
 
 ### Minor Changes

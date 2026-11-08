@@ -1,6 +1,6 @@
 {
   "name": "@fevex/sandbox-docker",
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
   "description": "Docker-backed production sandbox provider for Fevex.",
   "type": "module",
   "license": "Apache-2.0",
@@ -47,7 +47,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@fevex/core": "0.1.0-alpha.10"
+    "@fevex/core": "0.1.0-alpha.11"
   },
   "devDependencies": {
     "typescript": "^5.7.0"
