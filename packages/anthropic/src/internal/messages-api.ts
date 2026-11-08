@@ -486,7 +486,9 @@ function assertStrictSchemas(input: ModelInput): void {
     if (issue) throw unsupportedSchema(`tool-input "${tool.name}"`, issue);
   }
   if (input.outputSchema) {
-    const issue = findAnthropicSchemaIssue(input.outputSchema, limits);
+    const issue = findAnthropicSchemaIssue(input.outputSchema, limits, {
+      requireObjectRoot: false,
+    });
     if (issue) throw unsupportedSchema('output', issue);
   }
 }

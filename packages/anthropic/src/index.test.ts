@@ -479,7 +479,9 @@ describe('createAnthropic', () => {
       ]),
     );
     const cases: ModelInput[] = [
-      input({ outputSchema: { type: 'string' } }),
+      input({
+        tools: [{ name: 'invalid_root', inputSchema: { type: 'string' } }],
+      }),
       input({
         outputSchema: {
           type: 'object',
@@ -648,6 +650,24 @@ describe('createAnthropic', () => {
     await expect(
       collectModel(structuredModel, input({ outputSchema: { type: 'object' } })),
     ).rejects.toThrow('Anthropic structured output was not valid JSON');
+  });
+
+  test('accepts scalar strict output schemas', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const model = createAnthropic({
+      apiKey: 'test-key',
+      fetch: async (_url, init) => {
+        bodies.push(JSON.parse(init?.body as string));
+        return ok(textEvents('"done"'));
+      },
+    })('test-model');
+
+    await expect(
+      collectModel(model, input({ outputSchema: { type: 'string' } })),
+    ).resolves.toEqual({ output: 'done' });
+    expect(bodies[0]?.output_config).toEqual({
+      format: { type: 'json_schema', schema: { type: 'string' } },
+    });
   });
 
   test('rejects refusals, truncated responses and malformed tool calls', async () => {
@@ -1220,6 +1240,13 @@ describe('createAnthropic', () => {
     ).toBeUndefined();
     expect(
       findAnthropicSchemaIssue({ type: 'object', additionalProperties: false }),
+    ).toBeUndefined();
+    expect(
+      findAnthropicSchemaIssue(
+        { type: 'string' },
+        undefined,
+        { requireObjectRoot: false },
+      ),
     ).toBeUndefined();
   });
 });

@@ -51,11 +51,19 @@ export interface AnthropicSchemaLimits {
 
 type Definitions = Record<string, unknown>;
 
+export interface AnthropicSchemaOptions {
+  requireObjectRoot?: boolean;
+}
+
 export function findAnthropicSchemaIssue(
   schema: JsonObject,
   limits: AnthropicSchemaLimits = { optionalParameters: 0, unionParameters: 0 },
+  options: AnthropicSchemaOptions = {},
 ): string | undefined {
-  if (schema.type !== 'object' || schema.anyOf !== undefined || schema.allOf !== undefined) {
+  if (
+    options.requireObjectRoot !== false
+    && (schema.type !== 'object' || schema.anyOf !== undefined || schema.allOf !== undefined)
+  ) {
     return '$: root must be an object';
   }
 
