@@ -12,6 +12,7 @@
     "baseUrl": ".",
     "paths": {
       "@fevex/core": ["packages/fevex/src/index.ts"],
+      "@fevex/anthropic": ["packages/anthropic/src/index.ts"],
       "@fevex/core/agents": ["packages/fevex/src/agents/index.ts"],
       "@fevex/core/artifacts": ["packages/fevex/src/artifacts/index.ts"],
       "@fevex/core/channels": ["packages/fevex/src/channels/index.ts"],

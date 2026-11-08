@@ -23,6 +23,7 @@ repository until they are published:
 
 | Package | Purpose |
 | --- | --- |
+| `@fevex/anthropic` | Anthropic Messages API model adapter |
 | `@fevex/mcp` | Model Context Protocol tools and connections |
 | `@fevex/openapi` | Tools generated from an OpenAPI spec |
 | `@fevex/sqlite` | SQLite run and session store |
@@ -44,6 +45,30 @@ with a deterministic model, without API keys:
 ```bash
 bun run examples/connections/index.ts
 ```
+
+## Anthropic
+
+`@fevex/anthropic` implements the `ModelGateway` contract over the native
+Messages API. It streams text, tool calls and thinking, replays native thinking
+and `tool_use` blocks through `providerState`, and maps core reasoning effort to
+`output_config.effort`:
+
+```ts
+import { createAnthropic } from '@fevex/anthropic';
+
+const model = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  schemaPolicy: 'strict',
+})('claude-opus-5-5');
+```
+
+`strict` uses `output_config.format` for JSON outputs and `strict: true` for
+tool schemas. The adapter rejects unsupported schemas, recursive references,
+external `$ref`, `oneOf`, numeric constraints and array constraints beyond
+`minItems` 0 or 1 before HTTP with `PROVIDER_SCHEMA_UNSUPPORTED`. Use
+`schemaPolicy: 'best-effort'` to send a schema instruction and validate locally.
+The default `anthropic-version` is `2026-10-21`; pass `apiVersion` to use another
+version. Anthropic is available from this repository until it is published.
 
 ## Docker sandbox
 

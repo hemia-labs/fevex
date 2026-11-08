@@ -26,7 +26,7 @@ npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
 ```
 
-CI builds, typechecks, tests and tarball-smokes all ten packages.
+CI builds, typechecks, tests and tarball-smokes all eleven packages.
 
 ## Repository-only integrations
 
@@ -35,6 +35,7 @@ from this repository until they are published:
 
 | Package | Purpose |
 | --- | --- |
+| `@fevex/anthropic` | Anthropic Messages API model adapter |
 | `@fevex/mcp` | Model Context Protocol tools and connections |
 | `@fevex/openapi` | Tools generated from an OpenAPI document |
 | `@fevex/sqlite` | SQLite run and session store |

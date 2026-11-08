@@ -35,12 +35,13 @@ npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
 ```
 
-CI builds, typechecks, tests and tarball-smokes all ten packages. The
+CI builds, typechecks, tests and tarball-smokes all eleven packages. The
 repository-only integrations below are **not published to npm** by the release
 pipeline; use them from this repository until they are published:
 
 | Package | Purpose |
 | --- | --- |
+| `@fevex/anthropic` | Anthropic Messages API model adapter |
 | `@fevex/mcp` | Model Context Protocol tools and connections |
 | `@fevex/openapi` | Tools generated from an OpenAPI document |
 | `@fevex/sqlite` | SQLite run and session store |
@@ -319,6 +320,20 @@ const model = createDeepSeek({
   schemaPolicy: 'best-effort',
 })('deepseek-v4-flash');
 ```
+
+Anthropic is available from this repository until it is published:
+
+```ts
+import { createAnthropic } from '@fevex/anthropic';
+
+const model = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+})('claude-opus-5-5');
+```
+
+The Anthropic adapter streams Messages API events, replays native thinking and
+`tool_use` blocks through `providerState`, maps reasoning effort to
+`output_config.effort`, and supports strict JSON outputs and tool schemas.
 
 Applications can still implement `ModelGateway` directly as shown above.
 

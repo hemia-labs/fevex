@@ -40,8 +40,10 @@ checkpoint, upgrade and support guarantees.
   servers fail with an actionable version error.
 - Three official packages in the npm release pipeline: `@fevex/core`,
   `@fevex/openai` and `@fevex/deepseek`. MCP, OpenAPI, SQLite, PostgreSQL,
-  OpenTelemetry, browser and Docker sandbox integrations are built, tested and
-  tarball-smoked in CI but are not published by the release pipeline.
+  OpenTelemetry, browser, Anthropic and Docker sandbox integrations are built,
+  tested and tarball-smoked in CI but are not published by the release pipeline.
+- Anthropic Messages API adapter with native streaming, thinking and `tool_use`
+  replay, strict JSON outputs and tool schemas, and reasoning effort mapping.
 - Docker-backed production sandbox with one long-lived container and isolated
   workspace per run, no network by default, dropped capabilities, resource
   limits, forced termination and automatic cleanup. `LocalSandbox` remains

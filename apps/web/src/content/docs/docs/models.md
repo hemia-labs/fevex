@@ -48,5 +48,15 @@ const model = createDeepSeek({
 })('deepseek-v4-flash');
 ```
 
+Anthropic is available from this repository until it is published:
+
+```ts
+import { createAnthropic } from '@fevex/anthropic';
+
+const model = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+})('claude-opus-5-5');
+```
+
 Structured output is only parsed as JSON and validated when the agent declares
 an `outputSchema`; otherwise model text is preserved exactly as a string.
