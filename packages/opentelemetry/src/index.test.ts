@@ -42,7 +42,19 @@ describe('createOpenTelemetryExporter', () => {
       durationMs: 100,
       status: 'completed',
       attributes: { eventCount: 6 },
-      annotations: [{ name: 'run.resumed', timestamp: '2026-01-01T00:00:00.010Z' }],
+      annotations: [
+        { name: 'run.resumed', timestamp: '2026-01-01T00:00:00.010Z' },
+        {
+          name: 'policy.evaluated',
+          timestamp: '2026-01-01T00:00:00.020Z',
+          attributes: {
+            policyName: 'risk',
+            toolName: 'lookup',
+            decision: 'require_approval',
+            declaredRisk: 'sensitive',
+          },
+        },
+      ],
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
       cost: { amount: 0.02, currency: 'USD' },
       spans: [
@@ -60,6 +72,18 @@ describe('createOpenTelemetryExporter', () => {
           usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
         },
         {
+          id: 'memory-1',
+          parentId: 'run-1',
+          kind: 'memory',
+          name: 'search_memory',
+          startedAt: '2026-01-01T00:00:00.050Z',
+          endedAt: '2026-01-01T00:00:00.060Z',
+          durationMs: 10,
+          status: 'completed',
+          attributes: { operation: 'search', recordCount: 2 },
+          annotations: [],
+        },
+        {
           id: 'tool-1',
           parentId: 'run-1',
           kind: 'tool',
@@ -72,6 +96,8 @@ describe('createOpenTelemetryExporter', () => {
             step: 1,
             toolCallId: 'call-1',
             toolName: 'lookup',
+            risk: 'sensitive',
+            declaredRisk: 'sensitive',
             attempt: 1,
           },
           annotations: [],
@@ -86,17 +112,26 @@ describe('createOpenTelemetryExporter', () => {
     const spans = spanExporter.getFinishedSpans();
     expect(spans.map(({ name }) => name)).toEqual([
       'chat gpt-test',
+      'search_memory',
       'execute_tool lookup',
       'invoke_agent support',
     ]);
     expect(new Set(spans.map((span) => span.spanContext().traceId)).size).toBe(1);
-    expect(spans[0]?.parentSpanContext?.spanId).toBe(spans[2]?.spanContext().spanId);
+    expect(spans[0]?.parentSpanContext?.spanId).toBe(spans[3]?.spanContext().spanId);
     expect(spans[0]?.attributes).toMatchObject({
       'gen_ai.operation.name': 'chat',
       'gen_ai.request.model': 'gpt-test',
       'gen_ai.usage.input_tokens': 10,
     });
-    expect(spans[1]?.status.code).not.toBe(spans[0]?.status.code);
+    expect(spans[1]?.attributes).toMatchObject({
+      'gen_ai.operation.name': 'search_memory',
+      'fevex.memory.operation': 'search',
+      'gen_ai.memory.record.count': 2,
+    });
+    expect(spans[2]?.attributes['fevex.tool.risk']).toBe('sensitive');
+    expect(spans[2]?.attributes['fevex.tool.declared_risk']).toBe('sensitive');
+    expect(spans[2]?.status.code).not.toBe(spans[0]?.status.code);
+    expect(spans[3]?.events.map(({ name }) => name)).toContain('policy.evaluated');
 
     const metricNames = metricExporter
       .getMetrics()
@@ -112,6 +147,7 @@ describe('createOpenTelemetryExporter', () => {
         'fevex.model.duration',
         'fevex.model.tokens',
         'fevex.tool.duration',
+        'fevex.memory.duration',
         'fevex.run.cost',
       ]),
     );

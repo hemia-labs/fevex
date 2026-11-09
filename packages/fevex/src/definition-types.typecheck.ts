@@ -93,6 +93,12 @@ declare const event: AgentEvent;
 if (event.type === 'tool.started') {
   event.payload.step satisfies number;
   event.payload.toolCallId satisfies string;
+  event.payload.declaredRisk satisfies
+    | 'read'
+    | 'write'
+    | 'sensitive'
+    | 'destructive'
+    | undefined;
 }
 
 if (event.type === 'run.cancelled') {
@@ -106,6 +112,22 @@ if (event.type === 'model.output.delta') {
 
 if (event.type === 'run.started') {
   event.payload satisfies undefined;
+}
+
+if (event.type === 'policy.evaluated') {
+  event.payload.decision satisfies 'allow' | 'deny' | 'require_approval';
+  event.payload.action satisfies 'tool.execute' | 'approval.resolve';
+  event.payload.declaredRisk satisfies
+    | 'read'
+    | 'write'
+    | 'sensitive'
+    | 'destructive'
+    | undefined;
+}
+
+if (event.type === 'memory.completed') {
+  event.payload.operation satisfies 'search' | 'write';
+  event.payload.durationMs satisfies number;
 }
 
 declare const configurationError: FevexConfigurationError;

@@ -1,0 +1,313 @@
+{
+  "agentName": "release-agent",
+  "cases": [
+    {
+      "caseId": "read-only",
+      "cost": {
+        "amount": 0.000003,
+        "currency": "USD"
+      },
+      "latencyMs": 8.538625,
+      "output": {
+        "answer": "Read-only answer."
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "output.exact",
+          "status": "passed"
+        },
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "actual": [],
+            "expected": []
+          },
+          "score": 1,
+          "scorerId": "trajectory",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "violations": []
+          },
+          "score": 1,
+          "scorerId": "guardrails.risk",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "limits": {
+              "total": 20
+            },
+            "usage": {
+              "inputTokens": 2,
+              "outputTokens": 1,
+              "totalTokens": 3
+            }
+          },
+          "score": 1,
+          "scorerId": "tokens.max",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "actual": {
+              "amount": 0.000003,
+              "currency": "USD"
+            },
+            "maximum": {
+              "amount": 0.01,
+              "currency": "USD"
+            }
+          },
+          "score": 1,
+          "scorerId": "cost.max",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [],
+      "trajectory": [],
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 1,
+        "totalTokens": 3
+      }
+    },
+    {
+      "caseId": "approved-sensitive-write",
+      "cost": {
+        "amount": 0.000008,
+        "currency": "USD"
+      },
+      "latencyMs": 2.888542000000001,
+      "output": {
+        "answer": "Updated record 42."
+      },
+      "scores": [
+        {
+          "score": 1,
+          "scorerId": "output.exact",
+          "status": "passed"
+        },
+        {
+          "score": 1,
+          "scorerId": "tools.selected",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "actual": [
+              {
+                "action": "tool.execute",
+                "decision": "require_approval",
+                "declaredRisk": "sensitive",
+                "policyName": "risk",
+                "risk": "sensitive",
+                "toolCallId": "call-update",
+                "toolName": "update_record",
+                "type": "policy"
+              },
+              {
+                "action": "approval.resolve",
+                "decision": "require_approval",
+                "declaredRisk": "sensitive",
+                "policyName": "risk",
+                "risk": "sensitive",
+                "toolCallId": "call-update",
+                "toolName": "update_record",
+                "type": "policy"
+              },
+              {
+                "actorId": "eval",
+                "decision": "approve",
+                "toolCallId": "call-update",
+                "toolName": "update_record",
+                "type": "approval"
+              },
+              {
+                "action": "tool.execute",
+                "decision": "require_approval",
+                "declaredRisk": "sensitive",
+                "policyName": "risk",
+                "risk": "sensitive",
+                "toolCallId": "call-update",
+                "toolName": "update_record",
+                "type": "policy"
+              },
+              {
+                "attempt": 1,
+                "declaredRisk": "sensitive",
+                "name": "update_record",
+                "risk": "sensitive",
+                "status": "completed",
+                "step": 1,
+                "toolCallId": "call-update",
+                "type": "tool"
+              }
+            ],
+            "expected": [
+              {
+                "action": "tool.execute",
+                "decision": "require_approval",
+                "toolName": "update_record",
+                "type": "policy"
+              },
+              {
+                "decision": "approve",
+                "toolName": "update_record",
+                "type": "approval"
+              },
+              {
+                "name": "update_record",
+                "risk": "sensitive",
+                "status": "completed",
+                "type": "tool"
+              }
+            ]
+          },
+          "score": 1,
+          "scorerId": "trajectory",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "violations": []
+          },
+          "score": 1,
+          "scorerId": "guardrails.risk",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "limits": {
+              "total": 20
+            },
+            "usage": {
+              "inputTokens": 5,
+              "outputTokens": 3,
+              "totalTokens": 8
+            }
+          },
+          "score": 1,
+          "scorerId": "tokens.max",
+          "status": "passed"
+        },
+        {
+          "details": {
+            "actual": {
+              "amount": 0.000008,
+              "currency": "USD"
+            },
+            "maximum": {
+              "amount": 0.01,
+              "currency": "USD"
+            }
+          },
+          "score": 1,
+          "scorerId": "cost.max",
+          "status": "passed"
+        }
+      ],
+      "status": "completed",
+      "tools": [
+        "update_record"
+      ],
+      "trajectory": [
+        {
+          "action": "tool.execute",
+          "decision": "require_approval",
+          "declaredRisk": "sensitive",
+          "policyName": "risk",
+          "risk": "sensitive",
+          "toolCallId": "call-update",
+          "toolName": "update_record",
+          "type": "policy"
+        },
+        {
+          "action": "approval.resolve",
+          "decision": "require_approval",
+          "declaredRisk": "sensitive",
+          "policyName": "risk",
+          "risk": "sensitive",
+          "toolCallId": "call-update",
+          "toolName": "update_record",
+          "type": "policy"
+        },
+        {
+          "actorId": "eval",
+          "decision": "approve",
+          "toolCallId": "call-update",
+          "toolName": "update_record",
+          "type": "approval"
+        },
+        {
+          "action": "tool.execute",
+          "decision": "require_approval",
+          "declaredRisk": "sensitive",
+          "policyName": "risk",
+          "risk": "sensitive",
+          "toolCallId": "call-update",
+          "toolName": "update_record",
+          "type": "policy"
+        },
+        {
+          "attempt": 1,
+          "declaredRisk": "sensitive",
+          "name": "update_record",
+          "risk": "sensitive",
+          "status": "completed",
+          "step": 1,
+          "toolCallId": "call-update",
+          "type": "tool"
+        }
+      ],
+      "usage": {
+        "inputTokens": 5,
+        "outputTokens": 3,
+        "totalTokens": 8
+      }
+    }
+  ],
+  "dataset": {
+    "name": "release-trajectories",
+    "version": "1"
+  },
+  "schemaVersion": "fevex.eval.v1",
+  "scorerIds": [
+    "output.exact",
+    "tools.selected",
+    "trajectory",
+    "guardrails.risk",
+    "tokens.max",
+    "cost.max"
+  ],
+  "suiteName": "release-gate",
+  "summary": {
+    "averageScore": 1,
+    "caseCount": 2,
+    "completedCount": 2,
+    "cost": {
+      "amount": 0.000011,
+      "currency": "USD"
+    },
+    "errorScoreCount": 0,
+    "failedCount": 0,
+    "failedScoreCount": 0,
+    "latencyMs": 11.427167,
+    "passedScoreCount": 12,
+    "skippedScoreCount": 0,
+    "usage": {
+      "inputTokens": 7,
+      "outputTokens": 4,
+      "totalTokens": 11
+    },
+    "warningCount": 0
+  },
+  "targetVersion": "release-gate-v1"
+}

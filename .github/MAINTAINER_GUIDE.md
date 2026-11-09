@@ -235,7 +235,8 @@ do not test OIDC credentials or prove the first real publication will succeed.
 workflow. This avoids running a second copy of CI for every push to `main`.
 It also supports manual dispatch. Source validation is split into jobs:
 
-- Tooling/changeset checks, including real versioning rehearsals.
+- Tooling/changeset checks, including real versioning rehearsals and the
+  deterministic evaluation release gate against source and the built package.
 - One build of all eleven packages, ordered by their internal dependencies.
 - Ten package jobs, with at most four running concurrently; each typechecks and
   tests its package and reuses the build artifact.

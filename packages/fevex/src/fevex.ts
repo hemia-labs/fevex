@@ -144,6 +144,15 @@ export interface Fevex {
   ): AsyncIterable<AgentEvent>;
   getTeamRun<TOutput = unknown>(runId: RunId): Promise<TeamRun<TOutput> | undefined>;
   getRun<TOutput = unknown>(runId: RunId): Promise<RunRecord<TOutput> | undefined>;
+  /**
+   * Waits until a run leaves `running` (paused or terminal) and returns its
+   * latest record. Resolves immediately for paused and terminal runs, and with
+   * `undefined` when the run does not exist.
+   */
+  waitForRun<TOutput = unknown>(
+    runId: RunId,
+    options?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<RunRecord<TOutput> | undefined>;
   listEvents(runId: RunId, options?: ListEventsOptions): Promise<AgentEvent[]>;
   cancelRun(runId: RunId): Promise<boolean>;
   resumeRun<TOutput = unknown>(

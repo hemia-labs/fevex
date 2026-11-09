@@ -3,6 +3,7 @@ import type {
   FevexShutdownOptions,
   FevexShutdownResult,
 } from '../fevex';
+import type { AgentEvent } from '../core';
 import { FevexRunError } from '../run-error';
 import {
   isDurableRunStore,
@@ -28,6 +29,20 @@ import { LEASE_MS } from './runtime-constants';
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 const SHUTDOWN_CLEANUP_MS = 5_000;
+const RUN_WAIT_EVENT_TYPES = new Set([
+  'run.paused',
+  'run.completed',
+  'run.failed',
+  'run.cancelled',
+  'workflow.run.paused',
+  'workflow.run.completed',
+  'workflow.run.failed',
+  'workflow.run.cancelled',
+  'team.run.paused',
+  'team.run.completed',
+  'team.run.failed',
+  'team.run.cancelled',
+]);
 
 export function createRuntime(composition: FevexComposition): Fevex {
   const {
@@ -44,7 +59,21 @@ export function createRuntime(composition: FevexComposition): Fevex {
     policies,
   } = composition;
 
-  const core = createRunCore(composition);
+  const runWaiters = new Map<string, Set<() => void>>();
+  const wakeRunWaiters = (event: AgentEvent): void => {
+    if (!RUN_WAIT_EVENT_TYPES.has(event.type)) return;
+    const waiters = runWaiters.get(event.runId);
+    if (!waiters) return;
+    for (const wake of [...waiters]) wake();
+  };
+  const userOnEvent = composition.onEvent;
+  const core = createRunCore({
+    ...composition,
+    onEvent(event) {
+      wakeRunWaiters(event);
+      return userOnEvent?.(event);
+    },
+  });
   const {
     activeRuns,
     activeWorkflowRuns,
@@ -119,6 +148,79 @@ export function createRuntime(composition: FevexComposition): Fevex {
     }
     if (isCoordinatorRun(run)) return resumeWorkflow<TOutput>(runId, undefined, actor);
     return resumeAgent<TOutput>(runId, undefined, false, actor);
+  };
+
+  const waitForRun = async <TOutput = unknown>(
+    runId: string,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<RunRecord<TOutput> | undefined> => {
+    if (
+      options.timeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 0)
+    ) {
+      throw new TypeError('waitForRun timeoutMs must be a non-negative safe integer');
+    }
+    const current = await runStore.getRun<RunRecord<TOutput>>(runId);
+    if (!current || current.status !== 'running') return current;
+    const signal = options.signal;
+    signal?.throwIfAborted();
+
+    return new Promise<RunRecord<TOutput> | undefined>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const wake = (): void => {
+        if (settled) return;
+        void runStore.getRun<RunRecord<TOutput>>(runId).then(
+          (run) => {
+            if (!run || run.status !== 'running') settle(run);
+          },
+          (error) => settle(undefined, error),
+        );
+      };
+      const cleanup = (): void => {
+        const waiters = runWaiters.get(runId);
+        waiters?.delete(wake);
+        if (waiters && waiters.size === 0) runWaiters.delete(runId);
+        if (timer !== undefined) clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      };
+      const settle = (run: RunRecord<TOutput> | undefined, error?: unknown): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error === undefined) resolve(run);
+        else reject(error);
+      };
+      const onAbort = (): void => {
+        settle(undefined, signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+      };
+      let waiters = runWaiters.get(runId);
+      if (!waiters) {
+        waiters = new Set();
+        runWaiters.set(runId, waiters);
+      }
+      waiters.add(wake);
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      if (options.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          settle(
+            undefined,
+            new FevexRunError(
+              'RUN_WAIT_TIMEOUT',
+              `Run "${runId}" did not leave the running state within ${options.timeoutMs}ms`,
+              runId,
+            ),
+          );
+        }, options.timeoutMs);
+      }
+      wake();
+    });
   };
 
   const waitForIdleUntil = async (deadline: number): Promise<boolean> => {
@@ -318,6 +420,12 @@ export function createRuntime(composition: FevexComposition): Fevex {
     },
     getRun<TOutput = unknown>(runId: string) {
       return runStore.getRun<RunRecord<TOutput>>(runId);
+    },
+    waitForRun<TOutput = unknown>(
+      runId: string,
+      options?: { signal?: AbortSignal; timeoutMs?: number },
+    ) {
+      return waitForRun<TOutput>(runId, options);
     },
     listEvents(runId, options) {
       return runStore.listEvents(runId, options);

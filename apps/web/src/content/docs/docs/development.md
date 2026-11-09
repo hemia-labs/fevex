@@ -59,6 +59,12 @@ failed run. These checks assess provenance and structured facts, not every
 natural-language claim. Real model evaluations incur provider usage; scripted
 results only verify runtime contracts and scorers.
 
+The deterministic release gate runs with `bun run eval:gate` and compares the
+release suite against `evals/release-baseline.json`. It asserts output, tools,
+approvals, policy decisions, tokens and cost; regenerate the baseline with
+`bun run eval:gate --write` after an intentional change. See
+[Evaluations & release gates](/docs/evals/).
+
 ## Tool search evaluation
 
 `bun run eval:tool-search` measures the deterministic lexical baseline against a

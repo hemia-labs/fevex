@@ -7,6 +7,7 @@ import { defineTool } from '../tools';
 import { defineTeam } from '../teams';
 import { defineWorkflow } from '../workflows';
 import { fakeModel } from '../testing';
+import { InMemoryMemoryStore } from '../knowledge';
 import { InMemoryRunStore } from '../runtime';
 
 describe('observability', () => {
@@ -144,6 +145,126 @@ describe('observability', () => {
     ]);
     expect(JSON.stringify(traces[0])).not.toContain('private');
     expect(JSON.stringify(traces[0])).not.toContain('must-not-leak');
+  });
+
+  test('exports memory search and write spans', async () => {
+    const traces: RunTrace[] = [];
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'remembered' }) },
+      agents: [
+        defineAgent({
+          name: 'assistant',
+          instructions: 'Help.',
+          memory: { read: true, write: true },
+        }),
+      ],
+      memoryStore: new InMemoryMemoryStore(),
+      runStore: new InMemoryRunStore(),
+      observability: {
+        exporters: [{
+          export(trace) {
+            traces.push(structuredClone(trace));
+          },
+        }],
+      },
+    });
+
+    await app.runAgent('assistant', { input: 'remember this' });
+    await app.flushObservability();
+
+    const memorySpans = traces[0]!.spans.filter(({ kind }) => kind === 'memory');
+    expect(traces[0]?.attributes.memoryOperationCount).toBe(2);
+    expect(memorySpans).toMatchObject([
+      { name: 'search_memory', status: 'completed', attributes: { operation: 'search' } },
+      { name: 'create_memory', status: 'completed', attributes: { operation: 'write', recordCount: 1 } },
+    ]);
+    expect(Date.parse(traces[0]!.startedAt)).toBeLessThanOrEqual(
+      Math.min(...memorySpans.map(({ startedAt }) => Date.parse(startedAt))),
+    );
+  });
+
+  test('exports a failed memory search span', async () => {
+    const traces: RunTrace[] = [];
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'ok' }) },
+      agents: [
+        defineAgent({
+          name: 'assistant',
+          instructions: 'Help.',
+          memory: { read: true },
+        }),
+      ],
+      memoryStore: {
+        async search() {
+          throw new Error('memory unavailable');
+        },
+        async write() {
+          throw new Error('unexpected write');
+        },
+      },
+      observability: {
+        exporters: [{
+          export(trace) {
+            traces.push(structuredClone(trace));
+          },
+        }],
+        content: { include: ['error.message'] },
+      },
+    });
+
+    await expect(app.runAgent('assistant', { input: 'go' })).rejects.toThrow(
+      'Memory search failed',
+    );
+    await app.flushObservability();
+
+    expect(traces[0]?.spans.find(({ kind }) => kind === 'memory')).toMatchObject({
+      name: 'search_memory',
+      status: 'failed',
+      attributes: { operation: 'search' },
+      content: [{ kind: 'error.message', value: 'memory unavailable' }],
+    });
+  });
+
+  test('exports a failed memory write span', async () => {
+    const traces: RunTrace[] = [];
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'ok' }) },
+      agents: [
+        defineAgent({
+          name: 'assistant',
+          instructions: 'Help.',
+          memory: { write: true },
+        }),
+      ],
+      memoryStore: {
+        async search() {
+          return [];
+        },
+        async write() {
+          throw new Error('memory write unavailable');
+        },
+      },
+      observability: {
+        exporters: [{
+          export(trace) {
+            traces.push(structuredClone(trace));
+          },
+        }],
+        content: { include: ['error.message'] },
+      },
+    });
+
+    await expect(app.runAgent('assistant', { input: 'go' })).rejects.toThrow(
+      'Memory write failed',
+    );
+    await app.flushObservability();
+
+    expect(traces[0]?.spans.find(({ name }) => name === 'create_memory')).toMatchObject({
+      name: 'create_memory',
+      status: 'failed',
+      attributes: { operation: 'write' },
+      content: [{ kind: 'error.message', value: 'memory write unavailable' }],
+    });
   });
 
   test('omits content by default and isolates exporter failures from runs', async () => {
