@@ -1,5 +1,12 @@
 # @fevex/anthropic
 
+## 0.1.0-alpha.12
+
+### Patch Changes
+
+- Updated dependencies [79956a0]
+  - @fevex/core@0.1.0-alpha.12
+
 ## 0.1.0-alpha.11
 
 ### Minor Changes

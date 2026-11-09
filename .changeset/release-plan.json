@@ -2,58 +2,58 @@
   "releases": [
     {
       "name": "@fevex/anthropic",
-      "oldVersion": "0.1.0-alpha.10",
-      "version": "0.1.0-alpha.11"
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
     },
     {
       "name": "@fevex/browser",
-      "oldVersion": "0.1.0-alpha.10",
-      "version": "0.1.0-alpha.11"
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
     },
     {
       "name": "@fevex/deepseek",
-      "oldVersion": "0.1.0-alpha.10",
-      "version": "0.1.0-alpha.11"
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
     },
     {
       "name": "@fevex/core",
-      "oldVersion": "0.1.0-alpha.10",
-      "version": "0.1.0-alpha.11"
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
     },
     {
       "name": "@fevex/mcp",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/openai",
-      "oldVersion": "0.1.0-alpha.10",
-      "version": "0.1.0-alpha.11"
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
     },
     {
       "name": "@fevex/openapi",
-      "oldVersion": "0.1.0-alpha.10",
-      "version": "0.1.0-alpha.11"
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
     },
     {
       "name": "@fevex/opentelemetry",
-      "oldVersion": "0.1.0-alpha.9",
-      "version": "0.1.0-alpha.10"
-    },
-    {
-      "name": "@fevex/postgres",
-      "oldVersion": "0.1.0-alpha.9",
-      "version": "0.1.0-alpha.10"
-    },
-    {
-      "name": "@fevex/sandbox-docker",
       "oldVersion": "0.1.0-alpha.10",
       "version": "0.1.0-alpha.11"
     },
     {
+      "name": "@fevex/postgres",
+      "oldVersion": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.11"
+    },
+    {
+      "name": "@fevex/sandbox-docker",
+      "oldVersion": "0.1.0-alpha.11",
+      "version": "0.1.0-alpha.12"
+    },
+    {
       "name": "@fevex/sqlite",
-      "oldVersion": "0.1.0-alpha.9",
-      "version": "0.1.0-alpha.10"
+      "oldVersion": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.11"
     }
   ]
 }
