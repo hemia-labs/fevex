@@ -44,7 +44,7 @@ test('code scorer rejects invented, modified, partial and uncited code', async (
   const evidence: AgentMessage[] = [{ role: 'tool', name: 'docs__search', content: JSON.stringify({ matches: [{ ...source, excerpt: `${source.quote}\n\n\`\`\`ts\n${original}\n\`\`\`` }] }) }];
   const scorer = codeScorer(new Map([[testCase.input, evidence]]));
   const valid = { answer: `Use resumeRun.\n\n\`\`\`ts\n${original}\n\`\`\``, status: 'answered', sources: [source], account: null };
-  const context: EvalScorerContext<string> = { testCase, output: valid, events: [], tools: testCase.expected!.tools!, latencyMs: 1 };
+  const context: EvalScorerContext<string> = { testCase, output: valid, events: [], tools: testCase.expected!.tools!, trajectory: [], latencyMs: 1 };
   expect(await scorer.score(context)).toMatchObject({ passed: true });
   for (const output of [
     { ...valid, answer: valid.answer.replace('review.approved', 'invented.event') },
@@ -65,7 +65,7 @@ test('evidence scorer rejects invented URLs, quotes and account facts', async ()
   ];
   const scorer = groundingScorer(new Map([[testCase.input, evidence]]));
   const valid = { answer: 'Use resumeRun.', status: 'answered', sources: [source], account };
-  const context: EvalScorerContext<string> = { testCase, output: valid, events: [], tools: testCase.expected!.tools!, latencyMs: 1 };
+  const context: EvalScorerContext<string> = { testCase, output: valid, events: [], tools: testCase.expected!.tools!, trajectory: [], latencyMs: 1 };
   expect(await scorer.score(context)).toMatchObject({ passed: true });
   const wrappedEvidence = evidence.map((message) => message.name === 'docs__search'
     ? { ...message, content: JSON.stringify({ matches: [{ ...source, excerpt: 'Paused runs\nresume with `resumeRun`' }] }) }
