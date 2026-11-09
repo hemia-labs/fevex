@@ -82,10 +82,29 @@ function spanAttributes(item: TraceSpan, run: RunTrace): Attributes {
       ...contentAttributes(item.content),
     };
   }
+  if (item.kind === 'memory') {
+    return {
+      'gen_ai.operation.name': item.name,
+      'fevex.memory.operation': item.attributes.operation as string,
+      ...(typeof item.attributes.recordCount === 'number'
+        ? { 'gen_ai.memory.record.count': item.attributes.recordCount }
+        : {}),
+      ...(typeof item.attributes.recordId === 'string'
+        ? { 'gen_ai.memory.record.id': item.attributes.recordId }
+        : {}),
+      ...contentAttributes(item.content),
+    };
+  }
   return {
     'gen_ai.operation.name': 'execute_tool',
     'gen_ai.tool.name': item.attributes.toolName as string,
     'gen_ai.tool.call.id': item.attributes.toolCallId as string,
+    ...(typeof item.attributes.risk === 'string'
+      ? { 'fevex.tool.risk': item.attributes.risk }
+      : {}),
+    ...(typeof item.attributes.declaredRisk === 'string'
+      ? { 'fevex.tool.declared_risk': item.attributes.declaredRisk }
+      : {}),
     'fevex.tool.attempt': item.attributes.attempt as number,
     ...contentAttributes(item.content),
   };
@@ -112,6 +131,7 @@ export function createOpenTelemetryExporter(
   const modelDuration = meter.createHistogram('fevex.model.duration', { unit: 's' });
   const modelTokens = meter.createCounter('fevex.model.tokens', { unit: '{token}' });
   const toolDuration = meter.createHistogram('fevex.tool.duration', { unit: 's' });
+  const memoryDuration = meter.createHistogram('fevex.memory.duration', { unit: 's' });
   const runCost = meter.createCounter('fevex.run.cost');
 
   return {
@@ -154,7 +174,9 @@ export function createOpenTelemetryExporter(
             ? `chat ${run.model?.model ?? run.modelRegistryName ?? 'unknown'}`
             : item.kind === 'step'
               ? `step ${item.name}`
-              : `execute_tool ${item.name}`,
+              : item.kind === 'memory'
+                ? item.name
+                : `execute_tool ${item.name}`,
           {
             kind: item.kind === 'model' ? SpanKind.CLIENT : SpanKind.INTERNAL,
             startTime: new Date(item.startedAt),
@@ -184,6 +206,11 @@ export function createOpenTelemetryExporter(
           toolDuration.record(item.durationMs / 1_000, {
             status: item.status,
             'tool.name': item.name,
+          });
+        } else if (item.kind === 'memory') {
+          memoryDuration.record(item.durationMs / 1_000, {
+            status: item.status,
+            operation: item.attributes.operation as string,
           });
         }
       }

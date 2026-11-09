@@ -6,8 +6,8 @@ import type { SessionId } from '../runtime';
 export type TraceStatus = 'completed' | 'failed' | 'cancelled';
 /** Kind of run that produced a trace. Absent means `agent` for older traces. */
 export type TraceRunKind = 'agent' | 'workflow' | 'team';
-/** Model and tool calls are agent spans; steps belong to workflow and team traces. */
-export type TraceSpanKind = 'model' | 'tool' | 'step';
+/** Model, tool and memory operations are agent spans; steps belong to coordinator traces. */
+export type TraceSpanKind = 'model' | 'tool' | 'memory' | 'step';
 export type TraceContentKind = 'run.output' | 'model.output' | 'error.message';
 
 export interface TraceCost {

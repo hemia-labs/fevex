@@ -447,9 +447,11 @@ model.started
 model.output.delta
 model.completed
 context.compacted
+memory.completed
 tool.started
 tool.completed
 tool.failed
+policy.evaluated
 run.completed
 run.failed
 run.cancelled
@@ -547,6 +549,7 @@ const started = await app.startAgent('support', {
 });
 
 const run = await app.getRun(started.id);
+const finished = await app.waitForRun(started.id, { timeoutMs: 30_000 });
 const events = await app.listEvents(started.id);
 const laterEvents = await app.listEvents(started.id, {
   after: events.at(-1)?.id,
@@ -555,9 +558,11 @@ const laterEvents = await app.listEvents(started.id, {
 await app.cancelRun(started.id);
 ```
 
-`AgentRun`, `Session` and events are serializable snapshots. `listEvents` orders
-by `sequence`; `after` accepts an event ID from the same run as a stable cursor.
-Unknown cursors fail instead of silently replaying events.
+`waitForRun` waits for the run to leave `running` (paused or terminal) without
+polling, and accepts an optional `signal` and `timeoutMs`. `AgentRun`, `Session`
+and events are serializable snapshots. `listEvents` orders by `sequence`; `after`
+accepts an event ID from the same run as a stable cursor. Unknown cursors fail
+instead of silently replaying events.
 
 `createFevex` uses `InMemoryRunStore` by default. Supply `runStore` to replace
 it. The default survives only while the process lives, and one run at a time
@@ -706,7 +711,23 @@ remain explicit and are intended for server deployments.
 
 Policies run before approval resolution, credentials and each effect or retry.
 Credential values are not stored or sent to the model, and tool outputs that
-contain a resolved value are rejected.
+contain a resolved value are rejected. Every decision emits `policy.evaluated`
+and appears in local traces and OpenTelemetry span events.
+
+For a static baseline, `riskGuardrail()` denies `destructive` tools and requires
+approval for `sensitive` tools. Tools without an explicit `risk` default to
+`read`; set `undeclaredRisk: 'require_approval'` or `'deny'` to fail closed:
+
+```ts
+import { riskGuardrail } from '@fevex/core/policies';
+
+createFevex({
+  models,
+  agents,
+  tools,
+  policies: [riskGuardrail({ undeclaredRisk: 'require_approval' })],
+});
+```
 
 ## Limits
 
@@ -750,7 +771,7 @@ tenant. The default tenant key is a non-empty `context.attributes.tenantId`;
 one runtime process.
 
 `createFevex({ limits: { maxEventsPerRun } })` caps non-control events per run.
-Pause, resume, approval, elicitation, wait and terminal events are always
+Pause, resume, approval, policy, elicitation, wait and terminal events are always
 persisted so a run can always reach a durable state; use retention for a total
 storage cap.
 
@@ -814,7 +835,11 @@ console.log(app.getObservabilityStats());
 
 Workflow and team traces carry `kind` and a span per step. Agent steps expose
 `childRunId`; child agent traces carry `parentRunId` and `rootRunId`, and tool
-spans are nested under the model call that requested them. A dropped trace or a
+spans are nested under the model call that requested them. Memory search and
+write operations produce `search_memory` and `create_memory` GenAI spans. Policy
+decisions are trace annotations and OpenTelemetry span events, with
+`fevex.tool.risk` on tool spans and `gen_ai.memory.*` attributes on memory
+spans. A dropped trace or a
 failed export is counted in `getObservabilityStats()`, and the next
 `flushObservability()` rejects with the failures accumulated since the previous
 flush. OpenTelemetry SDK setup, OTLP export and shutdown remain application
@@ -869,11 +894,60 @@ const report = await runEvaluation({
 ```
 
 Built-in deterministic scorers cover exact output, ordered or unordered tool
-selection, forbidden tools, max latency, max tokens and max cost. Use
-`serializeEvalReport` for a canonical, versionable JSON baseline, `jsonReporter`
-or `textReporter` with your own write callback, and `compareEvaluationReports`
-to fail CI when cases disappear, passing scores fail or scores drop beyond the
-configured tolerance.
+selection, forbidden tools, max latency, max tokens and max cost. Cases can also
+resolve paused approvals and assert the full trajectory:
+
+```ts
+import {
+  riskGuardrailScorer,
+  runEvaluation,
+  trajectoryExpectationScorer,
+} from '@fevex/core/evals';
+
+const report = await runEvaluation({
+  app,
+  suiteName: 'support-regression',
+  targetVersion: 'v2',
+  agentName: 'support',
+  dataset: {
+    name: 'support',
+    version: '1',
+    cases: [{
+      id: 'sensitive-write',
+      input: 'Update account 42',
+      approvals: [{ toolName: 'accounts_update', decision: 'approve' }],
+      expected: {
+        output: { answer: 'Account 42 updated.' },
+        tools: ['accounts_update'],
+        trajectory: [
+          { type: 'policy', toolName: 'accounts_update', decision: 'require_approval' },
+          { type: 'approval', toolName: 'accounts_update', decision: 'approve' },
+          { type: 'tool', name: 'accounts_update', status: 'completed' },
+        ],
+      },
+    }],
+  },
+  scorers: [
+    trajectoryExpectationScorer({ allowAdditional: true }),
+    riskGuardrailScorer(),
+  ],
+});
+```
+
+Trajectory entries cover tool attempts, approval decisions, elicitation
+resolutions and non-allow policy decisions. Cases can also answer elicitation
+pauses with `elicitations`, matched by prompt when provided; the runtime still
+validates each value against its `responseSchema`. Each case has a 10-minute deadline by default; set `deadlineMs`
+on the suite or case to change it. Use `serializeEvalReport` for a canonical,
+versionable JSON baseline,
+`jsonReporter` or `textReporter` with your own write callback, and
+`compareEvaluationReports` to fail CI when cases disappear, passing scores fail
+or scores drop beyond the configured tolerance. Cases warn when an `approvals`
+or `elicitations` fixture was never used; the gate rejects warnings by default.
+`evaluateReleaseGate` adds minimum completion, pass, score, warning, latency and
+cost thresholds; `assertReleaseGate` throws `ReleaseGateError` with the failed
+checks. The repository runs a deterministic release suite with
+`bun run eval:gate` and the built package with `bun run eval:gate:package`.
 
 ## Connections
 
@@ -1204,9 +1278,9 @@ the artifact available.
 | `@fevex/core/teams` | Multiagent team definitions |
 | `@fevex/core/runtime` | Runs, sessions and store contracts |
 | `@fevex/core/sandbox` | Sandbox contract and local development sandbox |
-| `@fevex/core/policies` | Authorization policy contracts |
+| `@fevex/core/policies` | Authorization policy contracts and the risk guardrail |
 | `@fevex/core/observability` | Trace, bounded export queue, redaction and cost contracts |
-| `@fevex/core/evals` | Datasets, scorers, reporters and regressions |
+| `@fevex/core/evals` | Datasets, trajectory and policy scorers, release gates and regressions |
 | `@fevex/core/testing` | Deterministic testing helpers |
 
 All subpaths ship in the same `@fevex/core` package.
@@ -1237,7 +1311,8 @@ The MVP intentionally supports:
 - bounded multi-step model-tool loops with sequential tool execution;
 - native provider streaming and durable, consultable runs;
 - synchronous event observers and `AsyncIterable` event streaming;
-- local traces, OpenTelemetry export and deterministic evaluation suites;
+- local traces, OpenTelemetry export and deterministic evaluation suites with
+  trajectory, policy, approval, cost and release-gate assertions;
 - optional Standard Schema validation;
 - immediate `AbortSignal` cancellation with cooperative underlying work.
 

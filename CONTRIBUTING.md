@@ -44,6 +44,8 @@ bun run demo:channels
 bun run demo:connections
 bun run demo:research
 bun run eval:research
+bun run eval:gate
+bun run eval:gate:package
 bun test examples/research/evaluation.test.ts
 bun x tsc -p examples/research/tsconfig.json
 bun run --cwd examples/next-playground test

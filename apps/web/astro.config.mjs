@@ -59,6 +59,7 @@ export default defineConfig({
           label: 'Durable execution',
           items: [
             { label: 'Workflows & teams', slug: 'docs/workflows' },
+            { label: 'Evaluations & release gates', slug: 'docs/evals' },
             { label: 'Operations & soak tests', slug: 'docs/operations' },
           ],
         },

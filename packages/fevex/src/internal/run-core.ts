@@ -88,6 +88,7 @@ export function createRunCore({
     'elicitation.resolved',
     'approval.requested',
     'approval.resolved',
+    'policy.evaluated',
     'tool.execution_unknown',
     'run.completed',
     'run.failed',
@@ -543,17 +544,30 @@ export function createRunCore({
     input: JsonValue,
     action: 'tool.execute' | 'approval.resolve',
     context = state.request.context,
+    toolCallId?: string,
   ): Promise<PolicyDecision> => {
     let approval = false;
     for (const policy of policies) {
+      const risk = tool.risk ?? 'read';
+      const declaredRisk = tool.risk;
       const decision = await policy.authorize({
         runId: state.run.id,
         agentName: state.run.agentName,
         toolName: tool.name,
-        risk: tool.risk ?? 'read',
+        risk,
+        ...(declaredRisk === undefined ? {} : { declaredRisk }),
         input,
         action,
         context,
+      });
+      await emitEvent(state, 'policy.evaluated', {
+        policyName: policy.name,
+        toolName: tool.name,
+        ...(toolCallId === undefined ? {} : { toolCallId }),
+        action,
+        decision,
+        risk,
+        ...(declaredRisk === undefined ? {} : { declaredRisk }),
       });
       if (decision === 'deny') {
         throw new FevexRunError(

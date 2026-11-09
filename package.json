@@ -22,6 +22,8 @@
     "demo:connections": "bun run examples/connections/index.ts",
     "demo:research": "bun run examples/research/index.ts",
     "eval:research": "bun run examples/research/index.ts --eval",
+    "eval:gate": "bun run scripts/eval-gate.ts",
+    "eval:gate:package": "bun run --cwd packages/fevex build && bun run scripts/eval-gate-package.ts",
     "eval:tool-search": "bun run scripts/tool-search-eval.ts",
     "inspect": "bun run scripts/inspect-run.ts",
     "soak": "bun run scripts/soak.ts",

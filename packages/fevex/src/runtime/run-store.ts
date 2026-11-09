@@ -321,6 +321,8 @@ export interface RunCheckpoint {
   loadedTools?: string[];
   messages: AgentMessage[];
   inputContent: string;
+  /** True once memory messages were loaded and persisted into `messages`. */
+  memoryLoaded?: boolean;
   context?: ExecutionContext;
   usage?: ModelUsage;
   providerState?: JsonValue;

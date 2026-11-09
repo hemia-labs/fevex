@@ -55,6 +55,7 @@ export type AgentEventType =
   | 'model.output.delta'
   | 'model.completed'
   | 'context.compacted'
+  | 'memory.completed'
   | 'tool.started'
   | 'tool.completed'
   | 'tool.failed'
@@ -65,6 +66,7 @@ export type AgentEventType =
   | 'elicitation.resolved'
   | 'approval.requested'
   | 'approval.resolved'
+  | 'policy.evaluated'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -143,10 +145,19 @@ export interface AgentEventPayloads {
     teamDelegationId?: string;
     teamAgentName?: string;
   };
+  'memory.completed': {
+    operation: 'search' | 'write';
+    durationMs: number;
+    recordCount?: number;
+    recordId?: string;
+    error?: string;
+  };
   'tool.started': {
     step: number;
     toolCallId: string;
     toolName: string;
+    risk?: 'read' | 'write' | 'sensitive' | 'destructive';
+    declaredRisk?: 'read' | 'write' | 'sensitive' | 'destructive';
     attempt?: number;
     source?: ToolEventSource;
     workflowStepId?: string;
@@ -258,6 +269,15 @@ export interface AgentEventPayloads {
     workflowAgentName?: string;
     teamDelegationId?: string;
     teamAgentName?: string;
+  };
+  'policy.evaluated': {
+    policyName: string;
+    toolName: string;
+    toolCallId?: string;
+    action: 'tool.execute' | 'approval.resolve';
+    decision: 'allow' | 'deny' | 'require_approval';
+    risk: 'read' | 'write' | 'sensitive' | 'destructive';
+    declaredRisk?: 'read' | 'write' | 'sensitive' | 'destructive';
   };
   'run.completed': { output: JsonValue; usage?: JsonObject };
   'run.failed': { error: string; errorCode?: string; retryable?: boolean; source?: ToolEventSource };

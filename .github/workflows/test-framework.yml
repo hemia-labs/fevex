@@ -24,6 +24,8 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: bun run test:release
+      - run: bun run eval:gate
+      - run: bun run eval:gate:package
       - name: Require changesets for public changes
         if: github.event_name == 'pull_request'
         env:

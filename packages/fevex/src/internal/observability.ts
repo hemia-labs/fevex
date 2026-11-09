@@ -165,6 +165,24 @@ function annotation(event: AgentEvent): TraceAnnotation | undefined {
           delayMs: event.payload.delayMs,
         },
       };
+    case 'policy.evaluated':
+      return {
+        name: event.type,
+        timestamp: event.timestamp,
+        attributes: {
+          policyName: event.payload.policyName,
+          toolName: event.payload.toolName,
+          ...(event.payload.toolCallId === undefined
+            ? {}
+            : { toolCallId: event.payload.toolCallId }),
+          action: event.payload.action,
+          decision: event.payload.decision,
+          risk: event.payload.risk,
+          ...(event.payload.declaredRisk === undefined
+            ? {}
+            : { declaredRisk: event.payload.declaredRisk }),
+        },
+      };
     case 'context.compacted':
       return {
         name: event.type,
@@ -368,6 +386,10 @@ function buildAgentTrace(
         step: event.payload.step,
         toolCallId,
         toolName: event.payload.toolName,
+        risk: event.payload.risk ?? 'read',
+        ...(event.payload.declaredRisk === undefined
+          ? {}
+          : { declaredRisk: event.payload.declaredRisk }),
         attempt: event.payload.attempt ?? 1,
       },
       annotations: open.annotations,
@@ -388,6 +410,37 @@ function buildAgentTrace(
       case 'model.completed':
         closeModel(event.payload.step, event.timestamp, 'completed');
         break;
+      case 'memory.completed': {
+        const endedAt = Date.parse(event.timestamp);
+        const startedAt = new Date(
+          endedAt - Math.max(0, event.payload.durationMs),
+        ).toISOString();
+        const errorContent = event.payload.error
+          ? content(options, 'error.message', event.payload.error)
+          : undefined;
+        spans.push({
+          id: event.id,
+          parentId: run.id,
+          kind: 'memory',
+          name: event.payload.operation === 'search' ? 'search_memory' : 'create_memory',
+          startedAt,
+          endedAt: event.timestamp,
+          durationMs: Math.max(0, event.payload.durationMs),
+          status: event.payload.error ? 'failed' : 'completed',
+          attributes: {
+            operation: event.payload.operation,
+            ...(event.payload.recordCount === undefined
+              ? {}
+              : { recordCount: event.payload.recordCount }),
+            ...(event.payload.recordId === undefined
+              ? {}
+              : { recordId: event.payload.recordId }),
+          },
+          annotations: [],
+          ...(errorContent ? { content: [errorContent] } : {}),
+        });
+        break;
+      }
       case 'tool.started': {
         const attempt = event.payload.attempt ?? 1;
         openTools.set(`${event.payload.toolCallId}:${attempt}`, {
@@ -426,6 +479,13 @@ function buildAgentTrace(
   const finalUsage = run.usage ?? previousUsage;
   const totalCost = costFor(options, modelRegistryName, model, finalUsage);
   const traceContent = terminalContent(options, terminal);
+  const startedAtMs = Math.min(
+    Date.parse(started.timestamp),
+    ...spans
+      .filter(({ kind }) => kind === 'memory')
+      .map(({ startedAt }) => Date.parse(startedAt)),
+  );
+  const traceStartedAt = new Date(startedAtMs).toISOString();
 
   return {
     schemaVersion: '1',
@@ -438,14 +498,15 @@ function buildAgentTrace(
     agentName: run.agentName,
     modelRegistryName,
     ...(model ? { model: { ...model } } : {}),
-    startedAt: started.timestamp,
+    startedAt: traceStartedAt,
     endedAt: terminal.timestamp,
-    durationMs: durationMs(started.timestamp, terminal.timestamp),
+    durationMs: durationMs(traceStartedAt, terminal.timestamp),
     status,
     attributes: {
       eventCount: events.length,
       modelCallCount: spans.filter(({ kind }) => kind === 'model').length,
       toolCallCount: spans.filter(({ kind }) => kind === 'tool').length,
+      memoryOperationCount: spans.filter(({ kind }) => kind === 'memory').length,
     },
     annotations,
     spans,

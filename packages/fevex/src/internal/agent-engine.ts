@@ -251,7 +251,6 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           ...knowledge.skills,
           ...sessionHistoryMessages(session),
           ...knowledge.context,
-          ...knowledge.memory,
           { role: 'user', content: inputContent },
         ];
         const checkpoint: RunCheckpoint = {
@@ -290,18 +289,19 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           expiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
         };
         const started = createEvent(state, 'run.started', undefined) as AgentEvent;
+        const initialEvents = [started];
         const created = await runStore.createExecution({
           run,
           checkpoint,
           session,
           lease,
-          events: [started],
+          events: initialEvents,
         });
         if (!created) throw new FevexRunError('RUN_CONFLICT', `Run or session "${session.id}" is active or was modified`, run.id);
         state.checkpoint = checkpoint;
         state.lease = lease;
-        state.initialEvents = [started];
-        notifyObserver(started);
+        state.initialEvents = initialEvents;
+        for (const event of initialEvents) notifyObserver(event);
         startLease(state, runStore);
       } else {
         if (newSession) await runStore.saveSession(session);
@@ -406,6 +406,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
       loadedTools: [...(state.loadedTools ?? [])],
       messages: structuredClone(messages),
       inputContent,
+      ...(state.checkpoint?.memoryLoaded === undefined
+        ? {}
+        : { memoryLoaded: state.checkpoint.memoryLoaded }),
       context: state.request.context,
       usage,
       providerState: serializedState,
@@ -454,7 +457,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     state: ExecutionState,
     agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
     input: string,
-  ): Promise<{ skills: AgentMessage[]; context: AgentMessage[]; memory: AgentMessage[] }> => {
+  ): Promise<{ skills: AgentMessage[]; context: AgentMessage[] }> => {
     const context = knowledgeContext(state, input);
     const skills = (
       await Promise.all((agent.skills ?? []).map((name) => readProvider(name, 'Skill', context)))
@@ -462,8 +465,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     const contextual = (
       await Promise.all((agent.context ?? []).map((name) => readProvider(name, 'Context', context)))
     ).flat();
-    const memory = await readMemoryMessages(agent, context, memoryStore);
-    return { skills, context: contextual, memory };
+    return { skills, context: contextual };
   };
 
   const writeMemory = async (
@@ -471,11 +473,17 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
     agent: FevexComposition['agents'] extends Map<string, infer T> ? T : never,
     input: string,
     output: JsonValue,
+    emit: <TType extends AgentEventType>(
+      type: TType,
+      payload: AgentEventPayloads[TType],
+    ) => Promise<AgentEvent>,
   ): Promise<void> => {
     if (!agent.memory?.write || !memoryStore) return;
     const context = knowledgeContext(state, input);
+    const startedAt = performance.now();
+    let recordId: string | undefined;
     try {
-      await abortable(
+      const record = await abortable(
         () =>
           memoryStore.write(
             {
@@ -490,9 +498,22 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           ),
         state.request.signal,
       );
+      recordId = record.id;
     } catch (cause) {
+      const error = cause instanceof Error ? cause.message : String(cause);
+      await emit('memory.completed', {
+        operation: 'write',
+        durationMs: performance.now() - startedAt,
+        error,
+      }).catch(() => {});
       throw new Error('Memory write failed', { cause });
     }
+    await emit('memory.completed', {
+      operation: 'write',
+      durationMs: performance.now() - startedAt,
+      recordCount: 1,
+      ...(recordId === undefined ? {} : { recordId }),
+    });
   };
 
   async function* executeAgent<TInput = unknown, TOutput = unknown>(
@@ -611,7 +632,6 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           ...knowledge.skills,
           ...sessionHistoryMessages(state.session),
           ...knowledge.context,
-          ...knowledge.memory,
           { role: 'user', content: inputContent },
         ];
         step = 1;
@@ -619,6 +639,40 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
         seenToolCallIds = new Set();
         pendingTools = [];
         pendingIndex = 0;
+      }
+
+      const memoryLoaded =
+        state.checkpoint?.memoryLoaded ??
+        messages.some(
+          (message, index) =>
+            index > 0 && message.role === 'system' && message.content.startsWith('[Memory: '),
+        );
+      if (!memoryLoaded && agent.memory && agent.memory.read !== false && memoryStore) {
+        const memory = await readMemoryMessages(
+          agent,
+          knowledgeContext(state, inputContent),
+          memoryStore,
+        );
+        if (memory.trace) {
+          yield await emit('memory.completed', {
+            operation: 'search',
+            durationMs: memory.trace.durationMs,
+            ...(memory.trace.recordCount === undefined
+              ? {}
+              : { recordCount: memory.trace.recordCount }),
+            ...(memory.trace.error === undefined ? {} : { error: memory.trace.error }),
+          });
+        }
+        if (memory.error !== undefined) {
+          throw new Error('Memory search failed', { cause: memory.error });
+        }
+        if (memory.messages.length) {
+          messages.splice(Math.max(0, messages.length - 1), 0, ...memory.messages);
+        }
+        if (state.checkpoint) {
+          state.checkpoint.memoryLoaded = true;
+          await commit(state, { checkpoint: state.checkpoint });
+        }
       }
 
       const activeOutputSchema = agent.outputSchema;
@@ -950,7 +1004,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               validated,
               `Output from agent "${name}" must be JSON-serializable`,
             );
-            await writeMemory(state, agent, inputContent, output);
+            await writeMemory(state, agent, inputContent, output, emit);
             state.session.history.push(
               { role: 'user', content: inputContent },
               { role: 'assistant', content: serializeValue(output, 'Output must be serializable') },
@@ -1055,6 +1109,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               step,
               toolCallId: internalCall.id,
               toolName: internalCall.name,
+              risk: 'read',
+              declaredRisk: 'read',
             });
             let execution;
             try {
@@ -1249,7 +1305,14 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           let record = durable
             ? await durable.getToolExecution(state.run.id, pending.call.id)
             : undefined;
-          const policy = await authorize(state, tool, pending.input, 'tool.execute');
+          const policy = await authorize(
+            state,
+            tool,
+            pending.input,
+            'tool.execute',
+            state.request.context,
+            pending.call.id,
+          );
           const needsApproval = tool.approval === 'required' || policy === 'require_approval';
 
           if (
@@ -1405,7 +1468,14 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               : (record?.attempt ?? 0);
           while (attempt < maxAttempts) {
             if (attempt > 0) {
-              const retryDecision = await authorize(state, tool, pending.input, 'tool.execute');
+              const retryDecision = await authorize(
+                state,
+                tool,
+                pending.input,
+                'tool.execute',
+                state.request.context,
+                pending.call.id,
+              );
               if (retryDecision === 'require_approval') {
                 if (currentApprovalMode === 'deny') {
                   throw new FevexRunError(
@@ -1527,6 +1597,8 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               step,
               toolCallId: pending.call.id,
               toolName: pending.call.name,
+              risk: tool.risk ?? 'read',
+              ...(tool.risk === undefined ? {} : { declaredRisk: tool.risk }),
               ...toolSourcePayload(tool),
               ...(attempt > 1 ? { attempt } : {}),
             }) as AgentEvent;
@@ -2001,10 +2073,17 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
           throw new FevexRunError('APPROVAL_INVALID', 'Approval tool is unavailable', runId);
         }
         if (resolution.decision === 'approve') {
-          await authorize(state, tool, pending.input, 'approval.resolve', {
-            ...state.request.context,
-            actor: resolution.actor,
-          });
+          await authorize(
+            state,
+            tool,
+            pending.input,
+            'approval.resolve',
+            {
+              ...state.request.context,
+              actor: resolution.actor,
+            },
+            pending.call.id,
+          );
         }
         if (resolution.decision === 'reject') {
           const approval = run.pause.approval;

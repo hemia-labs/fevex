@@ -142,12 +142,20 @@ export function systemBlock(label: string, provider: string, block: ContextBlock
   };
 }
 
+export interface MemoryReadResult {
+  messages: AgentMessage[];
+  trace?: { durationMs: number; recordCount?: number; error?: string };
+  /** Original failure, kept for the caller's error cause. */
+  error?: unknown;
+}
+
 export async function readMemoryMessages(
   agent: RegisteredAgent,
   context: KnowledgeContext,
   memoryStore: MemoryStore | undefined,
-): Promise<AgentMessage[]> {
-  if (!agent.memory || agent.memory.read === false || !memoryStore) return [];
+): Promise<MemoryReadResult> {
+  if (!agent.memory || agent.memory.read === false || !memoryStore) return { messages: [] };
+  const startedAt = performance.now();
   try {
     const records = await abortable(
       () =>
@@ -164,14 +172,22 @@ export async function readMemoryMessages(
         ),
       context.signal!,
     );
-    return records
-      .filter((record) => record.content.trim())
-      .map((record) => ({
-        role: 'system',
-        content: `[Memory: ${record.id}]\n${record.content}`,
-      }));
+    return {
+      messages: records
+        .filter((record) => record.content.trim())
+        .map((record) => ({
+          role: 'system',
+          content: `[Memory: ${record.id}]\n${record.content}`,
+        })),
+      trace: { durationMs: performance.now() - startedAt, recordCount: records.length },
+    };
   } catch (cause) {
-    throw new Error('Memory search failed', { cause });
+    const error = cause instanceof Error ? cause.message : String(cause);
+    return {
+      messages: [],
+      trace: { durationMs: performance.now() - startedAt, error },
+      error: cause,
+    };
   }
 }
 

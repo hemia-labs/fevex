@@ -206,6 +206,36 @@ test('enforces maxEventsPerRun without hiding the terminal event', async () => {
   expect(events.at(-1)?.type).toBe('run.failed');
 });
 
+test('waitForRun resolves terminal runs, returns paused runs and times out', async () => {
+  const app = createFevex({
+    models: { default: fakeModel({ output: 'done' }), blocking: blockingModel() },
+    agents: [
+      agent,
+      defineAgent({ name: 'waiter', instructions: 'Wait.', model: 'blocking' }),
+    ],
+  });
+
+  const completed = await app.startAgent('assistant', { input: 'go' });
+  expect(await app.waitForRun(completed.id)).toMatchObject({ status: 'completed' });
+
+  const running = await app.startAgent('waiter', { input: 'wait' });
+  await expect(app.waitForRun(running.id, { timeoutMs: 10 }))
+    .rejects.toMatchObject({ code: 'RUN_WAIT_TIMEOUT' });
+
+  const controller = new AbortController();
+  const pending = app.waitForRun(running.id, { signal: controller.signal });
+  controller.abort(new Error('stop waiting'));
+  await expect(pending).rejects.toThrow('stop waiting');
+
+  await app.cancelRun(running.id);
+});
+
+test('waitForRun returns a paused run immediately', async () => {
+  const { app } = approvalApp();
+  const paused = await pauseApproval(app);
+  expect(await app.waitForRun(paused.runId)).toMatchObject({ status: 'paused' });
+});
+
 test('rejects resume after the absolute deadline', async () => {
   const store = new InMemoryRunStore();
   const app = createFevex({

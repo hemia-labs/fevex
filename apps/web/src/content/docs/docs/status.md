@@ -14,6 +14,14 @@ checkpoint, upgrade and support guarantees.
 - Synchronous event observers and `AsyncIterable` event streaming.
 - Local traces, OpenTelemetry export and deterministic evaluation suites, with
   bounded export queues, timeouts and workflow → agent → tool correlation.
+- Trajectory evaluations over tool attempts, approval and elicitation decisions
+  and non-allow policy decisions, with risk guardrails, unused-fixture warnings
+  and a minimum-scorecard release gate that also compares against a checked-in
+  baseline, both from source and from the built package.
+- `policy.evaluated` events for local traces and OpenTelemetry span events,
+  successful and failed memory search/write spans, plus a built-in
+  `riskGuardrail` policy for sensitive and destructive tools with optional
+  fail-closed handling for tools that omit `risk`.
 - [Adaptable examples and repository run inspection](/docs/development/) through
   the public HTTP protocol.
 - Optional Standard Schema validation.
