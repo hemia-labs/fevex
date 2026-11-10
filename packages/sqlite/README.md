@@ -68,3 +68,23 @@ Compose it with a byte store using `CatalogedArtifactStore` from
 `@fevex/core/artifacts`. The catalog supports `list`, `get`, `delete` and
 `deleteByRun`, scoped by tenant, run, session and actor. Migration v4 adds the
 `artifacts` table and indexes.
+
+## Channel delivery state
+
+`createSQLiteChannelStore` implements the durable channel store used by
+adapters for inbound event deduplication and outbound delivery receipts:
+
+```ts
+import type { SlackDelivery } from '@fevex/slack';
+import { createSQLiteChannelStore } from '@fevex/sqlite';
+
+const store = createSQLiteChannelStore<SlackDelivery>({
+  filename: '.fevex/slack.db',
+});
+```
+
+It uses `BEGIN IMMEDIATE` for atomic event claims and stores the adapter's
+receipt as JSON keyed by `deliveryId`. Events and receipts expire after 24 hours
+by default; pass `ttlMs` to change it. Migration v5 adds the `channel_events`
+and `channel_deliveries` tables and indexes. Call `close()` during shutdown.
+The store is generic: it does not import or depend on any channel adapter.

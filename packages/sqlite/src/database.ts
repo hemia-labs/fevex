@@ -17,7 +17,7 @@ export interface SQLiteDatabase {
 type SQLiteDatabaseConstructor = new (filename: string) => SQLiteDatabase;
 
 const require = createRequire(import.meta.url);
-const schemaVersion = 4;
+const schemaVersion = 5;
 const schema = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -75,6 +75,21 @@ const schema = `
   CREATE INDEX IF NOT EXISTS artifacts_tenant_run ON artifacts(tenant_id, run_id);
   CREATE INDEX IF NOT EXISTS artifacts_tenant_created ON artifacts(tenant_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS artifacts_tenant_expires ON artifacts(tenant_id, expires_at);
+
+  CREATE TABLE IF NOT EXISTS channel_events (
+    event_id TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS channel_events_expires ON channel_events(expires_at);
+
+  CREATE TABLE IF NOT EXISTS channel_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS channel_deliveries_expires ON channel_deliveries(expires_at);
 `;
 
 function openDriver(filename: string): SQLiteDatabase {

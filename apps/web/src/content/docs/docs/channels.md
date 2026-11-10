@@ -8,6 +8,9 @@ authenticates an input, then calls `handleChannelInput` from
 `@fevex/core/channels`. The adapter parses it into a `ChannelMessage` and delivers
 the agent's answer. An input parsed as `null` is ignored without starting a run.
 
+The repository includes a first-class [Slack adapter](/docs/slack/) for the
+Events API.
+
 ## Delivering an elicitation
 
 An agent with `elicitation: 'pause'` can request external information. When it

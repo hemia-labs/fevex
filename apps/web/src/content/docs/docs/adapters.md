@@ -26,11 +26,12 @@ repository until they are published:
 | `@fevex/anthropic` | Anthropic Messages API model adapter |
 | `@fevex/mcp` | Model Context Protocol tools and connections |
 | `@fevex/openapi` | Tools generated from an OpenAPI spec |
-| `@fevex/sqlite` | SQLite run and session store |
+| `@fevex/sqlite` | SQLite run, session and channel state store |
 | `@fevex/postgres` | Postgres run and session store |
 | `@fevex/opentelemetry` | OpenTelemetry trace export |
 | `@fevex/browser` | Browser automation tools |
 | `@fevex/sandbox-docker` | Docker-backed production sandbox provider |
+| `@fevex/slack` | Slack Events API channel adapter |
 
 The MCP adapter targets stateless protocol `2026-07-28`: it calls
 `server/discover`, sends per-request `_meta`, supports MRTR elicitation, Tasks
@@ -69,6 +70,14 @@ external `$ref`, `oneOf`, numeric constraints and array constraints beyond
 `schemaPolicy: 'best-effort'` to send a schema instruction and validate locally.
 The default `anthropic-version` is `2026-10-21`; pass `apiVersion` to use another
 version. Anthropic is available from this repository until it is published.
+
+## Slack
+
+`@fevex/slack` implements `ChannelAdapter` for the Slack Events API, including
+signature verification, mention and DM parsing, thread replies, event
+deduplication and elicitation prompts. Use `createSQLiteChannelStore` from
+`@fevex/sqlite` to persist event claims and delivery receipts across restarts.
+See [Slack](/docs/slack/) for setup.
 
 ## Docker sandbox
 

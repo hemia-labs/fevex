@@ -40,6 +40,9 @@ checkpoint, upgrade and support guarantees.
   `context.artifacts` for tools with `artifact.created` events.
 - [Channel contracts and external resolvers](/docs/channels/) for elicitation,
   with correlated requests and stable keys for delivery retries.
+- [Slack Events API adapter](/docs/slack/) with signature verification, thread
+  mapping, idempotent delivery and elicitation prompts. Repository-only until
+  it joins the npm release inventory.
 - Durable workflows and explicit team delegation, parallel work, and handoffs.
 - Graceful shutdown with a deadline, crash recovery after `SIGKILL`, and a
   repeatable load/soak harness with memory, history and overhead gates.
@@ -48,8 +51,9 @@ checkpoint, upgrade and support guarantees.
   servers fail with an actionable version error.
 - Three official packages in the npm release pipeline: `@fevex/core`,
   `@fevex/openai` and `@fevex/deepseek`. MCP, OpenAPI, SQLite, PostgreSQL,
-  OpenTelemetry, browser, Anthropic and Docker sandbox integrations are built,
-  tested and tarball-smoked in CI but are not published by the release pipeline.
+  OpenTelemetry, browser, Anthropic, Slack and Docker sandbox integrations are
+  built, tested and tarball-smoked in CI but are not published by the release
+  pipeline.
 - Anthropic Messages API adapter with native streaming, thinking and `tool_use`
   replay, strict JSON outputs and tool schemas, and reasoning effort mapping.
 - Docker-backed production sandbox with one long-lived container and isolated
@@ -66,7 +70,7 @@ is explicit: applications provide their own recovery worker and timer scheduler.
 | Area | Status | Direction |
 | --- | --- | --- |
 | Sandbox isolation | Available | Docker provider with per-run containers and workspaces; E2B and snapshots remain future work. |
-| Messaging channels | Next | Connect messaging surfaces such as Slack, Discord, WhatsApp, and Telegram through channel adapters. |
+| Messaging channels | In progress | Slack adapter available in the repository; Discord, Teams, WhatsApp, and Telegram remain future work. |
 | Developer experience | In progress | Adaptable templates, repository inspection and shared research/evals in the playground are available; Studio and builder contracts remain open. |
 | Agent builder ecosystem | Planned | Templates, catalogs, and products built on top of the FEVEX runtime. |
 

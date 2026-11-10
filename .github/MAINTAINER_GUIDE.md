@@ -190,7 +190,7 @@ including packages missing from npm. Publication does not depend on the absence
 of changeset files: alpha mode moves consumed files to `.changeset/pre/`. Manual rehearsals cannot
 publish or create a version PR.
 Changesets may version other packages when core changes; CI still validates all
-ten. The seven deferred packages get no npm publication, tag or GitHub Release.
+twelve. The nine deferred packages get no npm publication, tag or GitHub Release.
 OpenAI and DeepSeek depend on the exact core version prepared in the same release,
 not on npm's mutable `latest` dist-tag. Alpha versions are published with
 `--tag latest`, so bare npm installs resolve to the newly published alpha. Any
@@ -237,8 +237,8 @@ It also supports manual dispatch. Source validation is split into jobs:
 
 - Tooling/changeset checks, including real versioning rehearsals and the
   deterministic evaluation release gate against source and the built package.
-- One build of all eleven packages, ordered by their internal dependencies.
-- Ten package jobs, with at most four running concurrently; each typechecks and
+- One build of all twelve packages, ordered by their internal dependencies.
+- Eleven package jobs, with at most four running concurrently; each typechecks and
   tests its package and reuses the build artifact.
 - PostgreSQL tests/typecheck in a separate job with PostgreSQL 16 and
   `FEVEX_REQUIRE_POSTGRES=1`.
@@ -279,7 +279,7 @@ Before enabling npm writes:
   tag-only policy from the initial design; keeping it would block this workflow.
 - Protect `main` and keep the PR checks mandatory. If release tags are protected,
   allow the automation actor to create them while blocking modification/deletion.
-- The other seven package names can remain absent from npm. If they are enabled in
+- The other nine package names can remain absent from npm. If they are enabled in
   a later release, resolve their initial publication and ownership first; CI
   deliberately refuses to bootstrap missing packages.
 - Finally set the repository Actions variable `ENABLE_NPM_PUBLISH=true`. This
