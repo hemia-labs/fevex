@@ -1,5 +1,11 @@
 # @fevex/core
 
+## 0.1.0-alpha.13
+
+### Patch Changes
+
+- 726eb18: Update the package inventory in the core README to include the Slack adapter.
+
 ## 0.1.0-alpha.12
 
 ### Minor Changes

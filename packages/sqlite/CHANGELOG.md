@@ -1,5 +1,18 @@
 # @fevex/sqlite
 
+## 0.1.0-alpha.12
+
+### Minor Changes
+
+- 726eb18: Add `createSQLiteChannelStore` for durable channel event deduplication and
+  delivery receipts. Schema v5 adds the `channel_events` and `channel_deliveries`
+  tables and indexes.
+
+### Patch Changes
+
+- Updated dependencies [726eb18]
+  - @fevex/core@0.1.0-alpha.13
+
 ## 0.1.0-alpha.11
 
 ### Patch Changes
