@@ -8,3 +8,8 @@ export {
   type SQLiteArtifactCatalog,
   type SQLiteArtifactCatalogOptions,
 } from './sqlite-artifact-catalog';
+export {
+  createSQLiteChannelStore,
+  type SQLiteChannelStore,
+  type SQLiteChannelStoreOptions,
+} from './sqlite-channel-store';

@@ -27,6 +27,7 @@
       "@fevex/opentelemetry": ["packages/opentelemetry/src/index.ts"],
       "@fevex/postgres": ["packages/postgres/src/index.ts"],
       "@fevex/sandbox-docker": ["packages/sandbox-docker/src/index.ts"],
+      "@fevex/slack": ["packages/slack/src/index.ts"],
       "@fevex/sqlite": ["packages/sqlite/src/index.ts"],
       "@fevex/core/runtime": ["packages/fevex/src/runtime/index.ts"],
       "@fevex/core/testing": ["packages/fevex/src/testing/index.ts"],

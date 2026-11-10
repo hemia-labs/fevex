@@ -174,6 +174,7 @@ test('keeps a deliberate published inventory', () => {
     '@fevex/opentelemetry',
     '@fevex/postgres',
     '@fevex/sandbox-docker',
+    '@fevex/slack',
     '@fevex/sqlite',
   ];
   const workspace = workspacePackages();

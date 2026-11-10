@@ -68,6 +68,7 @@ export default defineConfig({
           items: [
             { label: 'Adapters', slug: 'docs/adapters' },
             { label: 'Channels & resolvers', slug: 'docs/channels' },
+            { label: 'Slack', slug: 'docs/slack' },
             { label: 'Package subpaths', slug: 'docs/packages' },
             { label: 'Status & scope', slug: 'docs/status' },
             { label: 'Compatibility & releases', slug: 'docs/compatibility' },

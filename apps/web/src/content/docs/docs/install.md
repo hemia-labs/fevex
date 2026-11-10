@@ -26,7 +26,7 @@ npm install @fevex/core @fevex/openai
 npm install @fevex/core @fevex/deepseek
 ```
 
-CI builds, typechecks, tests and tarball-smokes all eleven packages.
+CI builds, typechecks, tests and tarball-smokes all twelve packages.
 
 ## Repository-only integrations
 
@@ -38,11 +38,12 @@ from this repository until they are published:
 | `@fevex/anthropic` | Anthropic Messages API model adapter |
 | `@fevex/mcp` | Model Context Protocol tools and connections |
 | `@fevex/openapi` | Tools generated from an OpenAPI document |
-| `@fevex/sqlite` | SQLite run and session store |
+| `@fevex/sqlite` | SQLite run, session and channel state store |
 | `@fevex/postgres` | PostgreSQL run and session store |
 | `@fevex/opentelemetry` | OpenTelemetry trace and metric export |
 | `@fevex/browser` | Browser automation tools |
 | `@fevex/sandbox-docker` | Docker-backed production sandbox provider |
+| `@fevex/slack` | Slack Events API channel adapter |
 
 See [Adapters](/docs/adapters/) for the full integration list. Before upgrading a
 durable deployment, read [Compatibility & releases](/docs/compatibility/).

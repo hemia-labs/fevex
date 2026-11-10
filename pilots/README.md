@@ -14,9 +14,10 @@ public APIs and exercise the paths a host application owns.
 bun run pilots
 ```
 
-The command builds the nine tarballs once, creates a temporary consumer, installs
-`@fevex/core`, `@fevex/openai`, `@fevex/deepseek` and the repository-only
-`@fevex/sqlite`, then runs both pilots and a real `SIGKILL` recovery check.
+The command builds the twelve tarballs once, creates a temporary consumer,
+installs `@fevex/core`, `@fevex/openai`, `@fevex/deepseek` and the
+repository-only `@fevex/sqlite`, then runs both pilots and a real `SIGKILL`
+recovery check.
 
 Options:
 

@@ -108,7 +108,7 @@
     },
     "packages/anthropic": {
       "name": "@fevex/anthropic",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.10",
       },
@@ -118,7 +118,7 @@
     },
     "packages/browser": {
       "name": "@fevex/browser",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.1",
       },
@@ -129,7 +129,7 @@
     },
     "packages/deepseek": {
       "name": "@fevex/deepseek",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.1",
       },
@@ -139,7 +139,7 @@
     },
     "packages/fevex": {
       "name": "@fevex/core",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@standard-schema/spec": "^1.1.0",
       },
@@ -149,7 +149,7 @@
     },
     "packages/mcp": {
       "name": "@fevex/mcp",
-      "version": "0.1.0-alpha.12",
+      "version": "0.1.0-alpha.14",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.6",
       },
@@ -159,7 +159,7 @@
     },
     "packages/openai": {
       "name": "@fevex/openai",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.1",
       },
@@ -169,7 +169,7 @@
     },
     "packages/openapi": {
       "name": "@fevex/openapi",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.1",
       },
@@ -179,7 +179,7 @@
     },
     "packages/opentelemetry": {
       "name": "@fevex/opentelemetry",
-      "version": "0.1.0-alpha.9",
+      "version": "0.1.0-alpha.11",
       "devDependencies": {
         "@opentelemetry/api": "^1.9.0",
         "@opentelemetry/sdk-metrics": "^2.10.0",
@@ -193,7 +193,7 @@
     },
     "packages/postgres": {
       "name": "@fevex/postgres",
-      "version": "0.1.0-alpha.9",
+      "version": "0.1.0-alpha.11",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.1",
         "pg": "^8.16.3",
@@ -205,7 +205,7 @@
     },
     "packages/sandbox-docker": {
       "name": "@fevex/sandbox-docker",
-      "version": "0.1.0-alpha.10",
+      "version": "0.1.0-alpha.12",
       "dependencies": {
         "@fevex/core": "0.1.0-alpha.9",
       },
@@ -213,11 +213,21 @@
         "typescript": "^5.7.0",
       },
     },
+    "packages/slack": {
+      "name": "@fevex/slack",
+      "version": "0.1.0-alpha.12",
+      "dependencies": {
+        "@fevex/core": "0.1.0-alpha.12",
+      },
+      "devDependencies": {
+        "typescript": "^5.7.0",
+      },
+    },
     "packages/sqlite": {
       "name": "@fevex/sqlite",
-      "version": "0.1.0-alpha.9",
+      "version": "0.1.0-alpha.11",
       "dependencies": {
-        "@fevex/core": "0.1.0-alpha.1",
+        "@fevex/core": "0.1.0-alpha.12",
         "better-sqlite3": "^12.11.1",
       },
       "devDependencies": {
@@ -507,6 +517,8 @@
     "@fevex/postgres": ["@fevex/postgres@workspace:packages/postgres"],
 
     "@fevex/sandbox-docker": ["@fevex/sandbox-docker@workspace:packages/sandbox-docker"],
+
+    "@fevex/slack": ["@fevex/slack@workspace:packages/slack"],
 
     "@fevex/sqlite": ["@fevex/sqlite@workspace:packages/sqlite"],
 
