@@ -111,6 +111,10 @@ and use the public URL printed by `cloudflared` as the Slack request URL.
 monorepo, dev dependencies, applications or other examples.
 `docker compose up --build` also works after the tarballs exist.
 
+This Docker check is manual. CI typechecks the example, but version PRs contain
+unpublished package versions and cannot resolve those sibling tarballs from the
+registry during an image build.
+
 `cloudflared` only starts with the `tunnel` profile and prints the public URL in
 its logs. If you prefer ngrok on the host, skip the profile and run
 `ngrok http 3000` instead.
