@@ -2,63 +2,63 @@
   "releases": [
     {
       "name": "@fevex/anthropic",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/browser",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/deepseek",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/core",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/mcp",
-      "oldVersion": "0.1.0-alpha.14",
-      "version": "0.1.0-alpha.15"
+      "oldVersion": "0.1.0-alpha.15",
+      "version": "0.1.0-alpha.16"
     },
     {
       "name": "@fevex/openai",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/openapi",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/opentelemetry",
-      "oldVersion": "0.1.0-alpha.11",
-      "version": "0.1.0-alpha.12"
+      "oldVersion": "0.1.0-alpha.12",
+      "version": "0.1.0-alpha.13"
     },
     {
       "name": "@fevex/postgres",
-      "oldVersion": "0.1.0-alpha.11",
-      "version": "0.1.0-alpha.12"
+      "oldVersion": "0.1.0-alpha.12",
+      "version": "0.1.0-alpha.13"
     },
     {
       "name": "@fevex/sandbox-docker",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/slack",
-      "oldVersion": "0.1.0-alpha.12",
-      "version": "0.1.0-alpha.13"
+      "oldVersion": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14"
     },
     {
       "name": "@fevex/sqlite",
-      "oldVersion": "0.1.0-alpha.11",
-      "version": "0.1.0-alpha.12"
+      "oldVersion": "0.1.0-alpha.12",
+      "version": "0.1.0-alpha.13"
     }
   ]
 }

@@ -1,5 +1,13 @@
 # @fevex/core
 
+## 0.1.0-alpha.14
+
+### Minor Changes
+
+- 77059a9: Add the `@fevex/core/http/client` subpath. It exports the HTTP client and error
+  type without the server handler or its Node-only dependencies, so browser
+  bundles such as the Next playground can import it safely.
+
 ## 0.1.0-alpha.13
 
 ### Patch Changes
