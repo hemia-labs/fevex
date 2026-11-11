@@ -152,7 +152,9 @@ jobs:
       - run: bun run --cwd examples/next-playground typecheck
       - run: bun run --cwd examples/next-playground test
       - run: bun run --cwd examples/slack typecheck
-      - run: bun run docker:slack
+      # The Docker example is a manual integration check. Version PRs contain
+      # unpublished package versions, so tarball installation cannot resolve
+      # sibling dependencies from the registry in CI.
 
   consumers:
     name: Consumers (Node ${{ matrix.node }})
