@@ -626,6 +626,9 @@ for await (const event of client.observeRun(run.id)) {
 }
 ```
 
+Browser bundles should import the client from `@fevex/core/http/client`. That
+entrypoint excludes the server handler and its Node-only dependencies.
+
 Protocol v3 also exposes `client.startWorkflow(...)` and
 `client.startTeam(...)`; all run kinds share observation, resume, recovery and
 cancellation endpoints.

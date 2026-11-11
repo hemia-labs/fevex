@@ -10,6 +10,7 @@ import {
 import { createMcpToolProvider } from '@fevex/mcp';
 import { createOpenApiToolProvider } from '@fevex/openapi';
 import { z } from 'zod';
+import { accountsMcpFetch } from '../../slack/mcp-fixture';
 
 const billingApi = {
   openapi: '3.1.0',
@@ -66,6 +67,18 @@ function json(body: unknown) {
 }
 
 export const connections = [
+  defineConnection({
+    name: 'slack_accounts',
+    provider: createMcpToolProvider({
+      url: 'http://in-process/mcp',
+      fetch: accountsMcpFetch,
+    }),
+    allowlist: ['accounts_get', 'accounts_list'],
+    tools: {
+      accounts_get: { risk: 'read', approval: 'never' },
+      accounts_list: { risk: 'read', approval: 'never' },
+    },
+  }),
   defineConnection({
     name: 'billing',
     provider: createOpenApiToolProvider({
@@ -140,6 +153,17 @@ export const contextProviders = [
 
 export const capabilityAgentCatalog = [
   {
+    name: 'slack-support',
+    label: 'Slack Support (MCP)',
+    description: 'Atención de cuentas por un fixture MCP con list/get y estado por hilo.',
+    instructions: 'Sólo atiende cuentas demo: lista cuentas o consulta un ID numérico mediante MCP.',
+    examples: [
+      'Lista las cuentas disponibles.',
+      '¿Cuál es el estado y plan de la cuenta 42?',
+      'Busca la cuenta 67.',
+    ],
+  },
+  {
     name: 'mcp-tools',
     label: 'MCP Tools',
     description: 'Usa tools MCP locales para texto y aritmética.',
@@ -182,6 +206,15 @@ export const capabilityAgentCatalog = [
 ];
 
 export const capabilityAgents = [
+  defineAgent({
+    name: 'slack-support',
+    instructions:
+      'Only handle demo account support. Use slack_accounts__accounts_list when the user asks which accounts exist. Use slack_accounts__accounts_get once when the user provides a numeric account ID. If the ID is missing, ask for it. If the tool returns found:false, say the account was not found and do not invent it. Answer in plain text, concise enough for a Slack message.',
+    tools: ['slack_accounts__accounts_get', 'slack_accounts__accounts_list'],
+    elicitation: 'forbid',
+    approvalMode: 'deny',
+    limits: { maxSteps: 4, maxToolCalls: 2 },
+  }),
   defineAgent({
     name: 'mcp-tools',
     instructions:

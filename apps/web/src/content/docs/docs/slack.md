@@ -8,6 +8,18 @@ API. It verifies request signatures, maps mentions and DMs to channel messages,
 replies in threads and delivers elicitation prompts. The package is
 repository-only; it is not published to npm by the release pipeline yet.
 
+The [Slack example](https://github.com/hemia-labs/fevex/tree/main/examples/slack)
+includes a runnable Bun host, an MCP-backed account tool, SQLite state, a
+browser simulator and a Docker Compose setup with an optional public tunnel.
+The Next playground links `/slack` to its normal chat surface with the
+`slack-support` agent selected, so it reuses the playground model/effort
+selector, streaming, tool timeline and loaders.
+
+The integration is validated with signed fixtures, the SQLite store and a real
+OpenAI model through the playground. A manual test against a real Slack
+workspace is still pending; keep the package repository-only until that test and
+the publication decision are complete.
+
 ## Slack app
 
 Create a Slack app and add the `app_mentions:read` and `chat:write` bot scopes.

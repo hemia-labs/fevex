@@ -8,13 +8,14 @@ the catalog helps you choose a starting point and is not part of execution.
 | --- | --- | --- | --- |
 | [Starter](starter/) | `bun run demo:starter` | No keys or network | `agent.ts`: instructions, tool lookup, schemas and limits. |
 | [Channels and resolvers](channel-elicitation/) | `bun run demo:channels` | No keys or network | Adapter, trusted routing, durable receipts and responder identity. |
+| [Slack](slack/) | `bun run demo:slack`; playground `/slack` | Slack app + public tunnel; Docker optional | `agent.ts`: instructions and MCP tool; `index.ts`: session routing and SQLite storage. |
 | [MCP and OpenAPI](connections/) | `bun run demo:connections` | Local HTTP; no keys | Endpoint, OpenAPI document, allowlists and credentials. |
 | [Research and evals](research/) | `bun run demo:research`; `bun run eval:research` | Scripted mode without keys; optional real model | Shared agent, section context, code evidence, fixtures and seven eval cases. |
 | [HTTP playground](nest-api/) | `bun run dev:nest` | OpenAI or DeepSeek key | Agents, tools, HTTP host, authentication and SQLite persistence. |
 | [Playground UI](next-playground/) | `bun run dev:next` | Running Nest API | Frontend views consuming the public HTTP client. |
 | [MCP server](nest-mcp/) | `bun run dev:mcp` | Local HTTP; no keys | SDK-backed server tool registrations. |
 
-The first four examples default to scripted models and synthetic account data. They verify
+Most examples default to scripted models and synthetic account data. They verify
 the runtime contracts, not the answer quality of a real model. Their READMEs
 explain how to replace fixtures with actual services and model gateways.
 The research example also runs with a real model and is shared with the

@@ -17,6 +17,8 @@ From the repository root, after `bun install --frozen-lockfile`:
 | --- | --- |
 | `bun run demo:starter` | An agent with a validated local read tool and a metadata trace. |
 | `bun run demo:channels` | Paused requests, human/service responses and delivery retries. |
+| `bun run demo:slack` | Slack Events API host; see [Slack](/docs/slack/) for the app and tunnel. |
+| `bun run dev:next` → `/slack` | Playground with the `slack-support` MCP agent selected; no Slack account needed. |
 | `bun run demo:connections` | Documentation through MCP and account data through OpenAPI. |
 | `bun run demo:research` | Combined research, cited evidence and structured account facts. |
 | `bun run eval:research` | Six cases checking tools, evidence, missing information and API failure. |

@@ -151,6 +151,8 @@ jobs:
       - run: bun test examples/research/evaluation.test.ts
       - run: bun run --cwd examples/next-playground typecheck
       - run: bun run --cwd examples/next-playground test
+      - run: bun run --cwd examples/slack typecheck
+      - run: bun run docker:slack
 
   consumers:
     name: Consumers (Node ${{ matrix.node }})

@@ -19,6 +19,8 @@
     "dev:next": "bun run --cwd examples/next-playground dev",
     "demo:starter": "bun run examples/starter/index.ts",
     "demo:channels": "bun run examples/channel-elicitation/index.ts",
+    "demo:slack": "bun run --cwd examples/slack start",
+    "docker:slack": "bash examples/slack/build-docker.sh",
     "demo:connections": "bun run examples/connections/index.ts",
     "demo:research": "bun run examples/research/index.ts",
     "eval:research": "bun run examples/research/index.ts --eval",

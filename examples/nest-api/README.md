@@ -79,6 +79,18 @@ isolation.
 Runs and approval checkpoints persist in
 `FEVEX_DB_PATH` (default `.fevex/demo.sqlite`).
 
+## Slack agent
+
+The playground lists a `slack-support` agent. It uses the in-process MCP
+account fixture (`accounts_list` and `accounts_get`), the same model catalog and
+reasoning-effort selector as every other agent, and the normal playground
+streaming/tool timeline. `/slack` rewrites to `/?agent=slack-support` so the
+Slack agent is selected on load.
+
+No API key is entered in the page; the existing `OPENAI_API_KEY` or
+`DEEPSEEK_API_KEY` in the Nest process is used. Use `examples/slack` when you
+need real Slack signatures, retries, SQLite durability or Docker.
+
 ## Multi-tenant authorization
 
 The host authenticates demo bearer tokens and passes the resulting actor to

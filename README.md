@@ -79,6 +79,7 @@ For an adaptable starting point, see the [example catalog](examples/README.md):
 ```bash
 bun run demo:starter
 bun run demo:channels
+bun run demo:slack
 bun run demo:connections
 bun run demo:research
 bun run eval:research

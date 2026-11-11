@@ -1,0 +1,25 @@
+services:
+  slack-bot:
+    image: fevex-slack-example:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.slack
+    environment:
+      FEVEX_SLACK_DB: /data/slack.sqlite
+      FEVEX_SLACK_SESSIONS: /data/sessions.json
+    volumes:
+      - slack-data:/data
+
+  cloudflared:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://slack-bot:3000
+    depends_on:
+      - slack-bot
+
+volumes:
+  slack-data:
