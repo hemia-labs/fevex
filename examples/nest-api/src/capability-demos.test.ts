@@ -13,13 +13,14 @@ import { agentCatalog, agents, tools } from './agents.config';
 
 test('capability demos exercise OpenAPI, approval and knowledge contracts', async () => {
   expect(capabilityAgents.map(({ name }) => name)).toEqual([
+    'slack-support',
     'mcp-tools',
     'billing-openapi',
     'refund-approval',
     'knowledge-support',
   ]);
 
-  const provider = connections[0]!.provider;
+  const provider = connections.find(({ name }) => name === 'billing')!.provider;
   await expect(provider.callTool(
     'getInvoice',
     { path: { invoiceId: 'INV-10' } },
@@ -31,6 +32,9 @@ test('capability demos exercise OpenAPI, approval and knowledge contracts', asyn
     status: 'paid',
   });
 
+  expect(connections.find(({ name }) => name === 'slack_accounts')).toMatchObject({
+    allowlist: ['accounts_get', 'accounts_list'],
+  });
   expect(connections.find(({ name }) => name === 'nest_mcp')).toMatchObject({
     allowlist: ['echo', 'sum', 'multiply', 'slugify', 'word_count'],
   });

@@ -70,13 +70,20 @@ is explicit: applications provide their own recovery worker and timer scheduler.
 | Area | Status | Direction |
 | --- | --- | --- |
 | Sandbox isolation | Available | Docker provider with per-run containers and workspaces; E2B and snapshots remain future work. |
-| Messaging channels | In progress | Slack adapter available in the repository; Discord, Teams, WhatsApp, and Telegram remain future work. |
+| Messaging channels | Available (repo-only) | Slack adapter, SQLite delivery store and playground MCP agent are validated with fixtures and a real OpenAI model; a real Slack workspace test and a Postgres channel store remain deferred. Discord, Teams, WhatsApp, and Telegram are future work. |
 | Developer experience | In progress | Adaptable templates, repository inspection and shared research/evals in the playground are available; Studio and builder contracts remain open. |
 | Agent builder ecosystem | Planned | Templates, catalogs, and products built on top of the FEVEX runtime. |
 
 These are planned capabilities, with no committed release dates. Agent builders,
 marketplaces, and tenant management belong to products built on FEVEX; they are
 not part of the core package.
+
+## Beta gate
+
+Beta is not declared yet. The remaining gate is two external applications that
+install from the published packages and exercise approval/resume, failure
+recovery and upgrade through public APIs. That gate is intentionally deferred
+until there are real consumers.
 
 ## Out of scope
 

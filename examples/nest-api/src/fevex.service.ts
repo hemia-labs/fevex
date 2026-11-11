@@ -149,6 +149,11 @@ export class FevexService {
     return this.modelCatalog;
   }
 
+  /** Gateways registered for this runtime, including the default alias. */
+  modelGateways(): Record<string, ModelGateway> {
+    return { ...this.models };
+  }
+
   async evaluateResearch(modelId: string, signal: AbortSignal) {
     if (!this.modelCatalog.some(({ id }) => id === modelId)) throw new BadRequestException('Unknown model');
     if (this.evaluationRunning) throw new ConflictException('An evaluation is already running');

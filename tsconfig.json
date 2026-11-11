@@ -17,6 +17,7 @@
       "@fevex/core/artifacts": ["packages/fevex/src/artifacts/index.ts"],
       "@fevex/core/channels": ["packages/fevex/src/channels/index.ts"],
       "@fevex/core/http": ["packages/fevex/src/http/index.ts"],
+      "@fevex/core/http/client": ["packages/fevex/src/http/client.ts"],
       "@fevex/deepseek": ["packages/deepseek/src/index.ts"],
       "@fevex/mcp": ["packages/mcp/src/index.ts"],
       "@fevex/core/models": ["packages/fevex/src/models/index.ts"],

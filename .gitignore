@@ -3,6 +3,7 @@ dist
 .astro
 .next
 .fevex
+examples/slack/.release/
 *.tsbuildinfo
 .env*
 !.env.example

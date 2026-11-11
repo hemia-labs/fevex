@@ -1,0 +1,21 @@
+{
+  "name": "@fevex/example-slack",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fevex/core": "workspace:*",
+    "@fevex/deepseek": "workspace:*",
+    "@fevex/mcp": "workspace:*",
+    "@fevex/openai": "workspace:*",
+    "@fevex/slack": "workspace:*",
+    "@fevex/sqlite": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

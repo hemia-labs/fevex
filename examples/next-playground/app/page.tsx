@@ -11,6 +11,7 @@ import {
   CircleDashed,
   CircleSlash2,
   CircleX,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -38,7 +39,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import type { AgentEvent, JsonValue, ReasoningEffort, RunRecord } from '@fevex/core';
 import type { ElicitationRequest } from '@fevex/core/runtime';
-import { createFevexHttpClient, FevexHttpError } from '@fevex/core/http';
+import { createFevexHttpClient, FevexHttpError } from '@fevex/core/http/client';
 import { ApprovalDecisionCard } from '@/components/approval-decision-card';
 import { BrowserPreview } from '@/components/browser-preview';
 import { Button } from '@/components/ui/button';
@@ -229,10 +230,15 @@ export default function Home() {
           ...nextWorkflows.map((workflow) => ({ ...workflow, kind: 'workflow' as const })),
         ];
         setRunnables(nextRunnables);
+        const requestedAgent = new URLSearchParams(window.location.search).get('agent')
+          ?? (window.location.pathname === '/slack' ? 'slack-support' : null);
+        const preferred = requestedAgent
+          ? nextRunnables.find((runnable) => runnable.name === requestedAgent)
+          : undefined;
         setModels(nextModels);
         setSelectedModelId(nextModels[0]?.id ?? '');
         setSelectedEffort(nextModels[0]?.efforts[0] ?? 'provider-default');
-        setSelectedRunnableId(nextRunnables[0] ? runnableId(nextRunnables[0]) : '');
+        setSelectedRunnableId(preferred ? runnableId(preferred) : nextRunnables[0] ? runnableId(nextRunnables[0]) : '');
         setMessages(nextRunnables.length ? [] : [{
           role: 'assistant',
           content: 'No hay agentes ni workflows disponibles.',
@@ -982,6 +988,14 @@ export default function Home() {
             </div>
           </div>
           <div className="toolbar">
+            <a
+              aria-label="Abrir simulador de Slack"
+              className="icon-button"
+              href="/slack"
+              title="Simulador de Slack"
+            >
+              <MessageSquare size={16} />
+            </a>
             <Button
               aria-label={`${debug ? 'Desactivar' : 'Activar'} modo debug`}
               aria-pressed={debug}
