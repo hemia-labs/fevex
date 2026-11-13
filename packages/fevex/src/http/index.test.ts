@@ -44,6 +44,7 @@ describe('Fevex HTTP v3', () => {
     const client = clientFor(app);
     const first = await client.startRun('assistant', { input: 'one' });
     await collect(client.observeRun(first.id));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const second = await client.startRun('assistant', { input: 'two' });
     await collect(client.observeRun(second.id));
 

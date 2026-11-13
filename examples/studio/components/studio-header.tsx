@@ -9,7 +9,7 @@ export function StudioHeader({ children }: { children?: ReactNode }) {
         <span className="brand-mark" aria-hidden="true">F</span>
         <span className="brand-text">
           <strong>Fevex Studio</strong>
-          <small>Runs, tools y approvals</small>
+          <small>Diagnóstico local</small>
         </span>
       </Link>
       <div className="topbar-actions">

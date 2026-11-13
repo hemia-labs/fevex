@@ -6,6 +6,10 @@ export function runKind(run: RunRecord): 'agent' | 'workflow' | 'team' {
   return run.kind ?? 'agent';
 }
 
+export function runKindLabel(kind: 'agent' | 'workflow' | 'team'): string {
+  return { agent: 'agente', workflow: 'workflow', team: 'equipo' }[kind];
+}
+
 export function runName(run: RunRecord): string {
   if (run.kind === 'workflow') return run.workflowName;
   if (run.kind === 'team') return run.teamName;
@@ -13,7 +17,8 @@ export function runName(run: RunRecord): string {
 }
 
 export function runModel(run: RunRecord): string | undefined {
-  return run.kind === 'agent' ? run.modelName : undefined;
+  if (run.kind === 'workflow' || run.kind === 'team') return undefined;
+  return run.modelMetadata?.model ?? run.modelName;
 }
 
 export function runStatusTone(status: RunRecord['status']): Tone {

@@ -14,6 +14,7 @@ import {
   formatNumber,
   formatRelative,
   runKind,
+  runKindLabel,
   runModel,
   runName,
   shortId,
@@ -146,7 +147,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <section className="detail-heading">
               <div>
                 <p className="eyebrow">
-                  {runKind(run)} · <code>{shortId(run.id)}</code>
+                  {runKindLabel(runKind(run))} · <code>{shortId(run.id)}</code>
                 </p>
                 <h1>{runName(run)}</h1>
                 <div className="heading-meta">
@@ -195,7 +196,9 @@ export function RunDetail({ runId }: { runId: string }) {
                     <p className="muted">
                       {run.status === 'running'
                         ? 'El run sigue ejecutándose.'
-                        : 'Sin output registrado.'}
+                        : run.status === 'paused'
+                          ? 'El run está pausado y todavía no tiene output.'
+                          : 'Sin output registrado.'}
                     </p>
                   )}
                   {signals.failures.length > 0 && (
@@ -238,7 +241,13 @@ export function RunDetail({ runId }: { runId: string }) {
               <aside className="detail-side">
                 {approval && (
                   <section className="panel approval-panel">
-                    <p className="eyebrow">Approval pendiente</p>
+                    <div className="approval-title">
+                      <p className="eyebrow">Aprobación pendiente</p>
+                      <span className="badge tone-warning">
+                        <span className="badge-dot" aria-hidden="true" />
+                        Pendiente
+                      </span>
+                    </div>
                     <h2>{approval.toolLabel ?? approval.toolName}</h2>
                     <dl className="kv">
                       <div><dt>Riesgo</dt><dd>{approval.risk}</dd></div>
@@ -273,7 +282,7 @@ export function RunDetail({ runId }: { runId: string }) {
                   <h2>Run</h2>
                   <dl className="kv">
                     <div><dt>Estado</dt><dd>{statusLabel(run.status)}</dd></div>
-                    <div><dt>Tipo</dt><dd>{runKind(run)}</dd></div>
+                    <div><dt>Tipo</dt><dd>{runKindLabel(runKind(run))}</dd></div>
                     {runModel(run) && <div><dt>Modelo</dt><dd>{runModel(run)}</dd></div>}
                     <div><dt>Session</dt><dd className="mono">{shortId(run.sessionId)}</dd></div>
                     <div><dt>Creado</dt><dd>{formatDateTime(run.createdAt)}</dd></div>
@@ -416,8 +425,8 @@ function StreamBadge({ state }: { state: StreamState }) {
   const label = {
     connecting: 'Conectando',
     live: 'En vivo',
-    closed: 'Stream cerrado',
-    error: 'Stream con error',
+    closed: 'Eventos cargados',
+    error: 'Sin conexión',
   }[state];
   return <span className={`pill pill-${state}`}>{label}</span>;
 }
