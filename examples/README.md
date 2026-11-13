@@ -13,6 +13,7 @@ the catalog helps you choose a starting point and is not part of execution.
 | [Research and evals](research/) | `bun run demo:research`; `bun run eval:research` | Scripted mode without keys; optional real model | Shared agent, section context, code evidence, fixtures and seven eval cases. |
 | [HTTP playground](nest-api/) | `bun run dev:nest` | OpenAI or DeepSeek key | Agents, tools, HTTP host, authentication and SQLite persistence. |
 | [Playground UI](next-playground/) | `bun run dev:next` | Running Nest API | Frontend views consuming the public HTTP client. |
+| [Studio](studio/) | `bun run dev:studio` | Running Nest API | Local diagnostics: runs, timeline, tools and approvals over the public HTTP API. |
 | [MCP server](nest-mcp/) | `bun run dev:mcp` | Local HTTP; no keys | SDK-backed server tool registrations. |
 
 Most examples default to scripted models and synthetic account data. They verify

@@ -36,6 +36,47 @@ describe('Fevex HTTP v3', () => {
     expect((await client.getRun<string>(run.id)).output).toBe('alternate');
   });
 
+  test('lists runs with pagination, status filters and read authorization', async () => {
+    const app = createFevex({
+      models: { default: fakeModel({ output: 'one' }, { output: 'two' }) },
+      agents: [defineAgent({ name: 'assistant', instructions: 'Answer.' })],
+    });
+    const client = clientFor(app);
+    const first = await client.startRun('assistant', { input: 'one' });
+    await collect(client.observeRun(first.id));
+    const second = await client.startRun('assistant', { input: 'two' });
+    await collect(client.observeRun(second.id));
+
+    const page = await client.listRuns({ limit: 1 });
+    expect(page.runs.map(({ id }) => id)).toEqual([second.id]);
+    expect(page.next).toBeDefined();
+
+    const next = await client.listRuns({ limit: 1, cursor: page.next });
+    expect(next.runs.map(({ id }) => id)).toEqual([first.id]);
+    expect(next.next).toBeUndefined();
+
+    const completed = await client.listRuns({ status: 'completed' });
+    expect(completed.runs.map(({ id }) => id)).toEqual([second.id, first.id]);
+
+    const filtered = createFevexHttpClient({
+      baseUrl: 'http://local',
+      fetch: (input, init) => createFevexHttpHandler({
+        fevex: app,
+        pollIntervalMs: 1,
+        authorize: (access) => access.action !== 'read' || access.runId !== first.id,
+      })(new Request(input, init)),
+    });
+    expect((await filtered.listRuns()).runs.map(({ id }) => id)).toEqual([second.id]);
+
+    await expect(client.listRuns({ status: 'unknown' as never })).rejects.toMatchObject({
+      status: 400,
+    });
+    await expect(client.listRuns({ cursor: 'invalid' })).rejects.toMatchObject({
+      status: 400,
+      code: 'INVALID_CURSOR',
+    });
+  });
+
   test('starts, observes, reconnects and continues one session without duplicate execution', async () => {
     const model = fakeModel({ output: 'first' }, { output: 'second' });
     const app = createFevex({

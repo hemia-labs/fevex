@@ -8,6 +8,7 @@ import { FevexRunError } from '../run-error';
 import {
   isDurableRunStore,
   isRetainableRunStore,
+  isRunCatalog,
   type AgentRun,
   type ResumeRunResolution,
   type RunRecord,
@@ -420,6 +421,15 @@ export function createRuntime(composition: FevexComposition): Fevex {
     },
     getRun<TOutput = unknown>(runId: string) {
       return runStore.getRun<RunRecord<TOutput>>(runId);
+    },
+    async listRuns(options) {
+      if (!isRunCatalog(runStore)) {
+        throw new FevexRunError(
+          'RUN_LIST_UNSUPPORTED',
+          'The configured run store does not support listRuns',
+        );
+      }
+      return runStore.listRuns(options);
     },
     waitForRun<TOutput = unknown>(
       runId: string,

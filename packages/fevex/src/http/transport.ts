@@ -8,7 +8,12 @@ import type { Fevex } from '../fevex';
 import { MAX_DEADLINE_MS } from '../internal/run-support';
 import type { ReasoningEffort } from '../models';
 import { FevexRunError, type FevexRunErrorCode } from '../run-error';
-import type { ResumeRunResolution, RunRecord } from '../runtime';
+import {
+  RUN_LIST_MAX_LIMIT,
+  type ResumeRunResolution,
+  type RunRecord,
+  type RunStatus,
+} from '../runtime';
 import {
   FEVEX_HTTP_PROTOCOL_VERSION,
   FEVEX_HTTP_PROTOCOL_VERSION_HEADER,
@@ -39,6 +44,7 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
   'ADMISSION_DENIED',
   'RUNTIME_CLOSED',
   'CREDENTIAL_NOT_FOUND',
+  'RUN_LIST_UNSUPPORTED',
   'SANDBOX_REQUIRED',
   'ELICITATION_INVALID',
   'APPROVAL_INVALID',
@@ -308,6 +314,37 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         return versioned(new Response(null, { status: 204 }));
       }
 
+      if (path === '/v1/runs' && request.method === 'GET') {
+        const limit = optionalLimit(url.searchParams.get('limit'));
+        if (limit !== undefined && limit > RUN_LIST_MAX_LIMIT) {
+          throw badRequest(`limit must be at most ${RUN_LIST_MAX_LIMIT}`);
+        }
+        const status = optionalRunStatus(url.searchParams.get('status'));
+        const cursor = url.searchParams.get('cursor')?.trim() || undefined;
+        const page = await options.fevex.listRuns({
+          ...(limit === undefined ? {} : { limit }),
+          ...(status === undefined ? {} : { status }),
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        const runs = [];
+        for (const candidate of page.runs) {
+          if (
+            !options.authorize ||
+            await options.authorize({
+              action: 'read',
+              runId: candidate.id,
+              context: handlerContext.context,
+            })
+          ) {
+            runs.push(candidate);
+          }
+        }
+        return json({
+          runs,
+          ...(page.next === undefined ? {} : { next: page.next }),
+        });
+      }
+
       const run = path.match(/^\/v1\/runs\/([^/]+)$/);
       if (run && request.method === 'GET') {
         const runId = decodeURIComponent(run[1]!);
@@ -339,6 +376,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
         recover ||
         runArtifacts ||
         artifactRoute ||
+        path === '/v1/runs' ||
         run
       ) {
         throw new HttpProtocolError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
@@ -572,6 +610,20 @@ function optionalDeadline(value: unknown, name: string) {
   return deadlineMs;
 }
 
+function optionalRunStatus(value: string | null): RunStatus | undefined {
+  if (value === null) return undefined;
+  if (
+    value !== 'running' &&
+    value !== 'paused' &&
+    value !== 'completed' &&
+    value !== 'failed' &&
+    value !== 'cancelled'
+  ) {
+    throw badRequest('status must be a valid run status');
+  }
+  return value;
+}
+
 function optionalReasoning(value: unknown): ReasoningEffort | undefined {
   if (value === undefined) return undefined;
   if (
@@ -693,6 +745,7 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
   if (code === 'POLICY_DENIED') return 403;
   if (code === 'ADMISSION_DENIED') return 429;
   if (code === 'RUNTIME_CLOSED') return 503;
+  if (code === 'RUN_LIST_UNSUPPORTED') return 501;
   return 409;
 }
 

@@ -46,6 +46,7 @@ export class AgentsController {
   @All([
     'v1/agents/:name/runs',
     'v1/workflows/:name/runs',
+    'v1/runs',
     'v1/runs/:runId',
     'v1/runs/:runId/events',
     'v1/runs/:runId/resume',

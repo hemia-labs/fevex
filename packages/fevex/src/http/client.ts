@@ -58,6 +58,14 @@ export function createFevexHttpClient(options: FevexHttpClientOptions): FevexHtt
     getRun(runId) {
       return request(`/v1/runs/${encodeURIComponent(runId)}`);
     },
+    listRuns(listOptions = {}) {
+      const params = new URLSearchParams();
+      if (listOptions.limit !== undefined) params.set('limit', String(listOptions.limit));
+      if (listOptions.status !== undefined) params.set('status', listOptions.status);
+      if (listOptions.cursor !== undefined) params.set('cursor', listOptions.cursor);
+      const query = params.toString();
+      return request(`/v1/runs${query ? `?${query}` : ''}`);
+    },
     observeRun(runId, observeOptions = {}) {
       return {
         async *[Symbol.asyncIterator]() {

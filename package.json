@@ -17,6 +17,7 @@
     "dev:mcp": "bun run --cwd examples/nest-mcp dev",
     "dev:nest": "bun run --cwd examples/nest-api dev",
     "dev:next": "bun run --cwd examples/next-playground dev",
+    "dev:studio": "bun run --cwd examples/studio dev",
     "demo:starter": "bun run examples/starter/index.ts",
     "demo:channels": "bun run examples/channel-elicitation/index.ts",
     "demo:slack": "bun run --cwd examples/slack start",

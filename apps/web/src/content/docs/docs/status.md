@@ -60,6 +60,9 @@ checkpoint, upgrade and support guarantees.
   workspace per run, no network by default, dropped capabilities, resource
   limits, forced termination and automatic cleanup. `LocalSandbox` remains
   development-only.
+- Local [Studio](/docs/studio/) for runs, event timelines, tool activity and
+  approvals, backed only by the public HTTP API and the new `GET /v1/runs`
+  listing.
 
 The default run store is in memory. Use a [persistent store](/docs/adapters/)
 to retain runs and sessions across process restarts. [Workflow recovery](/docs/workflows/#recovery)
@@ -71,7 +74,7 @@ is explicit: applications provide their own recovery worker and timer scheduler.
 | --- | --- | --- |
 | Sandbox isolation | Available | Docker provider with per-run containers and workspaces; E2B and snapshots remain future work. |
 | Messaging channels | Available (repo-only) | Slack adapter, SQLite delivery store and playground MCP agent are validated with fixtures and a real OpenAI model; a real Slack workspace test and a Postgres channel store remain deferred. Discord, Teams, WhatsApp, and Telegram are future work. |
-| Developer experience | In progress | Adaptable templates, repository inspection and shared research/evals in the playground are available; Studio and builder contracts remain open. |
+| Developer experience | In progress | Adaptable templates, repository inspection, shared research/evals and a local Studio for runs, tools and approvals are available; prompts, evals and replay in Studio plus builder contracts remain open. |
 | Agent builder ecosystem | Planned | Templates, catalogs, and products built on top of the FEVEX runtime. |
 
 These are planned capabilities, with no committed release dates. Agent builders,

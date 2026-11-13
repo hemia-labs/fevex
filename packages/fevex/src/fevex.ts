@@ -14,9 +14,11 @@ import type {
   ContextCompactionStats,
   CredentialStore,
   ListEventsOptions,
+  ListRunsOptions,
   PurgeRunsOptions,
   PurgeRunsResult,
   ResumeRunResolution,
+  RunPage,
   RunRecord,
   RunRequest,
   RunResult,
@@ -144,6 +146,12 @@ export interface Fevex {
   ): AsyncIterable<AgentEvent>;
   getTeamRun<TOutput = unknown>(runId: RunId): Promise<TeamRun<TOutput> | undefined>;
   getRun<TOutput = unknown>(runId: RunId): Promise<RunRecord<TOutput> | undefined>;
+  /**
+   * Lists runs newest first when the configured store implements `RunCatalog`.
+   * Official in-memory and SQLite stores support it; other stores may return
+   * `RUN_LIST_UNSUPPORTED`.
+   */
+  listRuns(options?: ListRunsOptions): Promise<RunPage>;
   /**
    * Waits until a run leaves `running` (paused or terminal) and returns its
    * latest record. Resolves immediately for paused and terminal runs, and with
