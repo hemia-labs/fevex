@@ -17,6 +17,7 @@ describe('run catalog', () => {
     });
     const first = await app.startAgent('assistant', { input: 'one' });
     await app.waitForRun(first.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const second = await app.startAgent('assistant', { input: 'two' });
     await app.waitForRun(second.id);
 
