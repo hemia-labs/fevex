@@ -10,6 +10,7 @@ import {
   formatRelative,
   previewValue,
   runKind,
+  runKindLabel,
   runModel,
   runName,
   shortId,
@@ -74,21 +75,28 @@ export function RunList() {
       <main className="page">
         <section className="page-heading">
           <div>
-            <p className="eyebrow">Observabilidad local</p>
+            <p className="eyebrow">Diagnóstico local</p>
             <h1>Runs</h1>
             <p className="muted">
               Inspecciona ejecuciones, tools y approvals leyendo solo la API
               pública de Fevex.
             </p>
           </div>
-          <button
-            className="button"
-            disabled={loading}
-            onClick={() => void load()}
-            type="button"
-          >
-            {loading ? 'Actualizando…' : 'Actualizar'}
-          </button>
+          <div className="heading-actions">
+            {updatedAt && (
+              <span className="updated-at">
+                Actualizado {formatRelative(new Date(updatedAt).toISOString())}
+              </span>
+            )}
+            <button
+              className="button"
+              disabled={loading}
+              onClick={() => void load()}
+              type="button"
+            >
+              {loading ? 'Actualizando…' : 'Actualizar'}
+            </button>
+          </div>
         </section>
 
         <section className="stats" aria-label="Resumen de runs">
@@ -98,19 +106,21 @@ export function RunList() {
           </div>
           <div className="stat">
             <span className="stat-label">Ejecutando</span>
-            <strong className="tone-info">{counts.running}</strong>
+            <strong className={counts.running > 0 ? 'tone-info' : undefined}>
+              {counts.running}
+            </strong>
           </div>
           <div className="stat">
             <span className="stat-label">Pausados</span>
-            <strong className="tone-warning">{counts.paused}</strong>
+            <strong className={counts.paused > 0 ? 'tone-warning' : undefined}>
+              {counts.paused}
+            </strong>
           </div>
           <div className="stat">
             <span className="stat-label">Fallidos</span>
-            <strong className="tone-danger">{counts.failed}</strong>
-          </div>
-          <div className="stat stat-wide">
-            <span className="stat-label">Actualizado</span>
-            <strong>{updatedAt ? formatRelative(new Date(updatedAt).toISOString()) : '—'}</strong>
+            <strong className={counts.failed > 0 ? 'tone-danger' : undefined}>
+              {counts.failed}
+            </strong>
           </div>
         </section>
 
@@ -164,10 +174,12 @@ export function RunList() {
                 <span className="run-name">
                   <strong>{runName(run)}</strong>
                   <small>
-                    {runKind(run)} · <code>{shortId(run.id)}</code>
+                    {runKindLabel(runKind(run))} · <code>{shortId(run.id)}</code>
                   </small>
                 </span>
-                <span className="mono muted">{runModel(run) ?? '—'}</span>
+                <span className="mono muted run-model" title={runModel(run) ?? ''}>
+                  {runModel(run) ?? '—'}
+                </span>
                 <span title={run.createdAt}>{formatRelative(run.createdAt)}</span>
                 <span className="mono">{formatDuration(durationMs(run))}</span>
                 <span className="run-result">{resultPreview(run)}</span>
