@@ -1,4 +1,10 @@
-import { validateListEventsOptions, validatePurgeRunsOptions } from './run-store';
+import {
+  validateListEventsOptions,
+  validateListRunsOptions,
+  validatePurgeRunsOptions,
+  encodeRunCursor,
+  decodeRunCursor,
+} from './run-store';
 import type { AgentEvent, RunId } from '../core';
 import { FevexRunError } from '../run-error';
 import type {
@@ -7,11 +13,14 @@ import type {
   ExecutionCommit,
   ExecutionCreate,
   ListEventsOptions,
+  ListRunsOptions,
   PurgeRunsOptions,
   PurgeRunsResult,
   RetainableRunStatus,
+  RunCatalog,
   RunCheckpoint,
   RunLease,
+  RunPage,
   RunRecord,
   Session,
   SessionId,
@@ -25,7 +34,7 @@ import type {
  * Values are cloned at the boundary so callers cannot mutate persisted state.
  * Data is lost when the process exits.
  */
-export class InMemoryRunStore implements DurableRunStore {
+export class InMemoryRunStore implements DurableRunStore, RunCatalog {
   readonly #runs = new Map<RunId, RunRecord>();
   readonly #sessions = new Map<SessionId, Session>();
   readonly #events = new Map<RunId, AgentEvent[]>();
@@ -43,6 +52,24 @@ export class InMemoryRunStore implements DurableRunStore {
   async saveRun(run: RunRecord): Promise<void> {
     this.#runs.set(run.id, structuredClone(run));
     if (!this.#events.has(run.id)) this.#events.set(run.id, []);
+  }
+
+  async listRuns(options: ListRunsOptions = {}): Promise<RunPage> {
+    const { limit, status, cursor } = validateListRunsOptions(options);
+    const after = cursor === undefined ? undefined : decodeRunCursor(cursor);
+    const candidates = [...this.#runs.values()]
+      .filter((run) => status === undefined || run.status === status)
+      .filter((run) => after === undefined
+        || run.createdAt < after.createdAt
+        || (run.createdAt === after.createdAt && run.id < after.id))
+      .sort((first, second) => second.createdAt.localeCompare(first.createdAt)
+        || second.id.localeCompare(first.id))
+      .slice(0, limit + 1);
+    const page = candidates.slice(0, limit);
+    return {
+      runs: structuredClone(page),
+      ...(candidates.length > limit ? { next: encodeRunCursor(page[page.length - 1]!) } : {}),
+    };
   }
 
   async getSession(sessionId: SessionId): Promise<Session | undefined> {

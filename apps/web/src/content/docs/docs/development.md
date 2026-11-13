@@ -21,6 +21,7 @@ From the repository root, after `bun install --frozen-lockfile`:
 | `bun run dev:next` → `/slack` | Playground with the `slack-support` MCP agent selected; no Slack account needed. |
 | `bun run demo:connections` | Documentation through MCP and account data through OpenAPI. |
 | `bun run demo:research` | Combined research, cited evidence and structured account facts. |
+| `bun run dev:studio` | Local diagnostics UI for runs, timeline, tools and approvals; see [Local Studio](/docs/studio/). |
 | `bun run eval:research` | Six cases checking tools, evidence, missing information and API failure. |
 | `bun run eval:tool-search` | Lexical tool-retrieval baseline: hit@k, MRR, nDCG, token reduction and latency. |
 
@@ -85,6 +86,10 @@ retrieval can be compared directly.
 
 ## Inspect state and events
 
+The local [Studio](/docs/studio/) is the GUI alternative: it lists runs, follows
+the event stream, shows tool failures and resolves pending approvals. The
+`inspect` command below is the metadata-only CLI.
+
 The repository's `inspect` command uses `@fevex/core/http`. It makes GET requests
 and prints run state and event metadata as JSON lines:
 
@@ -127,6 +132,7 @@ For an in-process app, use the existing public APIs:
 
 ```ts
 const run = await app.getRun(runId);
+const runs = await app.listRuns({ limit: 50, status: 'paused' });
 const events = await app.listEvents(runId, { limit: 100 });
 const nextPage = await app.listEvents(runId, { after: events.at(-1)?.id, limit: 100 });
 ```

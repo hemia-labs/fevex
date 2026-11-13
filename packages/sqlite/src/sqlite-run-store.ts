@@ -1,4 +1,10 @@
-import { validateListEventsOptions, validatePurgeRunsOptions } from '@fevex/core/runtime';
+import {
+  decodeRunCursor,
+  encodeRunCursor,
+  validateListEventsOptions,
+  validateListRunsOptions,
+  validatePurgeRunsOptions,
+} from '@fevex/core/runtime';
 import { FevexRunError, type AgentEvent, type RunId } from '@fevex/core';
 import type {
   AgentRun,
@@ -6,9 +12,12 @@ import type {
   ExecutionCommit,
   ExecutionCreate,
   ListEventsOptions,
+  ListRunsOptions,
   PurgeRunsOptions,
   PurgeRunsResult,
   RetainableRunStore,
+  RunCatalog,
+  RunPage,
   RunRecord,
   RunCheckpoint,
   RunLease,
@@ -23,7 +32,7 @@ import {
   type SQLiteDatabase,
 } from './database';
 
-export interface SQLiteRunStore extends DurableRunStore, RetainableRunStore {
+export interface SQLiteRunStore extends DurableRunStore, RetainableRunStore, RunCatalog {
   close(): Promise<void>;
 }
 
@@ -71,6 +80,37 @@ class LocalSQLiteRunStore implements SQLiteRunStore {
          revision = excluded.revision,
          data = excluded.data`,
     ).run(run.id, run.sessionId, run.revision, json(run));
+  }
+
+  async listRuns(options: ListRunsOptions = {}): Promise<RunPage> {
+    const { limit, status, cursor } = validateListRunsOptions(options);
+    const after = cursor === undefined ? undefined : decodeRunCursor(cursor);
+    const conditions: string[] = [];
+    const values: Array<string | number> = [];
+    if (status !== undefined) {
+      conditions.push("json_extract(data, '$.status') = ?");
+      values.push(status);
+    }
+    if (after !== undefined) {
+      conditions.push(
+        "(json_extract(data, '$.createdAt') < ? OR "
+        + "(json_extract(data, '$.createdAt') = ? AND id < ?))",
+      );
+      values.push(after.createdAt, after.createdAt, after.id);
+    }
+    const where = conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`;
+    values.push(limit + 1);
+    const rows = this.#database.prepare(
+      `SELECT data FROM runs ${where}
+       ORDER BY json_extract(data, '$.createdAt') DESC, id DESC
+       LIMIT ?`,
+    ).all(...values) as Array<{ data: string }>;
+    const runs = rows.map(({ data }) => parse<RunRecord>(data));
+    const page = runs.slice(0, limit);
+    return {
+      runs: page,
+      ...(runs.length > limit ? { next: encodeRunCursor(page[page.length - 1]!) } : {}),
+    };
   }
 
   async getSession(sessionId: SessionId): Promise<Session | undefined> {

@@ -44,6 +44,7 @@ export default defineConfig({
             { label: 'Install', slug: 'docs/install' },
             { label: 'Quickstart', slug: 'docs/quickstart' },
             { label: 'Templates & debugging', slug: 'docs/development' },
+            { label: 'Local Studio', slug: 'docs/studio' },
           ],
         },
         {

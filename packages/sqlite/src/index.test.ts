@@ -13,7 +13,7 @@ import {
   type ModelGateway,
 } from '@fevex/core';
 import type { WorkflowCheckpoint } from '@fevex/core/runtime';
-import { testRetentionStore, testRunStore } from '@fevex/core/testing';
+import { testRetentionStore, testRunCatalog, testRunStore } from '@fevex/core/testing';
 import { createSQLiteRunStore, type SQLiteRunStore } from './index';
 
 const toolCall = {
@@ -87,6 +87,7 @@ describe('SQLiteRunStore', () => {
     try {
       await testRunStore(store);
       await testRetentionStore(store);
+      await testRunCatalog(store);
     } finally {
       await store.close();
       await store.close();

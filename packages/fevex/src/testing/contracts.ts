@@ -7,7 +7,7 @@ import type {
 } from '../channels';
 import type { JsonObject, JsonValue, ToolCall } from '../core';
 import type { MemoryStore } from '../knowledge';
-import { isRetainableRunStore } from '../runtime';
+import { isRetainableRunStore, type RunCatalog } from '../runtime';
 import { IntegrationError, type ToolProvider } from '../tools';
 import type {
   AgentRun,
@@ -337,6 +337,69 @@ async function collectModelResult(
     const next = await stream.next();
     if (next.done) return next.value;
   }
+}
+
+export async function testRunCatalog(store: RunCatalog): Promise<void> {
+  const suffix = crypto.randomUUID();
+  const base = Date.parse('2100-01-01T00:00:00.000Z');
+  const create = (index: number, status: AgentRun['status'] = 'completed'): AgentRun => ({
+    id: `contract-list-${suffix}-${index}`,
+    sessionId: `contract-list-session-${suffix}-${index}`,
+    agentName: 'list-agent',
+    status,
+    revision: 1,
+    createdAt: new Date(base + index * 1_000).toISOString(),
+    updatedAt: new Date(base + index * 1_000).toISOString(),
+  });
+
+  const runs = [create(2), create(0), create(4, 'paused'), create(1), create(3)];
+  for (const run of runs) {
+    await store.saveSession({
+      id: run.sessionId,
+      history: [],
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    });
+    await store.saveRun(run);
+  }
+
+  const first = await store.listRuns({ limit: 2 });
+  assert(
+    first.runs.map(({ id }) => id).join(',')
+      === [runs[2]!.id, runs[4]!.id].join(','),
+    'RunCatalog must list newest runs first',
+  );
+  assert(first.next !== undefined, 'RunCatalog must return a cursor when more runs exist');
+
+  const collected = first.runs.map(({ id }) => id);
+  let cursor: string | undefined = first.next;
+  for (let pageCount = 0; cursor !== undefined && pageCount < 100; pageCount += 1) {
+    const page = await store.listRuns({ limit: 2, cursor });
+    collected.push(...page.runs.map(({ id }) => id));
+    cursor = page.next;
+  }
+  const ours = collected.filter((id) => id.includes(suffix));
+  assert(
+    ours.join(',')
+      === [runs[2]!, runs[4]!, runs[0]!, runs[3]!, runs[1]!].map(({ id }) => id).join(','),
+    'RunCatalog must paginate without duplicates or omissions',
+  );
+
+  const paused = await store.listRuns({ status: 'paused' });
+  assert(
+    paused.runs.length === 1 && paused.runs[0]!.id === runs[2]!.id,
+    'RunCatalog must filter by status',
+  );
+
+  await assertRejects(
+    () => store.listRuns({ limit: 0 }),
+    'RunCatalog must validate limits',
+  );
+  await assertRejects(
+    () => store.listRuns({ cursor: 'not-a-cursor' }),
+    'RunCatalog must reject invalid cursors with INVALID_CURSOR',
+    'INVALID_CURSOR',
+  );
 }
 
 export async function testRunStore(store: DurableRunStore): Promise<void> {

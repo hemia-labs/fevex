@@ -14,6 +14,7 @@ import type {
   ToolSearchCheckpointOptions,
   ToolSearchOptions,
 } from '../agents';
+import { FevexRunError } from '../run-error';
 
 /** Stable identifier for conversation history shared across runs. */
 export type SessionId = string;
@@ -229,6 +230,81 @@ export function validateListEventsOptions(options: ListEventsOptions): void {
   if (options.order !== undefined && options.order !== 'asc' && options.order !== 'desc') {
     throw new TypeError('Event order must be asc or desc');
   }
+}
+
+export interface ListRunsOptions {
+  /** Maximum results per page. Defaults to 50 and cannot exceed 200. */
+  limit?: number;
+  /** Run status filter. */
+  status?: RunStatus;
+  /** Opaque cursor returned as `RunPage.next` by the previous call. */
+  cursor?: string;
+}
+
+export interface RunPage {
+  /** Newest runs first. */
+  runs: RunRecord[];
+  /** Cursor for the next page. Absent on the last page. */
+  next?: string;
+}
+
+/** Optional capability for stores that can enumerate runs. */
+export interface RunCatalog extends RunStore {
+  listRuns(options?: ListRunsOptions): Promise<RunPage>;
+}
+
+export function isRunCatalog(store: RunStore): store is RunCatalog {
+  return typeof (store as Partial<RunCatalog>).listRuns === 'function';
+}
+
+export const RUN_LIST_DEFAULT_LIMIT = 50;
+export const RUN_LIST_MAX_LIMIT = 200;
+
+export function validateListRunsOptions(options: ListRunsOptions = {}): {
+  limit: number;
+  status?: RunStatus;
+  cursor?: string;
+} {
+  const limit = options.limit ?? RUN_LIST_DEFAULT_LIMIT;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > RUN_LIST_MAX_LIMIT) {
+    throw new TypeError(`Run list limit must be an integer between 1 and ${RUN_LIST_MAX_LIMIT}`);
+  }
+  const status = options.status;
+  if (
+    status !== undefined &&
+    status !== 'running' &&
+    status !== 'paused' &&
+    status !== 'completed' &&
+    status !== 'failed' &&
+    status !== 'cancelled'
+  ) {
+    throw new TypeError('Run list status must be a valid run status');
+  }
+  const cursor = options.cursor;
+  if (cursor !== undefined) decodeRunCursor(cursor);
+  return {
+    limit,
+    ...(status === undefined ? {} : { status }),
+    ...(cursor === undefined ? {} : { cursor }),
+  };
+}
+
+/**
+ * Cursor ordering is `createdAt` descending with the run id as a tie-breaker.
+ * The separator cannot appear in an ISO timestamp or a UUID.
+ */
+export function encodeRunCursor(run: Pick<RunRecord, 'createdAt' | 'id'>): string {
+  return `${run.createdAt}#${run.id}`;
+}
+
+export function decodeRunCursor(cursor: string): { createdAt: string; id: RunId } {
+  const separator = cursor.lastIndexOf('#');
+  const createdAt = separator < 0 ? '' : cursor.slice(0, separator);
+  const id = separator < 0 ? '' : cursor.slice(separator + 1);
+  if (!createdAt || !id || Number.isNaN(Date.parse(createdAt))) {
+    throw new FevexRunError('INVALID_CURSOR', 'Invalid run list cursor');
+  }
+  return { createdAt: new Date(createdAt).toISOString(), id };
 }
 
 export type RetainableRunStatus = 'completed' | 'failed' | 'cancelled';

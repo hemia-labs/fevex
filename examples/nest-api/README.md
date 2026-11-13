@@ -37,6 +37,14 @@ Start the UI separately with `bun run dev:next` and open
 `http://localhost:3000`. `NEXT_PUBLIC_NEST_API_URL` defaults to
 `http://localhost:3001`.
 
+For run diagnostics, start the local Studio with `bun run dev:studio` and open
+`http://localhost:3002`. It lists runs, follows events, shows tool failures and
+resolves approvals through the same public API. See [Studio](../studio/).
+
+The host also serves `GET /v1/runs` with `limit`, `status` and cursor pagination.
+Listing requires a run store that implements `RunCatalog`; the SQLite store used
+here supports it.
+
 ## Capability demos
 
 The API exposes independent agents for the optional capabilities:

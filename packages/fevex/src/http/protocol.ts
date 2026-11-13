@@ -4,6 +4,8 @@ import type { Fevex } from '../fevex';
 import type { ReasoningEffort } from '../models';
 import type {
   AgentRun,
+  ListRunsOptions,
+  RunPage,
   RunRecord,
   SessionId,
   TeamRun,
@@ -89,6 +91,7 @@ export interface FevexHttpHandlerOptions {
   /**
    * Authorizes a resource operation before the handler reads or mutates a run,
    * or starts a run (new or existing session). Return false for a 403 response.
+   * For `GET /v1/runs`, false filters that run out of the page.
    * Omit to preserve the host's existing trusted-network behavior.
    */
   authorize?: (access: FevexHttpAccess) => boolean | Promise<boolean>;
@@ -155,6 +158,7 @@ export interface FevexHttpClient {
     request: StartRunHttpRequest<TInput>,
   ): Promise<TeamRun<TOutput>>;
   getRun<TOutput = JsonValue>(runId: string): Promise<RunRecord<TOutput>>;
+  listRuns(options?: ListRunsOptions): Promise<RunPage>;
   observeRun(runId: string, options?: ObserveRunOptions): AsyncIterable<AgentEvent>;
   resumeRun<TOutput = JsonValue>(
     runId: string,

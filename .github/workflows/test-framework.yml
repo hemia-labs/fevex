@@ -151,6 +151,9 @@ jobs:
       - run: bun test examples/research/evaluation.test.ts
       - run: bun run --cwd examples/next-playground typecheck
       - run: bun run --cwd examples/next-playground test
+      - run: bun run --cwd examples/studio typecheck
+      - run: bun run --cwd examples/studio test
+      - run: bun run --cwd examples/studio build
       - run: bun run --cwd examples/slack typecheck
       # The Docker example is a manual integration check. Version PRs contain
       # unpublished package versions, so tarball installation cannot resolve
