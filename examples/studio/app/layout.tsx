@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Geist, Geist_Mono } from 'next/font/google';
+import { AppShell } from '@/components/app-shell';
 import './globals.css';
 
 const geistSans = Geist({
@@ -21,7 +22,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html className={`${geistSans.variable} ${geistMono.variable}`} lang="es">
-      <body>{children}</body>
+      <body>
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { AgentEvent, RunRecord } from '@fevex/core';
 import type { ApprovalRequest } from '@fevex/core/runtime';
@@ -22,7 +21,6 @@ import {
 } from '@/lib/format';
 import { createStudioClient } from '@/lib/studio-api';
 import { StatusBadge } from './status-badge';
-import { StudioHeader } from './studio-header';
 
 type StreamState = 'connecting' | 'live' | 'closed' | 'error';
 
@@ -71,9 +69,9 @@ export function RunDetail({ runId }: { runId: string }) {
         })) {
           if (!alive) break;
           setStream('live');
-          setEvents((current) => current.some(({ id }) => id === event.id)
-            ? current
-            : [...current, event]);
+          setEvents((current) =>
+            current.some(({ id }) => id === event.id) ? current : [...current, event],
+          );
         }
         if (alive) setStream('closed');
       } catch (error) {
@@ -125,211 +123,243 @@ export function RunDetail({ runId }: { runId: string }) {
   };
 
   return (
-    <>
-      <StudioHeader>
-        <Link className="button button-ghost" href="/">← Runs</Link>
-      </StudioHeader>
-      <main className="page">
-        {(loadError || streamError) && (
-          <div className="banner banner-danger" role="alert">
-            <strong>Error de conexión.</strong>
-            <p>{loadError ?? streamError}</p>
-          </div>
-        )}
+    <main className="page">
+      {(loadError || streamError) && (
+        <div className="banner banner-danger" role="alert">
+          <strong>Error de conexión.</strong>
+          <p>{loadError ?? streamError}</p>
+        </div>
+      )}
 
-        {!run ? (
-          <section className="panel empty">
-            <span className="spinner" aria-hidden="true" />
-            <p className="muted">Cargando run…</p>
-          </section>
-        ) : (
-          <>
-            <section className="detail-heading">
-              <div>
-                <p className="eyebrow">
-                  {runKindLabel(runKind(run))} · <code>{shortId(run.id)}</code>
-                </p>
-                <h1>{runName(run)}</h1>
-                <div className="heading-meta">
-                  <StatusBadge status={run.status} />
-                  <span className="muted">
-                    creado {formatDateTime(run.createdAt)}
-                  </span>
-                </div>
+      {!run ? (
+        <section className="panel empty">
+          <span className="spinner" aria-hidden="true" />
+          <p className="muted">Cargando run…</p>
+        </section>
+      ) : (
+        <>
+          <section className="detail-heading">
+            <div>
+              <p className="eyebrow">{runKindLabel(runKind(run))}</p>
+              <h1>{runName(run)}</h1>
+              <div className="heading-meta">
+                <StatusBadge status={run.status} />
+                <span className="muted">creado {formatDateTime(run.createdAt)}</span>
               </div>
-              <div className="heading-actions">
+            </div>
+            <div className="heading-actions">
+              <button
+                className="button"
+                disabled={cancelling}
+                onClick={() => setReloadKey((value) => value + 1)}
+                type="button"
+              >
+                {cancelling ? 'Cancelando…' : 'Recargar'}
+              </button>
+              {active && (
                 <button
-                  className="button"
+                  className="button button-danger"
                   disabled={cancelling}
-                  onClick={() => setReloadKey((value) => value + 1)}
+                  onClick={() => void cancel()}
                   type="button"
                 >
-                  {cancelling ? 'Cancelando…' : 'Recargar'}
+                  {cancelling ? 'Cancelando…' : 'Cancelar run'}
                 </button>
-                {active && (
-                  <button
-                    className="button button-danger"
-                    disabled={cancelling}
-                    onClick={() => void cancel()}
-                    type="button"
-                  >
-                    {cancelling ? 'Cancelando…' : 'Cancelar run'}
-                  </button>
-                )}
-              </div>
-            </section>
+              )}
+            </div>
+          </section>
 
-            <div className="detail-grid">
-              <div className="detail-main">
-                <section className="panel">
-                  <div className="panel-heading">
-                    <h2>Resultado</h2>
-                    <span className="muted mono">
-                      {formatDuration(durationMs(run))}
+          <div className="detail-grid">
+            <div className="detail-main">
+              <section className="panel">
+                <div className="panel-heading">
+                  <h2>Resultado</h2>
+                  <span className="muted mono">{formatDuration(durationMs(run))}</span>
+                </div>
+                {run.error ? (
+                  <pre className="output output-danger">{run.error}</pre>
+                ) : run.output !== undefined ? (
+                  <pre className="output">{formatOutput(run.output)}</pre>
+                ) : (
+                  <p className="muted">
+                    {run.status === 'running'
+                      ? 'El run sigue ejecutándose.'
+                      : run.status === 'paused'
+                        ? 'El run está pausado y todavía no tiene output.'
+                        : 'Sin output registrado.'}
+                  </p>
+                )}
+                {signals.failures.length > 0 && (
+                  <div className="failures">
+                    {signals.failures.map((failure) => (
+                      <div className="failure" key={failure.id}>
+                        <strong>{failure.source}</strong>
+                        <p>{failure.message}</p>
+                        {failure.code && <code>{failure.code}</code>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="panel">
+                <div className="panel-heading">
+                  <h2>Timeline</h2>
+                  <div className="panel-meta">
+                    <StreamBadge state={stream} />
+                    <span className="muted">{events.length} eventos</span>
+                  </div>
+                </div>
+                {timeline.length === 0 ? (
+                  <p className="muted">
+                    {stream === 'connecting'
+                      ? 'Conectando al stream de eventos…'
+                      : 'Todavía no hay eventos.'}
+                  </p>
+                ) : (
+                  <div className="timeline">
+                    {timeline.map((entry) => (
+                      <TimelineRow entry={entry} key={entry.id} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <aside className="detail-side">
+              {approval && (
+                <section className="panel approval-panel">
+                  <div className="approval-title">
+                    <p className="eyebrow">Aprobación pendiente</p>
+                    <span className="badge tone-warning">
+                      <span className="badge-dot" aria-hidden="true" />
+                      Pendiente
                     </span>
                   </div>
-                  {run.error ? (
-                    <pre className="output output-danger">{run.error}</pre>
-                  ) : run.output !== undefined ? (
-                    <pre className="output">{formatOutput(run.output)}</pre>
-                  ) : (
-                    <p className="muted">
-                      {run.status === 'running'
-                        ? 'El run sigue ejecutándose.'
-                        : run.status === 'paused'
-                          ? 'El run está pausado y todavía no tiene output.'
-                          : 'Sin output registrado.'}
-                    </p>
-                  )}
-                  {signals.failures.length > 0 && (
-                    <div className="failures">
-                      {signals.failures.map((failure) => (
-                        <div className="failure" key={failure.id}>
-                          <strong>{failure.source}</strong>
-                          <p>{failure.message}</p>
-                          {failure.code && <code>{failure.code}</code>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section className="panel">
-                  <div className="panel-heading">
-                    <h2>Timeline</h2>
-                    <div className="panel-meta">
-                      <StreamBadge state={stream} />
-                      <span className="muted">{events.length} eventos</span>
-                    </div>
-                  </div>
-                  {timeline.length === 0 ? (
-                    <p className="muted">
-                      {stream === 'connecting'
-                        ? 'Conectando al stream de eventos…'
-                        : 'Todavía no hay eventos.'}
-                    </p>
-                  ) : (
-                    <div className="timeline">
-                      {timeline.map((entry) => (
-                        <TimelineRow entry={entry} key={entry.id} />
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
-
-              <aside className="detail-side">
-                {approval && (
-                  <section className="panel approval-panel">
-                    <div className="approval-title">
-                      <p className="eyebrow">Aprobación pendiente</p>
-                      <span className="badge tone-warning">
-                        <span className="badge-dot" aria-hidden="true" />
-                        Pendiente
-                      </span>
-                    </div>
-                    <h2>{approval.toolLabel ?? approval.toolName}</h2>
-                    <dl className="kv">
-                      <div><dt>Riesgo</dt><dd>{approval.risk}</dd></div>
-                      <div><dt>Solicitada</dt><dd>{formatRelative(approval.requestedAt)}</dd></div>
-                      <div><dt>Approval</dt><dd className="mono">{shortId(approval.id)}</dd></div>
-                    </dl>
-                    <pre className="payload">{formatJson(approval.input)}</pre>
-                    <div className="approval-actions">
-                      <button
-                        className="button button-primary"
-                        disabled={deciding !== undefined}
-                        onClick={() => void decide('approve')}
-                        type="button"
-                      >
-                        {deciding === 'approve' ? 'Aprobando…' : 'Aprobar'}
-                      </button>
-                      <button
-                        className="button button-danger"
-                        disabled={deciding !== undefined}
-                        onClick={() => void decide('reject')}
-                        type="button"
-                      >
-                        {deciding === 'reject' ? 'Rechazando…' : 'Rechazar'}
-                      </button>
-                    </div>
-                  </section>
-                )}
-
-                {run.pause && !approval && <PausePanel run={run} />}
-
-                <section className="panel">
-                  <h2>Run</h2>
+                  <h2>{approval.toolLabel ?? approval.toolName}</h2>
                   <dl className="kv">
-                    <div><dt>Estado</dt><dd>{statusLabel(run.status)}</dd></div>
-                    <div><dt>Tipo</dt><dd>{runKindLabel(runKind(run))}</dd></div>
-                    {runModel(run) && <div><dt>Modelo</dt><dd>{runModel(run)}</dd></div>}
-                    <div><dt>Session</dt><dd className="mono">{shortId(run.sessionId)}</dd></div>
-                    <div><dt>Creado</dt><dd>{formatDateTime(run.createdAt)}</dd></div>
-                    <div><dt>Actualizado</dt><dd>{formatDateTime(run.updatedAt)}</dd></div>
-                    <div><dt>Run ID</dt><dd className="mono wrap">{run.id}</dd></div>
+                    <div>
+                      <dt>Riesgo</dt>
+                      <dd>{approval.risk}</dd>
+                    </div>
+                    <div>
+                      <dt>Solicitada</dt>
+                      <dd>{formatRelative(approval.requestedAt)}</dd>
+                    </div>
+                    <div>
+                      <dt>Approval</dt>
+                      <dd className="mono">{shortId(approval.id)}</dd>
+                    </div>
                   </dl>
-                  {run.usage && (
-                    <>
-                      <h3>Tokens</h3>
-                      <dl className="kv">
-                        <div><dt>Entrada</dt><dd>{formatNumber(run.usage.inputTokens)}</dd></div>
-                        <div><dt>Salida</dt><dd>{formatNumber(run.usage.outputTokens)}</dd></div>
-                        <div><dt>Total</dt><dd>{formatNumber(run.usage.totalTokens)}</dd></div>
-                      </dl>
-                    </>
-                  )}
+                  <pre className="payload">{formatJson(approval.input)}</pre>
+                  <div className="approval-actions">
+                    <button
+                      className="button button-primary"
+                      disabled={deciding !== undefined}
+                      onClick={() => void decide('approve')}
+                      type="button"
+                    >
+                      {deciding === 'approve' ? 'Aprobando…' : 'Aprobar'}
+                    </button>
+                    <button
+                      className="button button-danger"
+                      disabled={deciding !== undefined}
+                      onClick={() => void decide('reject')}
+                      type="button"
+                    >
+                      {deciding === 'reject' ? 'Rechazando…' : 'Rechazar'}
+                    </button>
+                  </div>
                 </section>
+              )}
 
-                <section className="panel">
-                  <h2>Tools</h2>
-                  {signals.tools.length === 0 ? (
-                    <p className="muted">Sin tools en este run.</p>
-                  ) : (
-                    <ul className="tool-list">
-                      {signals.tools.map((tool) => (
-                        <li key={tool.id}>
-                          <span className={`tool-status tone-${tool.status === 'failed' ? 'danger' : tool.status === 'completed' ? 'success' : tool.status === 'retrying' ? 'warning' : 'info'}`} />
-                          <div>
-                            <strong>{tool.name}</strong>
-                            <small className="muted">
-                              {tool.status}
-                              {tool.attempt ? ` · intento ${tool.attempt}` : ''}
-                              {tool.source ? ` · ${tool.source}` : ''}
-                            </small>
-                            {tool.error && <p className="muted">{tool.error}</p>}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+              {run.pause && !approval && <PausePanel run={run} />}
+
+              <section className="panel">
+                <h2>Run</h2>
+                <dl className="kv">
+                  <div>
+                    <dt>Estado</dt>
+                    <dd>{statusLabel(run.status)}</dd>
+                  </div>
+                  <div>
+                    <dt>Tipo</dt>
+                    <dd>{runKindLabel(runKind(run))}</dd>
+                  </div>
+                  {runModel(run) && (
+                    <div>
+                      <dt>Modelo</dt>
+                      <dd>{runModel(run)}</dd>
+                    </div>
                   )}
-                </section>
-              </aside>
-            </div>
-          </>
-        )}
-      </main>
-    </>
+                  <div>
+                    <dt>Session</dt>
+                    <dd className="mono">{shortId(run.sessionId)}</dd>
+                  </div>
+                  <div>
+                    <dt>Creado</dt>
+                    <dd>{formatDateTime(run.createdAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Actualizado</dt>
+                    <dd>{formatDateTime(run.updatedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd className="mono wrap">{run.id}</dd>
+                  </div>
+                </dl>
+                {run.usage && (
+                  <>
+                    <h3>Tokens</h3>
+                    <dl className="kv">
+                      <div>
+                        <dt>Entrada</dt>
+                        <dd>{formatNumber(run.usage.inputTokens)}</dd>
+                      </div>
+                      <div>
+                        <dt>Salida</dt>
+                        <dd>{formatNumber(run.usage.outputTokens)}</dd>
+                      </div>
+                      <div>
+                        <dt>Total</dt>
+                        <dd>{formatNumber(run.usage.totalTokens)}</dd>
+                      </div>
+                    </dl>
+                  </>
+                )}
+              </section>
+
+              <section className="panel">
+                <h2>Tools</h2>
+                {signals.tools.length === 0 ? (
+                  <p className="muted">Sin tools en este run.</p>
+                ) : (
+                  <ul className="tool-list">
+                    {signals.tools.map((tool) => (
+                      <li key={tool.id}>
+                        <span
+                          className={`tool-status tone-${tool.status === 'failed' ? 'danger' : tool.status === 'completed' ? 'success' : tool.status === 'retrying' ? 'warning' : 'info'}`}
+                        />
+                        <div>
+                          <strong>{tool.name}</strong>
+                          <small className="muted">
+                            {tool.status}
+                            {tool.attempt ? ` · intento ${tool.attempt}` : ''}
+                            {tool.source ? ` · ${tool.source}` : ''}
+                          </small>
+                          {tool.error && <p className="muted">{tool.error}</p>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </aside>
+          </div>
+        </>
+      )}
+    </main>
   );
 }
 
@@ -412,7 +442,7 @@ function PausePanel({ run }: { run: RunRecord }) {
   })();
 
   return (
-    <section className="panel">
+    <section className="panel pause-panel">
       <p className="eyebrow">Pausa</p>
       <h2>{content.title}</h2>
       <p className="muted">{content.body}</p>
