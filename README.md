@@ -1,3 +1,39 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/fevex-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/fevex-logo-light.svg">
+    <img src=".github/assets/fevex-logo-light.svg" alt="FEVEX" width="560">
+  </picture>
+</p>
+
+<p align="center">Agent Engineering Framework</p>
+
+<p align="center"><strong>Agents built for production.</strong></p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@fevex/core">
+    <img src="https://img.shields.io/npm/v/%40fevex%2Fcore?style=flat&amp;label=npm&amp;color=B92432&amp;labelColor=34373D&amp;logo=npm&amp;logoColor=F3F0E8" alt="npm version">
+  </a>
+  <a href="https://github.com/hemia-labs/fevex/actions/workflows/test-framework.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/hemia-labs/fevex/test-framework.yml?style=flat&amp;label=CI&amp;labelColor=34373D" alt="Framework validation status">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/hemia-labs/fevex?style=flat&amp;label=license&amp;color=34373D&amp;labelColor=34373D" alt="License: Apache-2.0">
+  </a>
+  <a href="https://www.npmjs.com/package/@fevex/core">
+    <img src="https://img.shields.io/node/v/%40fevex%2Fcore?style=flat&amp;label=Node.js&amp;color=34373D&amp;labelColor=34373D&amp;logo=nodedotjs&amp;logoColor=F3F0E8" alt="Supported Node.js versions">
+  </a>
+  <a href="https://fevex.dev/docs/">
+    <img src="https://img.shields.io/badge/TypeScript-typed-34373D?style=flat&amp;labelColor=34373D&amp;logo=typescript&amp;logoColor=F3F0E8" alt="TypeScript: typed">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://fevex.dev/docs/">Docs</a> ·
+  <a href="#install">Quick start</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
 # Fevex
 
 Agent Engineering Framework for code-first, provider-neutral AI agents in
