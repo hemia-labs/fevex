@@ -1,3 +1,21 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/fevex-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/fevex-logo-light.svg">
+    <img src=".github/assets/fevex-logo-light.svg" alt="FEVEX" width="560">
+  </picture>
+</p>
+
+<p align="center">Agent Engineering Framework</p>
+
+<p align="center"><strong>Agents built for production.</strong></p>
+
+<p align="center">
+  <a href="https://fevex.dev/docs/">Docs</a> ·
+  <a href="#install">Quick start</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
 # Fevex
 
 Agent Engineering Framework for code-first, provider-neutral AI agents in
