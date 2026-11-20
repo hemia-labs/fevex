@@ -1,5 +1,12 @@
 # @fevex/postgres
 
+## 0.1.0-alpha.15
+
+### Patch Changes
+
+- Updated dependencies [12e2da8]
+  - @fevex/core@0.1.0-alpha.16
+
 ## 0.1.0-alpha.14
 
 ### Patch Changes

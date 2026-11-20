@@ -1,5 +1,12 @@
 # @fevex/mcp
 
+## 0.1.0-alpha.18
+
+### Patch Changes
+
+- Updated dependencies [12e2da8]
+  - @fevex/core@0.1.0-alpha.16
+
 ## 0.1.0-alpha.17
 
 ### Patch Changes
