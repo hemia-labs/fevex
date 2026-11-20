@@ -12,7 +12,7 @@ import { defineTool } from './tools';
 import { fakeModel } from './testing';
 
 const alice: ExecutionContext = {
-  actor: { id: 'alice' },
+  identity: { actor: { id: 'alice' }, scopes: [] },
   attributes: { tenantId: 'tenant-a' },
 };
 

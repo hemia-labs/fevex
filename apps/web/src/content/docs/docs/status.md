@@ -63,6 +63,9 @@ checkpoint, upgrade and support guarantees.
 - Local [Studio](/docs/studio/) for runs, event timelines, tool activity and
   approvals, backed only by the public HTTP API and the new `GET /v1/runs`
   listing.
+- Agent identity contract with actor, agent, tenant and scopes, delegated
+  scope narrowing, identity expiry and credential binding. OAuth PKCE and
+  refresh/revocation are still planned.
 
 The default run store is in memory. Use a [persistent store](/docs/adapters/)
 to retain runs and sessions across process restarts. [Workflow recovery](/docs/workflows/#recovery)
@@ -73,6 +76,7 @@ is explicit: applications provide their own recovery worker and timer scheduler.
 | Area | Status | Direction |
 | --- | --- | --- |
 | Sandbox isolation | Available | Docker provider with per-run containers and workspaces; E2B and snapshots remain future work. |
+| Agent identity | In progress | Actor, agent, tenant, scopes, delegation and credential binding are available; OAuth PKCE, refresh/revocation and audit events remain. |
 | Messaging channels | Available (repo-only) | Slack adapter, SQLite delivery store and playground MCP agent are validated with fixtures and a real OpenAI model; a real Slack workspace test and a Postgres channel store remain deferred. Discord, Teams, WhatsApp, and Telegram are future work. |
 | Developer experience | In progress | Adaptable templates, repository inspection, shared research/evals and a local Studio for runs, tools and approvals are available; prompts, evals and replay in Studio plus builder contracts remain open. |
 | Agent builder ecosystem | Planned | Templates, catalogs, and products built on top of the FEVEX runtime. |

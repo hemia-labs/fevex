@@ -7,20 +7,28 @@ import type { FevexHttpHandler } from '@fevex/core/http';
 import { DemoAuthorization, resolveDemoContext } from './authorization';
 import { createDemoHttpHandler } from './fevex.service';
 
-const alice = { actor: { id: 'alice' }, attributes: { tenantId: 'tenant-a' } };
-const bob = { actor: { id: 'bob' }, attributes: { tenantId: 'tenant-b' } };
+const alice = {
+  identity: { actor: { id: 'alice' }, scopes: [] },
+  attributes: { tenantId: 'tenant-a' },
+};
+const bob = {
+  identity: { actor: { id: 'bob' }, scopes: [] },
+  attributes: { tenantId: 'tenant-b' },
+};
 
 test('resolves demo bearer tokens and isolates runs and sessions', () => {
   expect(resolveDemoContext('Bearer alice-token')).toMatchObject({
-    actor: { id: 'alice' },
+    identity: { actor: { id: 'alice' }, scopes: [] },
     attributes: { tenantId: 'tenant-a' },
   });
   expect(resolveDemoContext('Bearer bob-token')).toMatchObject({
-    actor: { id: 'bob' },
+    identity: { actor: { id: 'bob' }, scopes: [] },
     attributes: { tenantId: 'tenant-b' },
   });
   expect(resolveDemoContext(undefined)).toBeUndefined();
-  expect(resolveDemoContext(undefined, true)).toMatchObject({ actor: { id: 'demo-user' } });
+  expect(resolveDemoContext(undefined, true)).toMatchObject({
+    identity: { actor: { id: 'demo-user' }, scopes: [] },
+  });
   expect(resolveDemoContext('Bearer unknown')).toBeUndefined();
   expect(resolveDemoContext('Basic alice-token')).toBeUndefined();
 
@@ -61,7 +69,10 @@ test('resolves demo bearer tokens and isolates runs and sessions', () => {
   expect(authorization.authorize({
     action: 'read',
     runId: run.id,
-    context: { actor: { id: 'alice' }, attributes: { tenantId: 'tenant-b' } },
+    context: {
+      identity: { actor: { id: 'alice' }, scopes: [] },
+      attributes: { tenantId: 'tenant-b' },
+    },
   })).toBe(false);
 });
 
@@ -76,7 +87,9 @@ test('does not let a later claim take over a session or an unowned run', () => {
   expect(authorization.authorize({ action: 'read', runId: 'run-2', context: bob })).toBe(false);
   expect(authorization.authorize({ action: 'read', runId: 'run-2', context: alice })).toBe(false);
 
-  authorization.claim({ id: 'run-3', sessionId: 'session-3' }, { actor: { id: 'alice' } });
+  authorization.claim({ id: 'run-3', sessionId: 'session-3' }, {
+    identity: { actor: { id: 'alice' }, scopes: [] },
+  });
   expect(authorization.authorize({ action: 'read', runId: 'run-3', context: alice })).toBe(false);
 });
 
@@ -104,8 +117,14 @@ test('keeps ownership across restarts when a filename is configured', () => {
 
 test('does not collide tenants or actors that contain separators', () => {
   const authorization = new DemoAuthorization();
-  const first = { actor: { id: 'a:b' }, attributes: { tenantId: 'tenant:1' } };
-  const second = { actor: { id: 'a:b' }, attributes: { tenantId: 'tenant:2' } };
+  const first = {
+    identity: { actor: { id: 'a:b' }, scopes: [] },
+    attributes: { tenantId: 'tenant:1' },
+  };
+  const second = {
+    identity: { actor: { id: 'a:b' }, scopes: [] },
+    attributes: { tenantId: 'tenant:2' },
+  };
   authorization.claim({ id: 'run-1', sessionId: 'session-1' }, first);
 
   expect(authorization.authorize({ action: 'read', runId: 'run-1', context: first })).toBe(true);
@@ -141,9 +160,9 @@ test('requires a token unless demo auth is enabled', async () => {
     headers: { authorization: 'Bearer alice-token' },
   }));
   expect(alice.status).toBe(200);
-  expect(seen[0]).toMatchObject({ actor: { id: 'alice' } });
+  expect(seen[0]).toMatchObject({ identity: { actor: { id: 'alice' }, scopes: [] } });
 
   const demo = createDemoHttpHandler(handler, () => true);
   expect((await demo(new Request('http://local/v1/agents/assistant/runs'))).status).toBe(200);
-  expect(seen[1]).toMatchObject({ actor: { id: 'demo-user' } });
+  expect(seen[1]).toMatchObject({ identity: { actor: { id: 'demo-user' }, scopes: [] } });
 });

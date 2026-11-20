@@ -1,5 +1,7 @@
 import type {
+  Actor,
   AgentEvent,
+  AgentIdentity,
   AgentMessage,
   ExecutionContext,
   JsonObject,
@@ -82,14 +84,14 @@ export interface ApprovalResolution {
   type: 'approval';
   approvalId: string;
   decision: 'approve' | 'reject';
-  actor: { id: string; type?: string };
+  actor: Actor;
 }
 
 export interface ElicitationResolution {
   type: 'elicitation';
   requestId: string;
   value: JsonValue;
-  actor: { id: string; type?: string };
+  actor: Actor;
 }
 
 export type ToolExecutionResolution =
@@ -98,25 +100,25 @@ export type ToolExecutionResolution =
       toolCallId: string;
       decision: 'use_output';
       output: JsonValue;
-      actor: { id: string; type?: string };
+      actor: Actor;
     }
   | {
       type: 'tool_execution';
       toolCallId: string;
       decision: 'retry';
-      actor: { id: string; type?: string };
+      actor: Actor;
     };
 
 export type TimerResolution = {
   type: 'timer';
-  actor?: { id: string; type?: string };
+  actor?: Actor;
 };
 
 export type EventResolution = {
   type: 'event';
   eventName: string;
   payload?: JsonValue;
-  actor?: { id: string; type?: string };
+  actor?: Actor;
 };
 
 export type ResumeRunResolution =
@@ -369,12 +371,30 @@ export interface RunStore {
   listEvents(runId: RunId, options?: ListEventsOptions): Promise<AgentEvent[]>;
 }
 
+export interface CredentialRequest {
+  name: string;
+  namespace?: string;
+  identity?: AgentIdentity;
+}
+
+export interface ResolvedCredential {
+  value: string;
+  /** ISO timestamp after which the credential must not be used. */
+  expiresAt?: string;
+  /** Scopes the credential requires from the execution identity. */
+  scopes?: readonly string[];
+  /** Actor the credential is bound to, when it is user-specific. */
+  actorId?: string;
+  /** Tenant the credential is bound to, when it is tenant-specific. */
+  tenantId?: string;
+}
+
 export interface CredentialStore {
-  resolve(input: {
-    name: string;
-    namespace?: string;
-    actor?: { id: string; type?: string };
-  }): Promise<string | undefined>;
+  resolve(input: CredentialRequest): Promise<ResolvedCredential | undefined>;
+  /** Optional refresh hook used when `resolve` returns an expired credential. */
+  refresh?(input: CredentialRequest): Promise<ResolvedCredential | undefined>;
+  /** Optional revocation hook owned by the host. */
+  revoke?(input: CredentialRequest): Promise<void>;
 }
 
 export interface PendingToolExecution {
@@ -451,7 +471,7 @@ export type WorkflowStepRecord =
       status: 'completed';
       wait: WorkflowWaitRecord;
       payload?: JsonValue;
-      actor?: NonNullable<ExecutionContext['actor']>;
+      actor?: Actor;
       receivedAt?: string;
     };
 

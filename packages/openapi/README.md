@@ -14,7 +14,7 @@ const billing = defineConnection({
   provider: createOpenApiToolProvider({
     document: openApiDocument,
     operations: { allow: ['getInvoice'] },
-    headers: ({ context }) => ({ Authorization: `Bearer ${context?.actor?.id}` }),
+    headers: ({ context }) => ({ Authorization: `Bearer ${context?.identity?.actor?.id}` }),
   }),
   allowlist: ['getInvoice'],
 });

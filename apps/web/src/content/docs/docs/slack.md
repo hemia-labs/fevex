@@ -98,7 +98,7 @@ The adapter maps:
 - `event.thread_ts ?? event.ts` to `threadId` for channel mentions;
 - `event.thread_ts` to `threadId` for threaded DMs, and no `threadId` for
   top-level DMs;
-- `event.user` to `actor`;
+- `event.user` to `identity.actor` with an empty scope set;
 - `team_id`, `channel_type`, event type and `ts` to metadata.
 
 `resolveSessionId` returns an existing Fevex session. The first run creates it;

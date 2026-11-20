@@ -1,4 +1,4 @@
-import type { ExecutionContext, JsonObject } from '../core';
+import type { Actor, JsonObject } from '../core';
 
 /** Stable identifier for a stored artifact. */
 export type ArtifactId = string;
@@ -40,7 +40,7 @@ export interface ArtifactStoreContext {
   tenantId?: string;
   runId?: string;
   sessionId?: string;
-  actor?: ExecutionContext['actor'];
+  actor?: Actor;
   signal?: AbortSignal;
 }
 

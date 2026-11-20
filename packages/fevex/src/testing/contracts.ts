@@ -84,7 +84,7 @@ export async function testMemoryStore(store: MemoryStore): Promise<void> {
     agentName: 'assistant',
     input: 'refund status',
     sessionId,
-    context: { namespace: 'tenant-a', actor },
+    context: { namespace: 'tenant-a', identity: { actor, scopes: [] } },
   };
   const saved = await store.write(
     {
@@ -206,8 +206,8 @@ export async function testChannelAdapter<TInput, TOutput>(
   if (message.threadId !== undefined) {
     assert(message.threadId.trim(), 'ChannelMessage threadId cannot be empty');
   }
-  if (message.actor !== undefined) {
-    assert(message.actor.id.trim(), 'ChannelMessage actor id cannot be empty');
+  if (message.identity !== undefined) {
+    assert(message.identity.actor.id.trim(), 'ChannelMessage identity actor id cannot be empty');
   }
   if (message.metadata !== undefined) {
     JSON.stringify(message.metadata);

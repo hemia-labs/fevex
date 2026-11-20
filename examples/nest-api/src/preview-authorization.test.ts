@@ -13,7 +13,7 @@ afterEach(() => {
 test('requires authentication and ownership for preview streams', async () => {
   const authorization = new DemoAuthorization();
   authorization.claim({ id: 'run-1', sessionId: 'session-1' }, {
-    actor: { id: 'alice' },
+    identity: { actor: { id: 'alice' }, scopes: [] },
     attributes: { tenantId: 'tenant-a' },
   });
   let reads = 0;

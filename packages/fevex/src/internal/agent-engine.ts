@@ -18,6 +18,7 @@ import {
 } from '../knowledge';
 import type { ModelGateway, ModelUsage, ToolChoice } from '../models';
 import { FevexRunError, RunPausedError } from '../run-error';
+import { assertCredentialBinding, assertIdentityActive } from '../identity';
 import {
   isDurableRunStore,
   resolveContextBudget,
@@ -491,7 +492,7 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
               agentName: state.run.agentName,
               sessionId: state.session.id,
               namespace: state.request.context?.namespace,
-              actor: state.request.context?.actor,
+              actor: state.request.context?.identity?.actor,
               metadata: { runId: state.run.id },
             },
             context,
@@ -1531,21 +1532,40 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             attempt += 1;
             const secrets: string[] = [];
             const resolvedCredentials = new Map<string, string>();
+            if (request.context?.identity) assertIdentityActive(request.context.identity);
             for (const credentialName of tool.credentials ?? []) {
-              const value = await credentialStore?.resolve({
+              let credential = await credentialStore?.resolve({
                 name: credentialName,
                 namespace: request.context?.namespace,
-                actor: request.context?.actor,
+                identity: request.context?.identity,
               });
-              if (!value) {
+              if (!credential) {
                 throw new FevexRunError(
                   'CREDENTIAL_NOT_FOUND',
                   `Credential "${credentialName}" was not found`,
                   state.run.id,
                 );
               }
-              resolvedCredentials.set(credentialName, value);
-              secrets.push(value);
+              if (
+                credential.expiresAt !== undefined &&
+                Date.parse(credential.expiresAt) <= Date.now()
+              ) {
+                credential = await credentialStore?.refresh?.({
+                  name: credentialName,
+                  namespace: request.context?.namespace,
+                  identity: request.context?.identity,
+                });
+                if (!credential) {
+                  throw new FevexRunError(
+                    'CREDENTIAL_EXPIRED',
+                    `Credential "${credentialName}" has expired`,
+                    state.run.id,
+                  );
+                }
+              }
+              assertCredentialBinding(request.context?.identity, credential);
+              resolvedCredentials.set(credentialName, credential.value);
+              secrets.push(credential.value);
             }
             const getCredential = async (credentialName: string): Promise<string> => {
               if (!tool.credentials?.includes(credentialName)) {
@@ -2078,11 +2098,9 @@ export function createAgentEngine(composition: FevexComposition, core: RunCore) 
             tool,
             pending.input,
             'approval.resolve',
-            {
-              ...state.request.context,
-              actor: resolution.actor,
-            },
+            state.request.context,
             pending.call.id,
+            resolution.actor,
           );
         }
         if (resolution.decision === 'reject') {
@@ -2339,7 +2357,7 @@ function scopedArtifacts(
   const scopedContext = (value?: ArtifactStoreContext): ArtifactStoreContext => {
     const contextTenant = options.request.context?.attributes?.tenantId;
     const tenantId = typeof contextTenant === 'string' ? contextTenant : value?.tenantId;
-    const actor = options.request.context?.actor;
+    const actor = options.request.context?.identity?.actor;
     return {
       ...value,
       runId: options.runId,

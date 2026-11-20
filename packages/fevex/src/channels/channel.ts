@@ -1,4 +1,4 @@
-import type { AgentEvent, ExecutionContext, JsonObject, RunId } from '../core';
+import type { Actor, AgentIdentity, AgentEvent, JsonObject, RunId } from '../core';
 import type { Fevex } from '../fevex';
 import type { AgentRun, ElicitationRequest, SessionId } from '../runtime';
 
@@ -8,7 +8,7 @@ export interface ChannelMessage {
   conversationId: string;
   threadId?: string;
   content: string;
-  actor?: ExecutionContext['actor'];
+  identity?: AgentIdentity;
   metadata?: JsonObject;
 }
 
@@ -58,7 +58,7 @@ interface ChannelEventBase {
 export type ChannelEvent =
   | (ChannelEventBase & {
       type: 'channel.received';
-      actor?: ExecutionContext['actor'];
+      actor?: Actor;
     })
   | (ChannelEventBase & {
       type: 'channel.delivered';

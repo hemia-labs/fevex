@@ -237,7 +237,7 @@ describe('Fevex HTTP v3', () => {
           actor: { id: 'spoofed' },
         }),
       }),
-      { context: { actor: { id: 'trusted' } } },
+      { context: { identity: { actor: { id: 'trusted' }, scopes: [] } } },
     );
 
     expect(response.status).toBe(202);
@@ -254,7 +254,7 @@ describe('Fevex HTTP v3', () => {
           output: { ok: true },
         }),
       }),
-      { context: { actor: { id: 'trusted' } } },
+      { context: { identity: { actor: { id: 'trusted' }, scopes: [] } } },
     );
     expect(resolution).toMatchObject({
       type: 'tool_execution',
@@ -268,7 +268,7 @@ describe('Fevex HTTP v3', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'timer' }),
       }),
-      { context: { actor: { id: 'trusted' } } },
+      { context: { identity: { actor: { id: 'trusted' }, scopes: [] } } },
     );
     expect(resolution).toMatchObject({ type: 'timer', actor: { id: 'trusted' } });
 
@@ -278,7 +278,7 @@ describe('Fevex HTTP v3', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'event', eventName: 'release', payload: { ok: true } }),
       }),
-      { context: { actor: { id: 'trusted' } } },
+      { context: { identity: { actor: { id: 'trusted' }, scopes: [] } } },
     );
     expect(resolution).toMatchObject({
       type: 'event',
@@ -297,7 +297,7 @@ describe('Fevex HTTP v3', () => {
           value: { accountId: 'account-42' },
         }),
       }),
-      { context: { actor: { id: 'trusted' } } },
+      { context: { identity: { actor: { id: 'trusted' }, scopes: [] } } },
     );
     expect(resolution).toMatchObject({
       type: 'elicitation',
@@ -339,7 +339,7 @@ describe('Fevex HTTP v3', () => {
         method: 'POST',
         headers: { 'x-actor-id': 'spoofed' },
       }),
-      { context: { actor: { id: 'trusted-worker', type: 'service' } } },
+      { context: { identity: { actor: { id: 'trusted-worker', type: 'service' }, scopes: [] } } },
     );
     expect(response.status).toBe(202);
     expect(recoveryActor).toEqual({ id: 'trusted-worker', type: 'service' });

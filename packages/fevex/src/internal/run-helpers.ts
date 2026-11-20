@@ -5,6 +5,7 @@ import { FevexRunError, RunPausedError } from '../run-error';
 import type { AgentRunPause, CoordinatorRun, ResumeRunResolution, RunRecord, TeamRun } from '../runtime';
 import { IntegrationError, validateFevexJsonSchemaProfile, type ToolDefinition } from '../tools';
 import type { FevexComposition } from './configuration';
+import { delegateIdentity } from '../identity';
 import { abortable } from './run-support';
 import { ELICIT_TOOL_NAME } from './runtime-constants';
 
@@ -124,10 +125,13 @@ export function mergeExecutionContext(
 ): ExecutionContext | undefined {
   if (!parent) return child;
   if (!child) return parent;
+  const identity = parent.identity
+    ? delegateIdentity(parent.identity, child.identity)
+    : undefined;
   return {
     ...parent,
     ...child,
-    actor: parent.actor ?? child.actor,
+    ...(identity === undefined ? { identity: undefined } : { identity }),
     ...(parent.attributes || child.attributes
       ? { attributes: { ...parent.attributes, ...child.attributes } }
       : {}),
@@ -166,7 +170,7 @@ export async function readMemoryMessages(
             agentName: context.agentName,
             sessionId: context.sessionId,
             namespace: context.context?.namespace,
-            actor: context.context?.actor,
+            actor: context.context?.identity?.actor,
           },
           context,
         ),

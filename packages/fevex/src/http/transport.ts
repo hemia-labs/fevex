@@ -1,4 +1,4 @@
-import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
+import type { Actor, AgentEvent, ExecutionContext, JsonValue } from '../core';
 import {
   ArtifactError,
   type ArtifactDescriptor,
@@ -45,6 +45,11 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
   'RUNTIME_CLOSED',
   'CREDENTIAL_NOT_FOUND',
   'RUN_LIST_UNSUPPORTED',
+  'IDENTITY_INVALID',
+  'IDENTITY_EXPIRED',
+  'CREDENTIAL_EXPIRED',
+  'CREDENTIAL_SCOPE_DENIED',
+  'CREDENTIAL_IDENTITY_MISMATCH',
   'SANDBOX_REQUIRED',
   'ELICITATION_INVALID',
   'APPROVAL_INVALID',
@@ -218,7 +223,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
       if (resume && request.method === 'POST') {
         const runId = decodeURIComponent(resume[1]!);
         // Authenticate and authorize before revealing whether the run exists.
-        const actor = handlerContext.context?.actor;
+        const actor = handlerContext.context?.identity?.actor;
         if (!actor?.id?.trim()) {
           throw new HttpProtocolError(401, 'ACTOR_REQUIRED', 'Authenticated actor is required');
         }
@@ -232,7 +237,7 @@ export function createFevexHttpHandler(options: FevexHttpHandlerOptions): FevexH
       if (recover && request.method === 'POST') {
         const runId = decodeURIComponent(recover[1]!);
         // Authenticate and authorize before revealing whether the run exists.
-        const actor = handlerContext.context?.actor;
+        const actor = handlerContext.context?.identity?.actor;
         if (!actor?.id?.trim()) {
           throw new HttpProtocolError(401, 'ACTOR_REQUIRED', 'Authenticated actor is required');
         }
@@ -472,7 +477,7 @@ function artifactContext(
   if (tenantId !== undefined && typeof tenantId !== 'string') {
     throw badRequest('tenantId attribute must be a string');
   }
-  const actor = handlerContext.context?.actor;
+  const actor = handlerContext.context?.identity?.actor;
   return {
     ...(typeof tenantId === 'string' ? { tenantId } : {}),
     ...(actor === undefined ? {} : { actor }),
@@ -515,7 +520,7 @@ function contentDisposition(filename: string) {
 
 function readResolution(
   body: Record<string, unknown>,
-  actor: NonNullable<ExecutionContext['actor']>,
+  actor: Actor,
 ): ResumeRunResolution {
   if (
     body.type === 'elicitation' &&
@@ -742,7 +747,10 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
     code === 'SESSION_NOT_FOUND'
   ) return 404;
   if (code === 'APPROVAL_INVALID' || code === 'INVALID_CURSOR') return 400;
-  if (code === 'POLICY_DENIED') return 403;
+  if (code === 'POLICY_DENIED' || code === 'CREDENTIAL_SCOPE_DENIED') return 403;
+  if (code === 'CREDENTIAL_IDENTITY_MISMATCH') return 403;
+  if (code === 'IDENTITY_INVALID') return 400;
+  if (code === 'IDENTITY_EXPIRED' || code === 'CREDENTIAL_EXPIRED') return 401;
   if (code === 'ADMISSION_DENIED') return 429;
   if (code === 'RUNTIME_CLOSED') return 503;
   if (code === 'RUN_LIST_UNSUPPORTED') return 501;

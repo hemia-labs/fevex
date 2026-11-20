@@ -12,11 +12,11 @@ import { fakeModel } from '../testing';
 import { createFevexHttpHandler, createFevexHttpClient, type FevexHttpHandler } from './index';
 
 const alice: ExecutionContext = {
-  actor: { id: 'alice' },
+  identity: { actor: { id: 'alice' }, scopes: [] },
   attributes: { tenantId: 'tenant-a' },
 };
 const bob: ExecutionContext = {
-  actor: { id: 'bob' },
+  identity: { actor: { id: 'bob' }, scopes: [] },
   attributes: { tenantId: 'tenant-b' },
 };
 
@@ -39,7 +39,7 @@ async function fixture() {
     artifacts,
     artifactCatalog: catalog,
     authorizeArtifact(access) {
-      return access.context?.actor?.id === 'alice';
+      return access.context?.identity?.actor?.id === 'alice';
     },
   });
   return { app, descriptor, bytes, artifacts, catalog, handler, result };

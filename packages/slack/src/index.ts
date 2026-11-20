@@ -391,7 +391,7 @@ function parseEnvelope(
     conversationId: event.channel,
     ...(threadId ? { threadId } : {}),
     content,
-    actor: { id: event.user, type: 'user' },
+    identity: { actor: { id: event.user, type: 'user' }, scopes: [] },
     metadata: {
       ...(envelope.team_id ? { teamId: envelope.team_id } : {}),
       ...(event.channel_type ? { channelType: event.channel_type } : {}),
