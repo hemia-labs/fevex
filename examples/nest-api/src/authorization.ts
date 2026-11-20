@@ -4,14 +4,20 @@ import type { ExecutionContext, RunRecord } from '@fevex/core';
 import type { FevexHttpAccess } from '@fevex/core/http';
 
 const DEMO_CONTEXT: ExecutionContext = {
-  actor: { id: 'demo-user' },
+  identity: { actor: { id: 'demo-user' }, scopes: [] },
   attributes: { tenantId: 'demo' },
 };
 
 // ponytail: fixed demo tokens; replace with your identity provider.
 const DEMO_TOKENS = new Map<string, ExecutionContext>([
-  ['alice-token', { actor: { id: 'alice' }, attributes: { tenantId: 'tenant-a' } }],
-  ['bob-token', { actor: { id: 'bob' }, attributes: { tenantId: 'tenant-b' } }],
+  ['alice-token', {
+    identity: { actor: { id: 'alice' }, scopes: [] },
+    attributes: { tenantId: 'tenant-a' },
+  }],
+  ['bob-token', {
+    identity: { actor: { id: 'bob' }, scopes: [] },
+    attributes: { tenantId: 'tenant-b' },
+  }],
 ]);
 
 export function demoAuthEnabled(): boolean {
@@ -106,7 +112,7 @@ export class DemoAuthorization {
 }
 
 function ownerKey(context?: ExecutionContext): string | undefined {
-  const actorId = context?.actor?.id;
+  const actorId = context?.identity?.actor?.id;
   const tenantId = context?.attributes?.tenantId;
   if (!actorId || typeof tenantId !== 'string' || !tenantId) return undefined;
   // Key by tenant and actor. Use the tenant alone if runs are shared within it.

@@ -3,7 +3,7 @@ import type {
   FevexShutdownOptions,
   FevexShutdownResult,
 } from '../fevex';
-import type { AgentEvent } from '../core';
+import type { Actor, AgentEvent } from '../core';
 import { FevexRunError } from '../run-error';
 import {
   isDurableRunStore,
@@ -130,7 +130,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
 
   const recoverRun = async <TOutput>(
     runId: string,
-    actor: { id: string; type?: string },
+    actor: Actor,
   ): Promise<RunRecord<TOutput>> => {
     if (isClosed()) {
       throw new FevexRunError(
@@ -463,7 +463,7 @@ export function createRuntime(composition: FevexComposition): Fevex {
     },
     recoverRun<TOutput = unknown>(
       runId: string,
-      options: { actor: { id: string; type?: string } },
+      options: { actor: Actor },
     ) {
       return recoverRun<TOutput>(runId, options.actor);
     },

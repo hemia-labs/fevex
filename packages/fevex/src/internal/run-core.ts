@@ -1,4 +1,5 @@
 import type {
+  Actor,
   AgentEvent,
   AgentEventPayloads,
   AgentEventType,
@@ -8,6 +9,7 @@ import type {
 import type { ModelMetadata, ModelRef } from '../models';
 import type { PolicyDecision } from '../policies';
 import { FevexRunError } from '../run-error';
+import { assertIdentityActive } from '../identity';
 import {
   isDurableRunStore,
   type AgentRun,
@@ -156,6 +158,17 @@ export function createRunCore({
   ): Promise<() => void> => {
     if (closed) {
       throw new FevexRunError('RUNTIME_CLOSED', 'Runtime is not accepting new runs');
+    }
+    if (request.context?.identity) {
+      try {
+        assertIdentityActive(request.context.identity);
+      } catch (error) {
+        if (error instanceof FevexRunError) throw error;
+        throw new FevexRunError(
+          'IDENTITY_INVALID',
+          error instanceof Error ? error.message : 'Invalid execution identity',
+        );
+      }
     }
     if (!admission) return () => {};
     const running = activeTopLevelRuns() + pendingStarts;
@@ -545,8 +558,10 @@ export function createRunCore({
     action: 'tool.execute' | 'approval.resolve',
     context = state.request.context,
     toolCallId?: string,
+    actionActor?: Actor,
   ): Promise<PolicyDecision> => {
     let approval = false;
+    const actor = actionActor ?? context?.identity?.actor;
     for (const policy of policies) {
       const risk = tool.risk ?? 'read';
       const declaredRisk = tool.risk;
@@ -558,6 +573,7 @@ export function createRunCore({
         ...(declaredRisk === undefined ? {} : { declaredRisk }),
         input,
         action,
+        ...(actor === undefined ? {} : { actor }),
         context,
       });
       await emitEvent(state, 'policy.evaluated', {

@@ -59,6 +59,34 @@ Deprecated public APIs are documented before removal. After 1.0 they remain
 available for at least one minor release. Before 1.0, removal can happen in a
 minor release with migration notes; no fixed deprecation window is guaranteed.
 
+## Agent identity migration
+
+The next alpha removes `ExecutionContext.actor`. Use
+`ExecutionContext.identity.actor` and declare scopes explicitly:
+
+```ts
+// Before
+context: { actor: { id: 'alice' }, attributes: { tenantId: 'tenant-a' } }
+
+// After
+context: {
+  identity: {
+    actor: { id: 'alice' },
+    tenant: 'tenant-a',
+    scopes: [],
+  },
+  attributes: { tenantId: 'tenant-a' },
+}
+```
+
+Channel messages now expose `identity: AgentIdentity` instead of `actor`.
+`CredentialStore.resolve` returns `ResolvedCredential` metadata and receives the
+execution identity. Custom stores must migrate before upgrading.
+
+Checkpoints created before this change store `context.actor` and have no
+identity. Do not resume or recover those runs across the migration; start new
+runs or re-create the checkpoint with an identity.
+
 ## Persisted runs and checkpoints
 
 Run and session storage is owned by the host. FEVEX provides the contracts and

@@ -11,11 +11,11 @@ import {
 } from './index';
 
 const alice: ExecutionContext = {
-  actor: { id: 'alice' },
+  identity: { actor: { id: 'alice' }, scopes: [] },
   attributes: { tenantId: 'tenant-a' },
 };
 const bob: ExecutionContext = {
-  actor: { id: 'bob' },
+  identity: { actor: { id: 'bob' }, scopes: [] },
   attributes: { tenantId: 'tenant-b' },
 };
 
@@ -76,10 +76,10 @@ describe('HTTP resource authorization', () => {
       fevex: app,
       async authorize(value) {
         access.push(value);
-        return value.context?.actor?.id === 'alice';
+        return value.context?.identity?.actor?.id === 'alice';
       },
       onRunStarted(run, context) {
-        started.push({ id: run.id, actor: context?.actor?.id });
+        started.push({ id: run.id, actor: context?.identity?.actor?.id });
       },
     });
 
@@ -172,7 +172,7 @@ describe('HTTP resource authorization', () => {
     const handler = createFevexHttpHandler({
       fevex: app,
       authorize(access) {
-        const actor = access.context?.actor?.id;
+        const actor = access.context?.identity?.actor?.id;
         if (!actor) return false;
         if (access.action === 'start') {
           return !access.sessionId || sessionOwners.get(access.sessionId) === actor;
@@ -180,7 +180,7 @@ describe('HTTP resource authorization', () => {
         return runOwners.get(access.runId) === actor;
       },
       onRunStarted(run, context) {
-        const actor = context?.actor?.id;
+        const actor = context?.identity?.actor?.id;
         if (!actor) return;
         runOwners.set(run.id, actor);
         sessionOwners.set(run.sessionId, actor);

@@ -10,9 +10,24 @@ export const SCHEMA_NOT_TRANSPORTABLE = 'SCHEMA_NOT_TRANSPORTABLE';
 export const PROVIDER_SCHEMA_UNSUPPORTED = 'PROVIDER_SCHEMA_UNSUPPORTED';
 export const PROVIDER_REASONING_UNSUPPORTED = 'PROVIDER_REASONING_UNSUPPORTED';
 
+export interface Actor {
+  id: string;
+  type?: string;
+}
+
+export interface AgentIdentity {
+  actor: Actor;
+  agent?: Actor;
+  tenant?: string;
+  scopes: readonly string[];
+  issuer?: string;
+  audience?: string;
+  expiresAt?: string;
+}
+
 export interface ExecutionContext {
   namespace?: string;
-  actor?: { id: string; type?: string };
+  identity?: AgentIdentity;
   attributes?: JsonObject;
   prompt?: JsonObject;
 }

@@ -172,8 +172,8 @@ returns `{ runId, sessionId, output, usage? }`, without a transient `events`
 field.
 
 Child execution context inherits the workflow context. Namespace, attributes
-and prompt values are merged; an authenticated parent actor cannot be replaced
-by a child. `parallel` waits for every declared task to settle, records durable
+and prompt values are merged; an authenticated parent identity cannot be
+replaced by a child, and child scopes must be a subset of the parent. `parallel` waits for every declared task to settle, records durable
 child successes, reports multiple failures in declaration order and resolves
 multiple pauses one at a time. Arbitrary promises used in `parallel` must be
 pure or replay-safe; side effects belong in durable agent/tool steps.
@@ -646,7 +646,7 @@ const handler = createFevexHttpHandler({
   artifacts: artifactStore,       // FileSystemArtifactStore or S3ArtifactStore
   artifactCatalog: artifactCatalog, // optional; enables listing by run
   authorizeArtifact(access) {
-    return access.context?.actor?.id === 'alice';
+    return access.context?.identity?.actor?.id === 'alice';
   },
 });
 ```

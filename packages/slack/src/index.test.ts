@@ -113,7 +113,7 @@ describe('Slack adapter', () => {
       conversationId: 'C1',
       threadId: '1700000000.000100',
       content: 'hello',
-      actor: { id: 'U1', type: 'user' },
+      identity: { actor: { id: 'U1', type: 'user' }, scopes: [] },
       metadata: {
         teamId: 'T1',
         channelType: 'channel',

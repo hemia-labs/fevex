@@ -1,4 +1,4 @@
-import type { ExecutionContext, JsonObject, JsonValue } from '../core';
+import type { Actor, ExecutionContext, JsonObject, JsonValue } from '../core';
 import type { SessionId } from '../runtime';
 
 /** Runtime context supplied to knowledge providers and memory stores. */
@@ -27,7 +27,7 @@ export interface MemoryQuery {
   agentName?: string;
   sessionId?: SessionId;
   namespace?: string;
-  actor?: ExecutionContext['actor'];
+  actor?: Actor;
 }
 
 export interface MemoryWrite {
@@ -35,7 +35,7 @@ export interface MemoryWrite {
   agentName?: string;
   sessionId?: SessionId;
   namespace?: string;
-  actor?: ExecutionContext['actor'];
+  actor?: Actor;
   metadata?: JsonObject;
 }
 
@@ -125,7 +125,7 @@ export function createMemoryContextProvider(options: {
           agentName: context.agentName,
           sessionId: context.sessionId,
           namespace: context.context?.namespace,
-          actor: context.context?.actor,
+          actor: context.context?.identity?.actor,
         },
         context,
       );

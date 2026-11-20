@@ -108,7 +108,7 @@ describe('createOpenApiToolProvider', () => {
       document,
       operations: { allow: ['createAccount'] },
       headers: (providerContext) => ({
-        authorization: `Bearer ${providerContext?.context?.actor?.id}`,
+        authorization: `Bearer ${providerContext?.context?.identity?.actor?.id}`,
       }),
       fetch: async (url, init) => {
         seen.url = String(url);
@@ -120,7 +120,7 @@ describe('createOpenApiToolProvider', () => {
     });
 
     await expect(provider.callTool('createAccount', { body: { status: 'active' } }, {
-      context: { actor: { id: 'actor-1' } },
+      context: { identity: { actor: { id: 'actor-1' }, scopes: [] } },
     })).resolves.toEqual({ id: 7, status: 'active' });
     expect(seen).toEqual({
       url: 'https://api.test/accounts',

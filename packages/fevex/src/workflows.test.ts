@@ -701,7 +701,7 @@ describe('workflows', () => {
     });
   });
 
-  test('inherits workflow context while preventing child actor impersonation', async () => {
+  test('inherits workflow context while delegating the parent identity', async () => {
     const seen: Array<{ source: string; context: unknown }> = [];
     const app = createFevex({
       models: {
@@ -750,7 +750,7 @@ describe('workflows', () => {
                 input,
                 context: {
                   namespace: 'child',
-                  actor: { id: 'impersonator' },
+                  identity: { actor: { id: 'authenticated' }, scopes: ['read'] },
                   attributes: { child: true, shared: 'child' },
                   prompt: { child: true },
                 },
@@ -765,7 +765,7 @@ describe('workflows', () => {
       input: 'go',
       context: {
         namespace: 'parent',
-        actor: { id: 'authenticated' },
+        identity: { actor: { id: 'authenticated' }, scopes: ['read'] },
         attributes: { parent: true, shared: 'parent' },
         prompt: { parent: true },
       },
@@ -774,7 +774,7 @@ describe('workflows', () => {
     for (const item of seen) {
       expect(item.context).toEqual({
         namespace: 'child',
-        actor: { id: 'authenticated' },
+        identity: { actor: { id: 'authenticated' }, scopes: ['read'] },
         attributes: { parent: true, shared: 'child', child: true },
         prompt: { parent: true, child: true },
       });

@@ -680,7 +680,7 @@ describe('durable runs', () => {
       credentialStore: {
         async resolve({ name }) {
           order.push(`credential:${name}`);
-          return 'top-secret';
+          return { value: 'top-secret' };
         },
       },
       tools: [

@@ -144,7 +144,7 @@ export async function deliverChannelRun<TInput, TDelivery>(
 function channelContext(adapter: string, message: ChannelMessage): ExecutionContext {
   return {
     namespace: adapter,
-    ...(message.actor ? { actor: message.actor } : {}),
+    ...(message.identity ? { identity: message.identity } : {}),
     attributes: {
       ...(message.metadata ?? {}),
       channel: adapter,
@@ -166,7 +166,7 @@ function received(adapter: string, message: ChannelMessage): ChannelEvent {
     deliveryId: message.deliveryId,
     conversationId: message.conversationId,
     ...(message.threadId ? { threadId: message.threadId } : {}),
-    ...(message.actor ? { actor: message.actor } : {}),
+    ...(message.identity ? { actor: message.identity.actor } : {}),
   };
 }
 

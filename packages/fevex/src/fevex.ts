@@ -1,6 +1,6 @@
 import type { AgentDefinition, ContextBudget, ToolSearchOptions } from './agents';
 import type { ArtifactStore } from './artifacts';
-import type { AgentEvent, ExecutionContext, RunId } from './core';
+import type { Actor, AgentEvent, ExecutionContext, RunId } from './core';
 import { createComposition } from './internal/configuration';
 import { createRuntime } from './internal/runtime';
 import type { ContextProvider, MemoryStore } from './knowledge';
@@ -169,7 +169,7 @@ export interface Fevex {
   ): Promise<RunRecord<TOutput>>;
   recoverRun<TOutput = unknown>(
     runId: RunId,
-    options: { actor: { id: string; type?: string } },
+    options: { actor: Actor },
   ): Promise<RunRecord<TOutput>>;
   purgeRuns(options?: PurgeRunsOptions): Promise<PurgeRunsResult>;
   compactSession(sessionId: SessionId, summary: string): Promise<Session>;

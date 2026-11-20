@@ -1,4 +1,4 @@
-import type { ExecutionContext, JsonValue, RunId } from '../core';
+import type { Actor, ExecutionContext, JsonValue, RunId } from '../core';
 import type { ToolRisk } from '../tools';
 
 /** Authorization outcome returned by a policy. */
@@ -14,6 +14,8 @@ export interface PolicyAuthorization {
   declaredRisk?: ToolRisk;
   input: JsonValue;
   action: 'tool.execute' | 'approval.resolve';
+  /** Actor performing this action: the run identity or the approving reviewer. */
+  actor?: Actor;
   context?: ExecutionContext;
 }
 

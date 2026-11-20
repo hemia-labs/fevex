@@ -4,6 +4,7 @@ export * from './channels';
 export * from './configuration-error';
 export * from './core';
 export * from './fevex';
+export * from './identity';
 export * from './knowledge';
 export * from './models';
 export * from './policies';

@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { ExactDefinition } from '../internal/exact-definition';
 import type { AgentLimits } from '../agents';
-import type { ExecutionContext, JsonObject, JsonValue, RunId } from '../core';
+import type { Actor, ExecutionContext, JsonObject, JsonValue, RunId } from '../core';
 import type { RunRequest, RunResult, SessionId } from '../runtime';
 
 /** Context shared with workflow steps and compensation handlers. */
@@ -23,7 +23,7 @@ export type WorkflowAgentResult<TOutput = unknown> = Omit<RunResult<TOutput>, 'e
 
 export interface WorkflowEventResult<TPayload extends JsonValue = JsonValue> {
   payload?: TPayload;
-  actor?: NonNullable<ExecutionContext['actor']>;
+  actor?: Actor;
   receivedAt: string;
 }
 

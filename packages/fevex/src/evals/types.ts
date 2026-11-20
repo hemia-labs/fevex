@@ -1,4 +1,4 @@
-import type { AgentEvent, ExecutionContext, JsonValue } from '../core';
+import type { Actor, AgentEvent, ExecutionContext, JsonValue } from '../core';
 import type { Fevex } from '../fevex';
 import type { ModelMetadata, ModelUsage } from '../models';
 import type { CostCalculator, TraceCost } from '../observability';
@@ -85,7 +85,7 @@ export interface EvalApproval {
   /** Tool name required to match the paused approval. Omit to accept any tool. */
   toolName?: string;
   decision: 'approve' | 'reject';
-  actor?: { id: string; type?: string };
+  actor?: Actor;
 }
 
 /** Elicitation value supplied by an evaluation case when a run pauses. */
@@ -93,7 +93,7 @@ export interface EvalElicitation {
   /** Prompt text required to match the paused request. Omit to accept any prompt. */
   prompt?: string;
   value: JsonValue;
-  actor?: { id: string; type?: string };
+  actor?: Actor;
 }
 
 export interface EvalCase<TInput = unknown> {

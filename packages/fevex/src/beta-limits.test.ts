@@ -112,16 +112,16 @@ test('admits concurrent runs per tenant and forwards custom admission', async ()
   });
   const alice = await app.startAgent('assistant', {
     input: 'alice one',
-    context: { actor: { id: 'alice' }, attributes: { tenantId: 'tenant-a' } },
+    context: { identity: { actor: { id: 'alice' }, scopes: [] }, attributes: { tenantId: 'tenant-a' } },
   });
   await expect(app.startAgent('assistant', {
     input: 'alice two',
-    context: { actor: { id: 'alice' }, attributes: { tenantId: 'tenant-a' } },
+    context: { identity: { actor: { id: 'alice' }, scopes: [] }, attributes: { tenantId: 'tenant-a' } },
   })).rejects.toMatchObject({ code: 'ADMISSION_DENIED' });
 
   const bob = await app.startAgent('assistant', {
     input: 'bob one',
-    context: { actor: { id: 'bob' }, attributes: { tenantId: 'tenant-b' } },
+    context: { identity: { actor: { id: 'bob' }, scopes: [] }, attributes: { tenantId: 'tenant-b' } },
   });
   expect(bob.id).not.toBe(alice.id);
   expect(decisions[0]).toMatchObject({

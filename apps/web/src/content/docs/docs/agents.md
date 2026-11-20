@@ -23,6 +23,34 @@ const support = defineAgent({
 Agents are registered by name in `createFevex({ agents: [...] })` and reference
 tools by name.
 
+## Execution identity
+
+Authenticated runs carry an `AgentIdentity` in `ExecutionContext.identity`:
+
+```ts
+const context = {
+  identity: {
+    actor: { id: 'alice', type: 'user' },
+    agent: { id: 'support', type: 'agent' },
+    tenant: 'tenant-a',
+    scopes: ['repo:read', 'billing:read'],
+    expiresAt: '2030-01-01T00:00:00.000Z',
+  },
+};
+```
+
+`actor` is the user or service on whose behalf the run executes. `scopes` is a
+required part of the contract; use an empty array for unscoped local runs.
+`tenant` is optional but should be set for multi-tenant hosts.
+
+Workflows and teams receive the parent identity. A child cannot change the
+actor or tenant, cannot add scopes, and cannot extend the expiry. An expired
+identity fails before the run starts or resumes.
+
+Credentials resolved through `CredentialStore` are bound to the identity:
+credentials may declare `actorId`, `tenantId`, `scopes` and `expiresAt`. The
+runtime fails closed on a mismatch instead of passing the value to a tool.
+
 ## Run an agent
 
 ```ts
