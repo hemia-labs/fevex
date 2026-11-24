@@ -25,6 +25,10 @@ describe('identity contract', () => {
   test('normalizes scopes', () => {
     expect(normalizeScopes([' read ', 'read', 'write'])).toEqual(['read', 'write']);
     expect(() => normalizeScopes([''])).toThrow(TypeError);
+    expect(() => normalizeScopes(['read write'])).toThrow(TypeError);
+    expect(() => normalizeScopes(['read"write'])).toThrow(TypeError);
+    expect(() => normalizeScopes(['read\\write'])).toThrow(TypeError);
+    expect(normalizeScopes(['repo:read', 'billing.read'])).toEqual(['repo:read', 'billing.read']);
   });
 
   test('validates structure and expiry', () => {
