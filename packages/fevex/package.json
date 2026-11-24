@@ -47,6 +47,14 @@
       "types": "./dist/http/client.d.mts",
       "import": "./dist/http/client.mjs"
     },
+    "./identity": {
+      "types": "./dist/identity/index.d.mts",
+      "import": "./dist/identity/index.mjs"
+    },
+    "./identity/oauth": {
+      "types": "./dist/identity/oauth/index.d.mts",
+      "import": "./dist/identity/oauth/index.mjs"
+    },
     "./knowledge": {
       "types": "./dist/knowledge/index.d.mts",
       "import": "./dist/knowledge/index.mjs"
@@ -93,7 +101,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/agents/index.ts src/artifacts/index.ts src/channels/index.ts src/http/index.ts src/http/client.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/teams/index.ts src/runtime/index.ts src/sandbox/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
+    "build": "tsdown src/index.ts src/agents/index.ts src/artifacts/index.ts src/channels/index.ts src/http/index.ts src/http/client.ts src/identity/index.ts src/identity/oauth/index.ts src/knowledge/index.ts src/models/index.ts src/tools/index.ts src/workflows/index.ts src/teams/index.ts src/runtime/index.ts src/sandbox/index.ts src/policies/index.ts src/observability/index.ts src/evals/index.ts src/testing/index.ts --format esm --dts --clean",
     "prepack": "bun run build",
     "test": "bun test --cwd src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -102,7 +110,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@standard-schema/spec": "^1.1.0"
+    "@standard-schema/spec": "^1.1.0",
+    "jose": "^6.2.18"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

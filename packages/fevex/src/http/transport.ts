@@ -47,6 +47,7 @@ const FEVEX_RUN_ERROR_CODES = new Set<FevexRunErrorCode>([
   'RUN_LIST_UNSUPPORTED',
   'IDENTITY_INVALID',
   'IDENTITY_EXPIRED',
+  'IDENTITY_UNAVAILABLE',
   'CREDENTIAL_EXPIRED',
   'CREDENTIAL_SCOPE_DENIED',
   'CREDENTIAL_IDENTITY_MISMATCH',
@@ -751,6 +752,7 @@ function statusForRunErrorCode(code: FevexRunErrorCode) {
   if (code === 'CREDENTIAL_IDENTITY_MISMATCH') return 403;
   if (code === 'IDENTITY_INVALID') return 400;
   if (code === 'IDENTITY_EXPIRED' || code === 'CREDENTIAL_EXPIRED') return 401;
+  if (code === 'IDENTITY_UNAVAILABLE') return 503;
   if (code === 'ADMISSION_DENIED') return 429;
   if (code === 'RUNTIME_CLOSED') return 503;
   if (code === 'RUN_LIST_UNSUPPORTED') return 501;
