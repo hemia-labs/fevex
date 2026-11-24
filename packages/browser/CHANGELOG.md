@@ -1,5 +1,12 @@
 # @fevex/browser
 
+## 0.1.0-alpha.17
+
+### Patch Changes
+
+- Updated dependencies [f5747bf]
+  - @fevex/core@0.1.0-alpha.17
+
 ## 0.1.0-alpha.16
 
 ### Patch Changes
