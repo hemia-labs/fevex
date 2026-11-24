@@ -1,7 +1,7 @@
 import type { Actor, AgentIdentity } from '../core';
 import { FevexRunError } from '../run-error';
 import { assertIdentity } from './contract';
-import { normalizeScopes } from './scopes';
+import { isScopeList, isScopeToken, normalizeScopes } from './scopes';
 
 /** Claims read from an RFC 9068 access token or an RFC 7662 introspection response. */
 export type TokenClaims = Record<string, unknown>;
@@ -45,7 +45,9 @@ export const DEFAULT_CLOCK_SKEW_SECONDS = 60;
  * - `sub` is the actor;
  * - `exp` is mandatory;
  * - `nbf` and `iat` cannot be in the future beyond the tolerated skew;
- * - `scope` (or `scp`) becomes the scope set;
+ * - `scope` (space-delimited string, RFC 9068) or `scp` (Azure
+ *   compatibility) becomes the scope set; an empty string is treated as no
+ *   scopes for issuer compatibility;
  * - RFC 8693 `act.sub` becomes the delegated agent;
  * - the tenant comes from a namespaced claim, then `tid`.
  */
@@ -139,20 +141,31 @@ function numericDate(value: unknown, claim: string): number | undefined {
 }
 
 function readScopes(claims: TokenClaims): string[] {
-  for (const claim of ['scope', 'scp'] as const) {
-    const value = claims[claim];
-    if (value === undefined) continue;
-    try {
-      if (typeof value === 'string') {
-        return normalizeScopes(value.split(/\s+/).filter(Boolean));
-      }
-      if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
-        return normalizeScopes(value);
-      }
-    } catch {
-      throw invalid(`Token claim "${claim}" is malformed`);
+  const scope = claims.scope;
+  if (scope !== undefined) {
+    if (typeof scope !== 'string') throw invalid('Token claim "scope" is malformed');
+    if (scope === '') return [];
+    // Validate the raw value: RFC 6749 §3.3 forbids leading, trailing or
+    // repeated spaces. Splitting first would silently accept them.
+    if (!isScopeList(scope)) throw invalid('Token claim "scope" is malformed');
+    return normalizeScopes(scope.split(' '));
+  }
+
+  // `scp` is not part of RFC 9068. It is accepted for Azure compatibility.
+  const scp = claims.scp;
+  if (scp !== undefined) {
+    if (typeof scp === 'string') {
+      if (scp === '') return [];
+      if (!isScopeList(scp)) throw invalid('Token claim "scp" is malformed');
+      return normalizeScopes(scp.split(' '));
     }
-    throw invalid(`Token claim "${claim}" is malformed`);
+    if (Array.isArray(scp)) {
+      if (!scp.every((entry) => isScopeToken(entry))) {
+        throw invalid('Token claim "scp" is malformed');
+      }
+      return normalizeScopes(scp);
+    }
+    throw invalid('Token claim "scp" is malformed');
   }
   return [];
 }

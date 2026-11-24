@@ -55,9 +55,17 @@ runtime fails closed on a mismatch instead of passing the value to a tool.
 
 `@fevex/core/identity/oauth` turns an OAuth credential into an `AgentIdentity`.
 The host remains the only owner of sessions and credentials; Fevex never acts as
-an authorization server.
+an authorization server. Authentication is not authorization: pass the identity
+to the runtime **and** enforce run ownership or tenant boundaries in the HTTP
+handler. Store both the tenant and the actor for each run; comparing only
+`actor.id` lets the same person read a run created under another tenant. The
+same check applies when a run reuses an existing session, because its history
+becomes part of the new run. Sessions created outside the handler have no owner
+record and are denied by default. Persist these ownership records in production;
+the in-memory maps only work for a single process.
 
 ```ts
+import { FevexRunError, type ExecutionContext } from '@fevex/core';
 import { createFevexHttpHandler } from '@fevex/core/http';
 import { createJwtVerifier, verifyBearerToken } from '@fevex/core/identity/oauth';
 
@@ -67,29 +75,88 @@ const verifier = createJwtVerifier({
   jwksUri: 'https://idp.example.com/.well-known/jwks.json',
 });
 
-const handler = createFevexHttpHandler({ fevex: app });
+type Owner = { actorId: string; tenant?: string };
+
+const runOwners = new Map<string, Owner>();
+const sessionOwners = new Map<string, Owner>();
+
+const owns = (owner: Owner | undefined, identity: ExecutionContext['identity']) =>
+  owner !== undefined &&
+  owner.actorId === identity?.actor.id &&
+  owner.tenant === identity?.tenant;
+
+const handler = createFevexHttpHandler({
+  fevex: app,
+  authorize(access) {
+    const identity = access.context?.identity;
+    if (!identity) return false;
+    if (access.action === 'start') {
+      // A new session has no owner yet. Reusing a session requires the same
+      // tenant and actor because its history becomes part of the new run.
+      return access.sessionId === undefined ||
+        owns(sessionOwners.get(access.sessionId), identity);
+    }
+    return owns(runOwners.get(access.runId), identity);
+  },
+  onRunStarted(run, context) {
+    const identity = context?.identity;
+    if (!identity) return;
+    const owner = {
+      actorId: identity.actor.id,
+      ...(identity.tenant === undefined ? {} : { tenant: identity.tenant }),
+    };
+    runOwners.set(run.id, owner);
+    sessionOwners.set(run.sessionId, owner);
+  },
+});
 
 export async function authenticated(request: Request) {
-  const identity = await verifyBearerToken(
-    verifier,
-    request.headers.get('authorization'),
-  );
-  return handler(request, { context: { identity } });
+  try {
+    const identity = await verifyBearerToken(
+      verifier,
+      request.headers.get('authorization'),
+    );
+    return await handler(request, { context: { identity } });
+  } catch (error) {
+    if (error instanceof FevexRunError && error.code === 'IDENTITY_UNAVAILABLE') {
+      return Response.json({ code: error.code }, {
+        status: 503,
+        headers: { 'retry-after': '5' },
+      });
+    }
+    if (error instanceof FevexRunError) {
+      return Response.json({ code: error.code }, {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer error="invalid_token"' },
+      });
+    }
+    throw error;
+  }
 }
 ```
 
 The JWT backend verifies the signature with the issuer's keys, requires
-`typ: at+jwt` (RFC 9068), an exact `iss`, the configured resource in `aud` and a
-mandatory `exp`. It maps `sub` to the actor, `act.sub` to the delegated agent, a
-namespaced claim or `tid` to the tenant, and `scope` or `scp` to the scope set.
-Set `tenantClaims` or `agentClaim` when the issuer uses other claim names.
+`typ: at+jwt` (RFC 9068), an exact `iss`, the configured resource in `aud`, a
+mandatory `exp`, and the RFC 9068 registered claims `client_id`, `iat` and
+`jti`. Set `requireRegisteredClaims: false` only for issuers that do not emit
+them. It maps `sub` to the actor, `act.sub` to the delegated agent, a namespaced
+claim or `tid` to the tenant, and `scope` to the scope set. The `scope` value
+must follow the RFC 6749 §3.3 space-delimited syntax; an empty string is treated
+as no scopes for issuer compatibility. Set `tenantClaims` or `agentClaim` when
+the issuer uses other claim names.
 
 For opaque tokens, use `createIntrospectionVerifier` with the RFC 7662 endpoint
-and client credentials. Both backends fail closed with `IDENTITY_INVALID`,
-`IDENTITY_EXPIRED`, or `IDENTITY_UNAVAILABLE` when the issuer cannot be reached.
+and client credentials. By default the response must include the configured
+resource in `aud` and `token_type: Bearer`. Set `trustIntrospectionEndpoint`
+only when the endpoint is resource-specific and guaranteed to return access
+tokens.
 
-Clock skew defaults to 60 seconds. Only asymmetric algorithms (`RS256`, `PS256`,
-`ES256`, `EdDSA`) are accepted.
+Both endpoints must use HTTPS; loopback HTTP is accepted for local development.
+Redirects are rejected, and the timeout covers the response body, not just the
+headers. Both backends fail closed with `IDENTITY_INVALID`, `IDENTITY_EXPIRED`,
+or `IDENTITY_UNAVAILABLE` when the issuer cannot be reached or returns a JWKS
+document that is not valid JSON. Clock skew defaults to 60 seconds, and only
+asymmetric algorithms (`RS256`, `PS256`, `ES256`, `EdDSA`) are accepted.
 
 ## Run an agent
 

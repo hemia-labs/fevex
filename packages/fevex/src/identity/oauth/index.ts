@@ -2,6 +2,11 @@ import type { AgentIdentity } from '../../core';
 import { FevexRunError } from '../../run-error';
 import type { TokenVerifier } from '../claims';
 
+export type {
+  TokenClaims,
+  TokenVerificationOptions,
+  TokenVerifier,
+} from '../claims';
 export * from './introspection';
 export * from './jwt';
 
