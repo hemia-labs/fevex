@@ -4,6 +4,21 @@
  * backslash).
  */
 const SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+/**
+ * Full `scope` value: `scope-token *( SP scope-token )`. Leading, trailing or
+ * repeated spaces are rejected.
+ */
+const SCOPE_LIST = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;
+
+/** True when `value` is a single RFC 6749 scope token. */
+export function isScopeToken(value: unknown): value is string {
+  return typeof value === 'string' && SCOPE_TOKEN.test(value);
+}
+
+/** True when `value` is an RFC 6749 space-delimited scope list. */
+export function isScopeList(value: unknown): value is string {
+  return typeof value === 'string' && SCOPE_LIST.test(value);
+}
 
 /** Normalizes scopes: trims, validates, drops duplicates and rejects empty entries. */
 export function normalizeScopes(scopes: readonly string[]): string[] {
@@ -12,7 +27,7 @@ export function normalizeScopes(scopes: readonly string[]): string[] {
       throw new TypeError('Identity scopes must be non-empty strings');
     }
     const trimmed = scope.trim();
-    if (!SCOPE_TOKEN.test(trimmed)) {
+    if (!isScopeToken(trimmed)) {
       throw new TypeError(`Identity scope "${trimmed}" is not a valid RFC 6749 scope token`);
     }
     return trimmed;

@@ -114,6 +114,12 @@ describe('identityFromClaims', () => {
     ).toThrow('Token was issued in the future');
   });
 
+  test('treats an empty scope value as no scopes', () => {
+    expect(identityFromClaims({ ...claims, scope: '' }, options).scopes).toEqual([]);
+    expect(identityFromClaims({ ...claims, scope: undefined, scp: '' }, options).scopes)
+      .toEqual([]);
+  });
+
   test('rejects malformed claims', () => {
     expect(() => identityFromClaims({ ...claims, exp: 'tomorrow' }, options))
       .toThrow('Token claim "exp" is malformed');
@@ -123,6 +129,16 @@ describe('identityFromClaims', () => {
       .toThrow('Token claim "scope" is malformed');
     expect(() => identityFromClaims({ ...claims, scope: ['bad scope'] }, options))
       .toThrow('Token claim "scope" is malformed');
+    expect(() => identityFromClaims({ ...claims, scope: 'repo:read\tbilling:read' }, options))
+      .toThrow('Token claim "scope" is malformed');
+    for (const scope of [' repo:read', 'repo:read ', 'repo:read  billing:read']) {
+      expect(() => identityFromClaims({ ...claims, scope }, options))
+        .toThrow('Token claim "scope" is malformed');
+    }
+    expect(() => identityFromClaims({ ...claims, scope: undefined, scp: 'repo:read  billing:read' }, options))
+      .toThrow('Token claim "scp" is malformed');
+    expect(() => identityFromClaims({ ...claims, scope: undefined, scp: [' repo:read'] }, options))
+      .toThrow('Token claim "scp" is malformed');
     expect(() => identityFromClaims({ ...claims, act: { id: 'planner' } }, options))
       .toThrow('Token claim "act" is malformed');
     expect(() => identityFromClaims({ ...claims, 'https://fevex.dev/tenant': ' ' }, options))
