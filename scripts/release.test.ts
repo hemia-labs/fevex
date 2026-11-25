@@ -199,17 +199,21 @@ test('publishes only core, DeepSeek and OpenAI in dependency order', () => {
 
 test('records one alpha tag and prerelease per verified package, safely on retry', async () => {
   const commit = 'a'.repeat(40);
+  const tag = `${manifest.name}@${manifest.version}`;
   const published = { commit, packages: [{ name: manifest.name, version: manifest.version, integrity: release.integrity }] };
   const plan = [{ name: manifest.name, version: manifest.version }, { name: '@fevex/browser', version: manifest.version }];
   const calls: { path: string; body?: Record<string, unknown> }[] = [];
   let tagExists = false;
   let releaseExists = false;
-  const api = async (path: string, body?: Record<string, unknown>) => {
+  const prerelease = { tag_name: tag, prerelease: true, draft: false };
+  const api = async (path: string, { body }: { body?: Record<string, unknown> } = {}) => {
     calls.push({ path, body });
     if (path.startsWith('git/ref/tags/')) return tagExists ? { object: { type: 'commit', sha: commit } } : null;
     if (path === 'git/refs') { tagExists = true; return {}; }
-    if (path.startsWith('releases/tags/')) return releaseExists ? { tag_name: manifest.name + '@' + manifest.version } : null;
+    if (path.startsWith('releases/tags/')) return releaseExists ? prerelease : null;
     if (path === 'releases') { releaseExists = true; return {}; }
+    if (path === 'releases?per_page=100&page=1') return releaseExists ? [prerelease] : [];
+    if (path === 'tags?per_page=100&page=1') return tagExists ? [{ name: tag }] : [];
     throw new Error(`Unexpected GitHub API call: ${path}`);
   };
   await recordReleases(published, plan, commit, api);
@@ -226,4 +230,53 @@ test('records one alpha tag and prerelease per verified package, safely on retry
   await expect(recordReleases(published, [], commit, api)).rejects.toThrow('inventory mismatch');
   await expect(recordReleases(published, plan, 'b'.repeat(40), api)).rejects.toThrow('commit mismatch');
   await expect(recordReleases(published, plan, commit, async (path: string) => path.startsWith('git/ref/') ? { object: { type: 'commit', sha: 'b'.repeat(40) } } : null)).rejects.toThrow('Existing tag differs');
+});
+
+test('keeps three alphas per package across pages and resumes pruning an orphan tag', async () => {
+  const commit = 'a'.repeat(40);
+  const alpha = (n: number) => `${manifest.name}@0.1.0-alpha.${n}`;
+  const adapter = (n: number) => `@fevex/openai@0.1.0-alpha.${n}`;
+  const plan = [{ name: manifest.name, version: '0.1.0-alpha.10' }];
+  const published = { commit, packages: plan };
+  const other = ['@fevex/core@0.1.0-beta.1', '@fevex/core@0.1.0', '@fevex/deepseek@0.1.0-alpha.1'];
+  const unrelated = Array.from({ length: 100 }, (_, i) => `@fevex/missing@0.1.0-alpha.${i}`);
+  const tags = new Set([...unrelated, ...other, ...[10, 1, 2, 8, 9].map(alpha), ...[4, 1, 3, 2].map(adapter)]);
+  const releases = new Map([...unrelated, ...other, ...[10, 1, 7, 8, 9].map(alpha), ...[4, 1, 3, 2].map(adapter)]
+    .map((tag_name, i) => [tag_name, { tag_name, id: i + 1, prerelease: tag_name !== '@fevex/core@0.1.0', draft: false }]));
+  const calls: string[] = [];
+  let failOnce = true;
+  const api = async (path: string, { method }: { method?: string } = {}) => {
+    if (method === 'DELETE') {
+      calls.push(path);
+      if (path.startsWith('releases/')) {
+        const existing = [...releases.values()].find(r => r.id === Number(path.split('/').at(-1)));
+        if (!existing) throw new Error(`Missing release: ${path}`);
+        releases.delete(existing.tag_name);
+      } else {
+        const tag = decodeURIComponent(path.split('/').at(-1)!);
+        if (tag === alpha(2) && failOnce) { failOnce = false; throw new Error('Temporary GitHub failure'); }
+        if (releases.has(tag)) throw new Error(`Removed tag before release: ${tag}`);
+        tags.delete(tag);
+      }
+    } else if (path.startsWith('git/ref/')) {
+      return { object: { type: 'commit', sha: commit } };
+    } else if (path.startsWith('releases/tags/')) {
+      return releases.get(alpha(10));
+    } else {
+      const match = /^(releases|tags)\?per_page=100&page=(\d+)$/.exec(path);
+      if (!match) throw new Error(`Unexpected GitHub API call: ${path}`);
+      const start = (Number(match[2]) - 1) * 100;
+      const items = match[1] === 'releases' ? [...releases.values()] : [...tags].map(name => ({ name }));
+      return items.slice(start, start + 100);
+    }
+  };
+
+  await expect(recordReleases(published, plan, commit, api)).rejects.toThrow('Temporary GitHub failure');
+  await recordReleases(published, plan, commit, api);
+  const retained = [...unrelated, ...other, ...[8, 9, 10].map(alpha), ...[2, 3, 4].map(adapter)].sort();
+  expect([...releases.keys()].sort()).toEqual(retained);
+  expect([...tags].sort()).toEqual(retained);
+  expect(calls).toHaveLength(7);
+  await recordReleases(published, plan, commit, api);
+  expect(calls).toHaveLength(7);
 });

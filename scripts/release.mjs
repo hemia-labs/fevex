@@ -14,6 +14,7 @@ const visibilityTimeoutMs = 30 * 60_000;
 const visibilityPollMs = 30_000;
 // Official published inventory. Keep the public package inventory docs in sync.
 export const npmPackages = new Set(['@fevex/core', '@fevex/deepseek', '@fevex/openai']);
+const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.(0|[1-9]\d*))?$/;
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const run = (command, args, cwd = root) => execFileSync(command, args, { cwd, stdio: 'inherit' });
 const capture = (command, args, cwd = root) => execFileSync(command, args, { cwd, encoding: 'utf8' }).trim();
@@ -21,7 +22,7 @@ const integrity = (path) => `sha512-${createHash('sha512').update(readFileSync(p
 
 // Deliberately accept only the release channels documented for this repository.
 export function parseVersion(version) {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.(0|[1-9]\d*))?$/.exec(version);
+  const match = versionPattern.exec(version);
   assert(match, `Unsupported release version: ${version}`);
   const numbers = [match[1], match[2], match[3], match[5] ?? '0'].map(Number);
   assert(numbers.every(Number.isSafeInteger), 'Version numbers must be safe integers');
@@ -264,31 +265,76 @@ async function publishBatch(batch, destination) {
   }
 }
 
+async function listGitHubItems(api, resource) {
+  const items = [];
+  for (let page = 1; ; page++) {
+    const batch = await api(`${resource}?per_page=100&page=${page}`);
+    assert(Array.isArray(batch), `Expected a GitHub ${resource} list`);
+    items.push(...batch);
+    if (batch.length < 100) return items;
+  }
+}
+
+function olderAlphas(items, name, tagOf) {
+  const prefix = `${name}@`;
+  const versionOf = (item) => tagOf(item).slice(prefix.length);
+  return items
+    .filter(item => tagOf(item).startsWith(prefix) && versionPattern.exec(versionOf(item))?.[4] === 'alpha')
+    .sort((a, b) => compareVersions(versionOf(b), versionOf(a)))
+    .slice(3);
+}
+
+async function pruneAlphaHistory(api, recordedAlphas) {
+  const [releases, tags] = await Promise.all([listGitHubItems(api, 'releases'), listGitHubItems(api, 'tags')]);
+  const prereleases = releases.filter(release => release.prerelease && !release.draft);
+  for (const name of recordedAlphas) {
+    assert(prereleases.some(release => release.tag_name === name) && tags.some(tag => tag.name === name), `GitHub has not listed the new prerelease and tag for ${name}; rerun the recording job`);
+  }
+  const oldReleases = new Set([...npmPackages].flatMap(name => olderAlphas(prereleases, name, release => release.tag_name)));
+  const oldTags = [...npmPackages].flatMap(name => olderAlphas(tags, name, tag => tag.name));
+  const retainedReleaseTags = new Set(releases.filter(release => !oldReleases.has(release)).map(release => release.tag_name));
+  for (const tag of oldTags) {
+    assert(!retainedReleaseTags.has(tag.name), `Cannot prune tag ${tag.name}: a retained GitHub release uses it`);
+  }
+  for (const release of oldReleases) await api(`releases/${release.id}`, { method: 'DELETE' });
+  for (const tag of oldTags) await api(`git/refs/tags/${encodeURIComponent(tag.name)}`, { method: 'DELETE' });
+  if (oldReleases.size || oldTags.length) {
+    summary(`Pruned ${oldReleases.size} older alpha prereleases and ${oldTags.length} older alpha tags from GitHub.`);
+  }
+}
+
 export async function recordReleases(result, plan, commit, api) {
   assert.equal(result.commit, commit, 'Published commit mismatch');
   assert.deepEqual(result.packages.map(p => [p.name, p.version]).sort(), plan.filter(p => npmPackages.has(p.name)).map(p => [p.name, p.version]).sort(), 'Published inventory mismatch');
+  const recordedAlphas = [];
   for (const p of result.packages) {
     const tag = `${p.name}@${p.version}`;
+    const { channel } = parseVersion(p.version);
     const ref = await api(`git/ref/tags/${encodeURIComponent(tag)}`);
     if (ref) assert(ref.object.type === 'commit' && ref.object.sha === result.commit, 'Existing tag differs; review manually');
-    else await api('git/refs', { ref: `refs/tags/${tag}`, sha: result.commit });
-    if (!await api(`releases/tags/${encodeURIComponent(tag)}`)) await api('releases', {
-      tag_name: tag, name: tag, prerelease: parseVersion(p.version).channel !== 'latest',
-      make_latest: parseVersion(p.version).channel === 'latest' ? 'true' : 'false',
+    else await api('git/refs', { body: { ref: `refs/tags/${tag}`, sha: result.commit } });
+    const existing = await api(`releases/tags/${encodeURIComponent(tag)}`);
+    if (!existing) await api('releases', { body: {
+      tag_name: tag, name: tag, prerelease: channel !== 'latest',
+      make_latest: channel === 'latest' ? 'true' : 'false',
       body: `Published from ${result.commit}.\n\nIntegrity: ${p.integrity}\n\nSee the package CHANGELOG.md at this commit.`,
-    });
+    } });
+    else if (channel === 'alpha') assert(existing.prerelease && !existing.draft, `Expected a published GitHub prerelease for ${tag}`);
+    if (channel === 'alpha') recordedAlphas.push(tag);
   }
+  if (recordedAlphas.length) await pruneAlphaHistory(api, recordedAlphas);
 }
 
 async function record(destination) {
   const result = readJson(join(destination, 'published.json'));
-  const api = async (path, body) => {
+  const api = async (path, { body, method = body ? 'POST' : 'GET' } = {}) => {
     const response = await fetch(`https://api.github.com/repos/hemia-labs/fevex/${path}`, {
-      method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
+      method, headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30_000),
     });
-    if (response.status === 404 && !body) return null;
-    assert(response.ok, `GitHub ${path}: HTTP ${response.status}`);
+    if (response.status === 404 && method === 'GET') return null;
+    assert(response.ok, `GitHub ${method} ${path}: HTTP ${response.status}`);
+    if (response.status === 204) return;
     return response.json();
   };
   await recordReleases(result, currentPlan(), capture('git', ['rev-parse', 'HEAD']), api);
