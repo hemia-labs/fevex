@@ -184,6 +184,9 @@ variable `ENABLE_NPM_PUBLISH` equals `true`.
    tags. Only this job receives the write permission needed for release records;
    the npm job has `contents: read` and `id-token: write`. Alpha versions are
    marked as prereleases and are not marked as the repository's Latest release.
+   After recording an alpha batch, the job keeps the three most recent alpha
+   prereleases and tags per published package, ordered by version. This retention
+   policy applies to GitHub only.
 
 An ordinary push without a changed, valid release plan does not publish anything,
 including packages missing from npm. Publication does not depend on the absence
@@ -277,8 +280,8 @@ Before enabling npm writes:
   on a GitHub-hosted Node 24 runner. Provenance requires a public package/repo.
 - Set the `npm` environment deployment branch policy to **main**. Replace the
   tag-only policy from the initial design; keeping it would block this workflow.
-- Protect `main` and keep the PR checks mandatory. If release tags are protected,
-  allow the automation actor to create them while blocking modification/deletion.
+- Protect `main` and keep the PR checks mandatory. Keep alpha package tags out of
+  rules restricting tag deletion so the recording job can enforce retention.
 - The other nine package names can remain absent from npm. If they are enabled in
   a later release, resolve their initial publication and ownership first; CI
   deliberately refuses to bootstrap missing packages.
