@@ -1,5 +1,12 @@
 # @fevex/opentelemetry
 
+## 0.1.0-alpha.17
+
+### Patch Changes
+
+- Updated dependencies [258a37d]
+  - @fevex/core@0.1.0-alpha.18
+
 ## 0.1.0-alpha.16
 
 ### Patch Changes
