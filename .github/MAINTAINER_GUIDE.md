@@ -116,6 +116,29 @@ Deploy and publish only the validated commit. The website deploy currently runs
 independently on `main`; document that limitation until an explicit quality-gate
 dependency or equivalent validation is added for the deployment path.
 
+## Website deployment
+
+The [deploy-fevex workflow](workflows/deploy-fevex.yml) builds the static site
+in `apps/web` with Bun and deploys it to the VPS over SSH. It uses the `fevex`
+GitHub environment with these settings.
+
+- `VPS_HOST` is the target hostname or IP address.
+- `VPS_SSH_KNOWN_HOSTS` contains the verified SSH host key.
+- `VPS_DEPLOY_SSH_PRIVATE_KEY` is an environment secret. Install its public key
+  for the VPS `deploy` user through the infrastructure repository. Use a
+  dedicated deployment key.
+
+From a trusted machine, collect the host key for the exact hostname or IP
+configured as `VPS_HOST`.
+
+```sh
+ssh-keyscan -H YOUR_HOST_OR_IP
+```
+
+Verify the fingerprint against the provider console before saving the complete
+output in `VPS_SSH_KNOWN_HOSTS`. Point the `fevex.dev` DNS record at the VPS.
+Nginx serves the static files directly.
+
 ## Actions and repository security
 
 In **Settings → Actions → General**, keep default workflow token permissions
