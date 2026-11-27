@@ -23,6 +23,7 @@
     "demo:slack": "bun run --cwd examples/slack start",
     "docker:slack": "bash examples/slack/build-docker.sh",
     "demo:connections": "bun run examples/connections/index.ts",
+    "demo:a2a-quote": "bun run examples/a2a-quote/index.ts",
     "demo:research": "bun run examples/research/index.ts",
     "eval:research": "bun run examples/research/index.ts --eval",
     "eval:gate": "bun run scripts/eval-gate.ts",

@@ -145,6 +145,8 @@ jobs:
       - run: bun run demo:channels
       - run: bun x tsc -p examples/connections/tsconfig.json
       - run: bun run demo:connections
+      - run: bun run --cwd examples/a2a-quote typecheck
+      - run: bun run demo:a2a-quote
       - run: bun x tsc -p examples/research/tsconfig.json
       - run: bun run demo:research
       - run: bun run eval:research
