@@ -10,6 +10,7 @@ the catalog helps you choose a starting point and is not part of execution.
 | [Channels and resolvers](channel-elicitation/) | `bun run demo:channels` | No keys or network | Adapter, trusted routing, durable receipts and responder identity. |
 | [Slack](slack/) | `bun run demo:slack`; playground `/slack` | Slack app + public tunnel; Docker optional | `agent.ts`: instructions and MCP tool; `index.ts`: session routing and SQLite storage. |
 | [MCP and OpenAPI](connections/) | `bun run demo:connections` | Local HTTP; no keys | Endpoint, OpenAPI document, allowlists and credentials. |
+| [A2A quote and reconnect](a2a-quote/) | `bun run demo:a2a-quote` | Local HTTP and SQLite | Buyer identity, durable task correlation and a single resume after reconnect. |
 | [Research and evals](research/) | `bun run demo:research`; `bun run eval:research` | Scripted mode without keys; optional real model | Shared agent, section context, code evidence, fixtures and seven eval cases. |
 | [HTTP playground](nest-api/) | `bun run dev:nest` | OpenAI or DeepSeek key | Agents, tools, HTTP host, authentication and SQLite persistence. |
 | [Playground UI](next-playground/) | `bun run dev:next` | Running Nest API | Frontend views consuming the public HTTP client. |
